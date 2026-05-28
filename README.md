@@ -27,12 +27,12 @@
 
 ---
 
-**功能亮点:**
+| **功能亮点：**
 - 📹 **实时 Zoom 监控** — 自动拉取参会列表，轮询 + Webhook 双通道
 - 🤖 **Telegram 智能推送** — 陌生人检测、签到提醒、迟到标记
 - 📊 **看板与分析** — 实时数据看板 + AI 自动生成每日/每周出勤报告
 - 🔒 **100% 私有化** — 数据存自己的服务器，不经过第三方云端
-- 🚀 **三分钟部署** — Docker / systemd 双模式，一行命令搞定
+- 🚀 **1 分钟部署** — Docker Compose，一行命令搞定
 
 ---
 
@@ -71,11 +71,29 @@
 
 ## 部署方式
 
-### 方案 A：systemd 生产（推荐）
+### 方案 A：Docker Compose（推荐）
+
+```bash
+cd /opt/zoom-monitor
+docker compose build
+docker compose up -d
+docker compose ps
+```
+
+> **端口**: API → `127.0.0.1:8082`（仅本地），Webhook → `0.0.0.0:9443`（需 Cloudflare Tunnel）。
+>
+> 数据库 / 日志通过 Docker volume 持久化，`docker compose down` 不会丢失数据。
+
+### 方案 B：systemd（Legacy / 手动模式）
+
+> ⚠️ **不推荐**。systemd 路线不再主动维护，仅保留作为裸机部署的备选。
+> 如果不是有特殊理由（无 Docker 环境），请使用方案 A。
 
 ```bash
 # 1. 安装依赖
 cd /opt/zoom-monitor
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
 # 2. 配置 .env
@@ -91,44 +109,6 @@ sudo systemctl enable --now zoom-api zoom-webhook zoom-monitor zoom-command
 sudo systemctl status zoom-api zoom-webhook zoom-monitor zoom-command
 sudo journalctl -u zoom-monitor -f
 ```
-
-#### systemd 单元文件
-
-`/etc/systemd/system/zoom-api.service`:
-```
-[Unit]
-Description=Zoom Monitor API
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/zoom-monitor
-ExecStart=/opt/1panel/runtime/python/hermes-agent/repo/hermes-venv/bin/python3 /opt/zoom-monitor/app.py api
-EnvironmentFile=/opt/zoom-monitor/.env
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-`/etc/systemd/system/zoom-webhook.service`（同上，ExecStart 改为 `app.py webhook`）、
-`zoom-monitor.service`（`app.py monitor`）、
-`zoom-command.service`（`app.py command`）。
-
-> **端口**: API 监听 8000，Webhook 监听 9000。建议通过 Cloudflare Tunnel 暴露 Webhook 端口。
-
-### 方案 B：Docker 部署（环境隔离，适合需要独立环境的场景）
-
-```bash
-cd /opt/zoom-monitor
-docker compose build
-docker compose up -d
-docker compose ps
-```
-
-> **注意**: Docker 和 systemd 两组服务**不冲突**，可以同时运行。Docker 端口为 8082/9443。
 
 ## 配置说明（.env）
 
@@ -155,10 +135,12 @@ SIGNIN_DEADLINE_HOUR=9  # 签到截止时间（MYT）
 
 | 服务 | 说明 | 端口 |
 |------|------|------|
-| API | FastAPI 看板 + REST API | 8000 (systemd) / 8082 (Docker) |
-| Webhook | Zoom 事件回调接收 | 9000 (systemd) / 9443 (Docker) |
+| API | FastAPI 看板 + REST API | 8082 (Docker) |
+| Webhook | Zoom 事件回调接收 | 9443 (Docker) |
 | Monitor | 轮询拉取参会数据 | 无端口（后台服务） |
 | Command | Telegram 指令 Bot | 无端口（后台服务） |
+
+> systemd 模式端口为 8000 / 9000。
 
 ## Telegram 指令
 
@@ -213,23 +195,23 @@ SQLite（`tracking.db`），无需额外数据库服务。
 ## 健康检查
 
 ```bash
-# systemd
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:9000/health
-
-# Docker
+# Docker（推荐）
 curl http://127.0.0.1:8082/health
 curl http://127.0.0.1:9443/health
+
+# systemd（手动模式下）
+# curl http://127.0.0.1:8000/health
+# curl http://127.0.0.1:9000/health
 ```
 
 ## 日志查看
 
 ```bash
-# systemd
-journalctl -u zoom-monitor -f -n 50
-
-# Docker
+# Docker（推荐）
 docker logs zoom-monitor -f --tail 50
+
+# systemd（手动模式下）
+# journalctl -u zoom-monitor -f -n 50
 ```
 
 ## 快速部署（30 秒脚本）
@@ -240,10 +222,8 @@ sudo mkdir -p /opt/zoom-monitor
 cd /opt/zoom-monitor
 # 解压发布包或 git clone 后执行：
 cp .env.example .env && chmod 600 .env
-pip install -r requirements.txt
 # 编辑 .env 填入密钥
-sudo systemctl daemon-reload
-sudo systemctl enable --now zoom-{api,webhook,monitor,command}
+docker compose up -d
 scripts/check_health.sh
 ```
 
@@ -268,11 +248,11 @@ scripts/check_health.sh
 
 | 现象 | 原因 | 解决 |
 |------|------|------|
-| Monitor 无输出 | Telegram Token 无效 | `curl https://api.telegram.org/bot<TOKEN>/getMe` 检查 |
+| Monitor 日志无输出 | Telegram Token 无效 | `curl https://api.telegram.org/bot<TOKEN>/getMe` 检查 |
 | "401 Unauthorized" | Zoom Token 过期 | 检查 Zoom Marketplace App 是否激活 + Scopes 是否完整 |
 | Webhook 返回 403 | 签名验证失败 | 检查 `ZOOM_WEBHOOK_SECRET` 与 Zoom Marketplace 一致 |
-| Docker 启动失败 | 端口冲突 | `ss -tlnp | grep 8082` 检查冲突进程 |
+| Docker 启动失败 | 端口冲突 | `ss -tlnp | grep -E '(8082|9443)'` 检查冲突进程 |
 | 表中无数据 | 时区错误 | Monitor 默认 UTC，看板显示 UTC；检查 `PUSH_*_HOUR` 配置 |
-| systemd 启动后退出 | .env 路径不对 | 检查 `EnvironmentFile=/opt/zoom-monitor/.env` |
+| 容器一直 unhealthy | healthcheck 问题 | `docker compose logs <service>` 查看原因 |
 | pip install 失败 | Python 版本 < 3.10 | `python3 --version` 检查 |
-| "no such table" | DB 未初始化 | 重启应用：`systemctl restart zoom-api` 自动建表 |
+| "no such table" | DB 未初始化 | 重启容器：`docker compose restart zoom-api` 自动建表 |

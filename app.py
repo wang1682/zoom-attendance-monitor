@@ -178,7 +178,8 @@ def build_app() -> "FastAPI":
         sys.stdout.flush()
 
         if event_type in ("meeting.participant_joined", "meeting.participant_left"):
-            obj = payload.get("object", {})
+            # Zoom v2 webhook: event.payload.object
+            obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
             name = participant.get("user_name", "").strip()

@@ -59,7 +59,7 @@ class Settings:
     secret_key: str = _env("SECRET_KEY")
     api_token: str = _env("API_TOKEN")
     api_port: int = _int("API_PORT", 8000)
-    api_host: str = _env("API_HOST", "127.0.0.1")
+    api_host: str = _env("API_HOST", "0.0.0.0")
     webhook_port: int = _int("WEBHOOK_PORT", 9000)
     webhook_host: str = _env("WEBHOOK_HOST", "0.0.0.0")
     monitor_interval: int = _int("MONITOR_INTERVAL", 30)

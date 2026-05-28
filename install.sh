@@ -72,12 +72,12 @@ fi
 # ─── 安装方式选择 ────────────────────────────────────────────────────────
 log ""
 log "选择部署方式:"
-echo "  1) Docker Compose（推荐——隔离环境）"
-echo "  2) systemd + Python 虚拟环境（生产性能最佳）"
-echo "  3) 裸跑 Python（调试/开发）"
+echo "  1) Docker Compose（推荐——推荐）"
+echo "  2) systemd + Python 虚拟环境（Legacy——手动模式）"
+echo "  3) 裸跑 Python（仅调试/开发）"
 echo ""
 read -r -p "  请输入 [1-3] (默认 1): " DEPLOY_MODE </dev/tty
-DEPLOY_MODE="${DEPLOY_MODE:-1}"
+: "${DEPLOY_MODE:=1}"
 
 case "$DEPLOY_MODE" in
     1)
@@ -170,8 +170,8 @@ log "安装依赖..."
 
 case "$INSTALL_MODE" in
     docker)
-        # Docker：只需下载镜像
-        docker compose pull 2>/dev/null || docker compose build
+        # Docker：构建镜像
+        docker compose build
         ok "Docker 镜像准备完成"
         ;;
     systemd|bare)
@@ -225,10 +225,10 @@ log ""
 log "验证..."
 
 sleep 3
-if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
-    ok "API 服务运行中 (http://127.0.0.1:8000)"
+if curl -sf http://127.0.0.1:8082/health >/dev/null 2>&1; then
+    ok "API 服务运行中 (http://127.0.0.1:8082)"
 else
-    warn "API 暂不可达（可能端口不同）"
+    warn "API 暂不可达（可能端口不同，试试 9443）"
 fi
 
 # ─── 完成 ────────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Zoom Attendance Monitor 安装完成!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
-echo "  Dashboard: http://localhost:8000"
+echo "  Dashboard: http://localhost:8082"
 echo "  文档:      ${INSTALL_DIR}/docs/"
 echo "  .env:      ${INSTALL_DIR}/.env"
 echo ""
