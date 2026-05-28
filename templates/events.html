@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>事件 - Zoom 监控</title>
+<link rel="stylesheet" href="/static/style.css">
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0f172a;color:#e2e8f0}nav{background:#1e293b;padding:12px 24px;display:flex;gap:16px;align-items:center;border-bottom:1px solid #334155}nav a{color:#94a3b8;text-decoration:none;font-size:14px;padding:6px 12px;border-radius:6px}nav a:hover{background:#334155;color:#e2e8f0}nav .title{font-size:16px;font-weight:600;color:#f1f5f9;margin-right:auto}.container{max-width:1200px;margin:0 auto;padding:24px}.table-wrap{background:#1e293b;border-radius:8px;border:1px solid #334155;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;padding:10px 12px;background:#0f172a;color:#94a3b8;font-weight:500}td{padding:8px 12px;border-top:1px solid #1e293b;font-family:monospace;font-size:12px}tr:hover{background:#334155}.payload{color:#94a3b8;max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.time{color:#64748b}
+</style>
+</head>
+<body>
+<nav>
+  <span class="title">👁️ Zoom 监控</span>
+  <a href="/">仪表盘</a>
+  <a href="/events" style="background:#334155;color:#e2e8f0">事件</a>
+  <a href="/participants">参会</a>
+  <a href="/alerts">告警</a>
+</nav>
+<div class="container">
+  <h2 style="margin-bottom:12px;font-size:16px">📡 Webhook 事件记录</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>类型</th><th>Payload</th><th>时间</th></tr></thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td>{{ e.id }}</td>
+          <td>{{ e.event_type }}</td>
+          <td class="payload">{{ e.payload[:100] }}</td>
+          <td class="time">{{ e.created_at }}</td>
+        </tr>
+        {% endfor %}
+        {% if not events %}
+        <tr><td colspan="4" style="text-align:center;color:#64748b;padding:40px">暂无事件</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

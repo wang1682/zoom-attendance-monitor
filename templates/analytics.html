@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}分析总览 - Zoom Monitor{% endblock %}
+{% block head %}
+<script>
+tailwind.config = {
+    darkMode: 'class',
+    theme: {
+        extend: {
+            colors: {
+                primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' },
+                surface: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 800: '#1e293b', 850: '#172033', 900: '#0f172a', 950: '#020617' },
+            }
+        }
+    }
+}
+</script>
+{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <!-- Header -->
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">📊 智能分析</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">会议行为多维分析平台 — 聚合 · 风险 · AI 报告</p>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="card p-5">
+            <div class="stat-label">已分析天数</div>
+            <div class="stat-value">{{ daily|length }}</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">风险记录</div>
+            <div class="stat-value text-amber-600 dark:text-amber-400">{{ risks|length }}</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">AI 报告</div>
+            <div class="stat-value text-primary-600 dark:text-primary-400">{{ reports|length }}</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">覆盖天数</div>
+            <div class="stat-value">{{ daily|map(attribute='date')|list|unique|list|length }}</div>
+        </div>
+    </div>
+
+    <!-- 每日聚合趋势 -->
+    <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">📈 每日签到趋势</h2>
+            <a href="/dashboard/analytics/daily" class="text-sm text-primary-600 dark:text-primary-400 hover:underline">查看全部 →</a>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100 dark:border-surface-700">
+                        <th class="table-header">日期</th>
+                        <th class="table-header">签到人数</th>
+                        <th class="table-header">总时长(分)</th>
+                        <th class="table-header">最早入场</th>
+                        <th class="table-header">最晚入场</th>
+                        <th class="table-header">独立邮箱</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in daily %}
+                    <tr class="hover-row border-b border-gray-50 dark:border-surface-850/50">
+                        <td class="table-cell font-medium">{{ d.date }}</td>
+                        <td class="table-cell">{{ d.total_persons }}</td>
+                        <td class="table-cell">{{ d.total_duration_minutes|round(1) }}</td>
+                        <td class="table-cell">{{ d.earliest_entry|default('', true)|string|truncate(8, True, '') }}</td>
+                        <td class="table-cell">{{ d.latest_entry|default('', true)|string|truncate(8, True, '') }}</td>
+                        <td class="table-cell">{{ d.unique_emails }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not daily %}
+                    <tr><td colspan="6" class="table-cell text-center text-gray-400 py-8">暂无聚合数据</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 风险记录 + AI 报告双列 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- 风险记录 -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">⚠️ 最新风险</h2>
+                <a href="/dashboard/analytics/risks" class="text-sm text-primary-600 dark:text-primary-400 hover:underline">查看全部 →</a>
+            </div>
+            <div class="space-y-3">
+                {% for r in risks %}
+                <div class="flex items-start gap-3 p-3 rounded-lg bg-red-50 dark:bg-red-900/10">
+                    <div class="w-2 h-2 mt-2 rounded-full 
+                        {% if r.severity == 'high' %}bg-red-500{% elif r.severity == 'medium' %}bg-amber-500{% else %}bg-blue-500{% endif %} shrink-0"></div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-gray-900 dark:text-white">{{ r.risk_type }}</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ r.name }} · {{ r.date }}</div>
+                        <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate">{{ r.description|default('', true) }}</div>
+                    </div>
+                    <span class="badge-{{ 'red' if r.severity == 'high' else 'yellow' if r.severity == 'medium' else 'blue' }} text-xs">{{ r.severity }}</span>
+                </div>
+                {% endfor %}
+                {% if not risks %}
+                <p class="text-sm text-gray-400 text-center py-4">暂无风险记录</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- AI 报告 -->
+        <div class="card p-5">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">🤖 AI 报告</h2>
+                <a href="/dashboard/analytics/reports" class="text-sm text-primary-600 dark:text-primary-400 hover:underline">查看全部 →</a>
+            </div>
+            <div class="space-y-3">
+                {% for r in reports %}
+                <div class="p-3 rounded-lg bg-primary-50 dark:bg-primary-900/10">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-sm font-medium text-gray-900 dark:text-white">{{ r.title }}</span>
+                        <span class="badge-green text-xs">{{ r.ai_provider }}</span>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 line-clamp-3">{{ r.summary|default('', true)|truncate(200) }}</p>
+                    <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ r.date }} · {% if r.sent %}✅ 已推送{% else %}📝 未推送{% endif %}</div>
+                </div>
+                {% endfor %}
+                {% if not reports %}
+                <p class="text-sm text-gray-400 text-center py-4">暂无 AI 报告</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

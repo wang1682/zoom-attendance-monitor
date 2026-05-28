@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>在线演示 — {{ brand.app_name_zh }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' },
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif; background: {{ brand.bg_dark }}; }
+        .card { @apply bg-[{{ brand.bg_card }}] rounded-xl border border-white/5; }
+        .hover-card { @apply card transition-all hover:border-primary-500/30; }
+        .tab-btn { @apply px-5 py-2.5 rounded-lg text-sm transition-all; }
+        .tab-active { @apply bg-primary-500/20 text-primary-300 border border-primary-500/30 font-medium; }
+        .tab-inactive { @apply text-gray-400 hover:text-white hover:bg-white/5; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 3px; }
+        .demo-row { @apply flex items-center gap-3 py-2.5 px-4 rounded-xl hover:bg-white/5 transition-colors; }
+        .msg-bubble { @apply max-w-[360px] rounded-2xl px-4 py-3 text-sm leading-relaxed; }
+    </style>
+</head>
+<body class="text-gray-100 min-h-screen">
+
+    <!-- Nav -->
+    <nav class="sticky top-0 z-50 bg-[{{ brand.bg_dark }}]/80 backdrop-blur-xl border-b border-white/5">
+        <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-xl">{{ brand.header_emoji }}</span>
+                <span class="text-sm font-semibold">{{ brand.app_name_zh }}</span>
+                <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 font-medium">DEMO</span>
+            </div>
+            <div class="flex items-center gap-3 text-sm">
+                <a href="/" class="text-gray-400 hover:text-white transition-colors"><i class="fas fa-arrow-left mr-1"></i>返回首页</a>
+                <a href="/dashboard" class="px-4 py-1.5 bg-white/5 border border-white/10 text-gray-300 rounded-full hover:bg-white/10 transition-all text-xs">真实看板</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="max-w-6xl mx-auto px-6 py-8">
+        <!-- 提示条 -->
+        <div class="card p-4 flex items-center gap-3 mb-6 text-sm">
+            <span class="text-lg">🎉</span>
+            <span class="text-gray-400">这是演示模式，数据是自动生成的假数据。无需 Zoom 账号即可体验全部功能。</span>
+            <button onclick="resetDemo()" class="ml-auto px-4 py-1.5 bg-primary-500/10 border border-primary-500/20 text-primary-300 rounded-full text-xs hover:bg-primary-500/20 transition-all">
+                <i class="fas fa-sync mr-1"></i>重新生成
+            </button>
+        </div>
+
+        <!-- 指标卡片 -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="card p-5 text-center">
+                <div class="text-3xl font-bold text-primary-400">{{ stats.participant_count }}</div>
+                <div class="text-xs text-gray-500 mt-1">今日参会</div>
+            </div>
+            <div class="card p-5 text-center">
+                <div class="text-3xl font-bold text-amber-400">{{ stats.new_face_count }}</div>
+                <div class="text-xs text-gray-500 mt-1">新面孔</div>
+            </div>
+            <div class="card p-5 text-center">
+                <div class="text-3xl font-bold text-emerald-400">{{ stats.checkin_rate }}%</div>
+                <div class="text-xs text-gray-500 mt-1">签到率</div>
+            </div>
+            <div class="card p-5 text-center">
+                <div class="text-3xl font-bold text-rose-400">{{ stats.alert_count }}</div>
+                <div class="text-xs text-gray-500 mt-1">告警</div>
+            </div>
+        </div>
+
+        <!-- Tab 导航 -->
+        <div class="flex items-center gap-2 mb-6">
+            <a href="/demo?tab=overview" class="tab-btn {% if active_tab == 'overview' %}tab-active{% else %}tab-inactive{% endif %}">
+                <i class="fas fa-chart-simple mr-1.5"></i>实时看板
+            </a>
+            <a href="/demo?tab=participants" class="tab-btn {% if active_tab == 'participants' %}tab-active{% else %}tab-inactive{% endif %}">
+                <i class="fas fa-users mr-1.5"></i>参会明细
+            </a>
+            <a href="/demo?tab=alerts" class="tab-btn {% if active_tab == 'alerts' %}tab-active{% else %}tab-inactive{% endif %}">
+                <i class="fas fa-bell mr-1.5"></i>告警日志
+            </a>
+            <a href="/demo?tab=telegram" class="tab-btn {% if active_tab == 'telegram' %}tab-active{% else %}tab-inactive{% endif %}">
+                <i class="fab fa-telegram mr-1.5"></i>Telegram 推送
+            </a>
+        </div>
+
+        <!-- Tab 内容 -->
+        {% if active_tab == 'overview' %}
+        <!-- 看板：最近进出记录 -->
+        <div class="card p-5">
+            <h3 class="text-base font-semibold mb-4 flex items-center gap-2">
+                <i class="fas fa-right-left text-primary-400"></i>
+                最近进出记录
+            </h3>
+            {% if stats.recent_participants %}
+            {% for p in stats.recent_participants[:15] %}
+            <div class="demo-row">
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-xs font-bold text-white shrink-0">{{ p.name[0] }}</div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium truncate">{{ p.name }}</div>
+                    <div class="text-xs text-gray-500 truncate">{{ p.email }}</div>
+                </div>
+                <div class="text-xs text-gray-500">{{ p.time }}</div>
+                {% if p.is_new %}
+                <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 font-medium">新</span>
+                {% else %}
+                <span class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-500/20 text-emerald-300 font-medium">成员</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="text-center py-12 text-gray-500">
+                <i class="fas fa-user-slash text-4xl mb-3 block"></i>
+                暂无数据，点击"重新生成"创建演示数据
+            </div>
+            {% endif %}
+        </div>
+
+        {% elif active_tab == 'participants' %}
+        <!-- 参会明细 -->
+        <div class="card overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="border-b border-white/5 text-left text-xs text-gray-500 uppercase">
+                            <th class="px-5 py-3 font-medium">姓名</th>
+                            <th class="px-5 py-3 font-medium">邮箱</th>
+                            <th class="px-5 py-3 font-medium">动作</th>
+                            <th class="px-5 py-3 font-medium">时间</th>
+                            <th class="px-5 py-3 font-medium">来源</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in participants[:50] %}
+                        <tr class="border-b border-white/5 hover:bg-white/5 transition-colors">
+                            <td class="px-5 py-3 font-medium">{{ p.name }}</td>
+                            <td class="px-5 py-3 text-gray-400">{{ p.email }}</td>
+                            <td class="px-5 py-3">
+                                {% if p.action == 'enter' %}
+                                <span class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-500/20 text-emerald-300">进入</span>
+                                {% else %}
+                                <span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/20 text-rose-300">离开</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-5 py-3 text-gray-400">{{ p.action_time }}</td>
+                            <td class="px-5 py-3">
+                                {% if p.source == 'demo' %}
+                                <span class="text-gray-500">{{ p.source }}</span>
+                                {% else %}
+                                <span class="text-primary-400">{{ p.source }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-center py-12 text-gray-500">暂无数据</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {% elif active_tab == 'alerts' %}
+        <!-- 告警日志 -->
+        <div class="card p-5">
+            <h3 class="text-base font-semibold mb-4 flex items-center gap-2">
+                <i class="fas fa-bell text-amber-400"></i>
+                告警日志（最近 {{ alerts|length }} 条）
+            </h3>
+            {% for a in alerts[:30] %}
+            <div class="demo-row">
+                <div class="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
+                    {% if 'stranger' in a.event_type %}
+                    <span class="text-amber-400">⚠️</span>
+                    {% elif 'signin' in a.event_type %}
+                    <span class="text-sky-400">⏰</span>
+                    {% else %}
+                    <span class="text-rose-400">🔔</span>
+                    {% endif %}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm truncate">{{ a.message }}</div>
+                </div>
+                <div class="text-xs text-gray-500 shrink-0">{{ a.created_at[:19] }}</div>
+            </div>
+            {% else %}
+            <div class="text-center py-12 text-gray-500">
+                <i class="fas fa-circle-check text-4xl mb-3 block text-emerald-500"></i>
+                暂无告警
+            </div>
+            {% endfor %}
+        </div>
+
+        {% elif active_tab == 'telegram' %}
+        <!-- Telegram 推送模拟 -->
+        <div class="card p-5">
+            <h3 class="text-base font-semibold mb-4 flex items-center gap-2">
+                <i class="fab fa-telegram text-sky-400"></i>
+                Telegram 推送效果
+            </h3>
+            <div class="bg-[#17212b] rounded-2xl p-4 max-w-md mx-auto">
+                <!-- 聊天头部 -->
+                <div class="flex items-center gap-3 pb-3 border-b border-white/5 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-primary-500 flex items-center justify-center text-sm font-bold text-white">{{ brand.app_name_zh[0] }}</div>
+                    <div>
+                        <div class="text-sm font-medium">{{ brand.app_name_zh }}</div>
+                        <div class="text-[11px] text-gray-500">在线</div>
+                    </div>
+                </div>
+
+                <div class="space-y-3">
+                    <!-- 进入消息 -->
+                    <div class="msg-bubble bg-[#2b5278] text-white ml-auto rounded-br-sm">
+                        <div class="flex items-center gap-1.5 mb-1">
+                            <span>👤</span>
+                            <span class="font-medium">张三</span>
+                        </div>
+                        <div class="text-[13px]">进入了自习室 🎉</div>
+                        <div class="text-[10px] text-gray-400 text-right mt-1">08:32</div>
+                    </div>
+
+                    <!-- 陌生人告警 -->
+                    <div class="msg-bubble bg-[#2b5278] text-white ml-auto rounded-br-sm">
+                        <div class="flex items-center gap-1.5 mb-1">
+                            <span>⚠️</span>
+                            <span class="font-medium text-amber-300">陌生人检测</span>
+                        </div>
+                        <div class="text-[13px]">检测到陌生邮箱: <span class="text-amber-300">visitor@unknown.com</span></div>
+                        <div class="text-[13px]">请在 Bot 中 /allow 确认或 /kick 踢出</div>
+                        <div class="text-[10px] text-gray-400 text-right mt-1">08:35</div>
+                    </div>
+
+                    <!-- 签到提醒 -->
+                    <div class="msg-bubble bg-[#2b5278] text-white ml-auto rounded-br-sm">
+                        <div class="flex items-center gap-1.5 mb-1">
+                            <span>⏰</span>
+                            <span class="font-medium">签到提醒</span>
+                        </div>
+                        <div class="text-[13px]">截至 09:00，仍有 <span class="text-amber-300">5 人</span> 未签到</div>
+                        <div class="text-[13px] text-gray-300">王五 · 赵六 · 孙七 · 周八 · 陈小白</div>
+                        <div class="text-[10px] text-gray-400 text-right mt-1">09:00</div>
+                    </div>
+
+                    <!-- 状态指令 -->
+                    <div class="flex items-start gap-2">
+                        <div class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-xs">你</div>
+                        <div class="msg-bubble bg-[#182533] text-white rounded-bl-sm">
+                            <div class="text-[13px]">/status</div>
+                        </div>
+                    </div>
+
+                    <!-- 状态回复 -->
+                    <div class="msg-bubble bg-[#2b5278] text-white ml-auto rounded-br-sm">
+                        <div class="text-[13px] font-medium mb-1">📊 {{ brand.app_name_zh }} 状态</div>
+                        <div class="text-[13px]">当前在线: 8 人</div>
+                        <div class="text-[13px]">今日累计: 12 人</div>
+                        <div class="text-[13px]">签到率: 78%</div>
+                        <div class="text-[13px]">推送达: 23 条</div>
+                        <div class="text-[13px]">告警: 2 条</div>
+                        <div class="text-[10px] text-gray-400 text-right mt-1">09:05</div>
+                    </div>
+
+                    <!-- 静音指令 -->
+                    <div class="flex items-start gap-2">
+                        <div class="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-xs">你</div>
+                        <div class="msg-bubble bg-[#182533] text-white rounded-bl-sm">
+                            <div class="text-[13px]">/quiet 60</div>
+                        </div>
+                    </div>
+                    <div class="msg-bubble bg-[#2b5278] text-white ml-auto rounded-br-sm">
+                        <div class="text-[13px]">🔇 已静音 60 分钟<br>期间不推送进出通知</div>
+                        <div class="text-[10px] text-gray-400 text-right mt-1">09:06</div>
+                    </div>
+
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-white/5 text-center text-[11px] text-gray-500">
+                    <i class="fas fa-circle text-[6px] text-emerald-400 mr-1.5"></i>
+                    演示效果 · 实际推送格式一致
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
+        <div class="text-center text-xs text-gray-500 mt-8">
+            {{ brand.footer_text }} · 数据纯演示 · <a href="/" class="hover:text-primary-400">返回首页</a>
+        </div>
+    </div>
+
+    <script>
+    function resetDemo() {
+        fetch('/api/demo/reset')
+            .then(r => r.json())
+            .then(() => { window.location.reload(); })
+            .catch(() => { window.location.href = '/demo'; });
+    }
+    </script>
+</body>
+</html>

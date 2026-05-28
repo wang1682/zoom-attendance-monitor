@@ -1,0 +1,18 @@
+     1|[Unit]
+     2|Description=Zoom Monitor - Telegram Command Bot
+     3|After=network-online.target
+     4|Wants=network-online.target
+     5|
+     6|[Service]
+     7|Type=simple
+     8|ExecStart=/usr/bin/python3 /opt/zoom-monitor/app.py command
+     9|WorkingDirectory=/opt/zoom-monitor
+    10|EnvironmentFile=/opt/zoom-monitor/.env
+    11|Restart=always
+    12|RestartSec=10
+    13|User=root
+    14|Group=root
+    15|
+    16|[Install]
+    17|WantedBy=multi-user.target
+    18|

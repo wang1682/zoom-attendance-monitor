@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}风险记录 - Zoom Monitor{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">⚠️ 风险记录</h1>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">会议行为异常事件 — 迟到 · 短停 · 深夜入场 · 连续迟到 · 挂机</p>
+        </div>
+        <a href="/dashboard/analytics/risks" class="text-sm text-primary-600 dark:text-primary-400 hover:underline">全部</a>
+    </div>
+
+    <!-- 风险类型筛选 -->
+    <div class="card p-4">
+        <div class="flex flex-wrap gap-2">
+            <a href="/dashboard/analytics/risks"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors
+                      {% if not filter_type %}bg-primary-500 text-white
+                      {% else %}bg-gray-100 dark:bg-surface-850 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-surface-800{% endif %}">
+                全部
+            </a>
+            {% for t in risk_types %}
+            <a href="/dashboard/analytics/risks?risk_type={{ t }}"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors
+                      {% if filter_type == t %}bg-primary-500 text-white
+                      {% else %}bg-gray-100 dark:bg-surface-850 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-surface-800{% endif %}">
+                {{ t }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 风险列表 -->
+    <div class="card p-5">
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100 dark:border-surface-700">
+                        <th class="table-header">日期</th>
+                        <th class="table-header">姓名</th>
+                        <th class="table-header">邮箱</th>
+                        <th class="table-header">风险类型</th>
+                        <th class="table-header">严重程度</th>
+                        <th class="table-header">描述</th>
+                        <th class="table-header">已忽略</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in risks %}
+                    <tr class="hover-row border-b border-gray-50 dark:border-surface-850/50">
+                        <td class="table-cell">{{ r.date }}</td>
+                        <td class="table-cell font-medium">{{ r.name }}</td>
+                        <td class="table-cell text-xs">{{ r.email|default('', true) }}</td>
+                        <td class="table-cell">
+                            <span class="
+                                {% if r.risk_type in ('late_entry', 'consecutive_late') %}badge-red
+                                {% elif r.risk_type in ('short_stay', 'night_entry') %}badge-yellow
+                                {% else %}badge-blue{% endif %}">
+                                {{ r.risk_type }}
+                            </span>
+                        </td>
+                        <td class="table-cell">
+                            <span class="
+                                {% if r.severity == 'high' %}text-red-600 dark:text-red-400 font-medium
+                                {% elif r.severity == 'medium' %}text-amber-600 dark:text-amber-400
+                                {% else %}text-blue-600 dark:text-blue-400{% endif %}">
+                                {{ r.severity }}
+                            </span>
+                        </td>
+                        <td class="table-cell text-xs max-w-xs truncate">{{ r.description|default('', true) }}</td>
+                        <td class="table-cell">
+                            {% if r.dismissed %}
+                            <span class="badge-gray">已忽略</span>
+                            {% else %}
+                            <span class="badge-red">活跃</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if not risks %}
+                    <tr><td colspan="7" class="table-cell text-center text-gray-400 py-8">暂无风险记录</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

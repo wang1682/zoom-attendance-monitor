@@ -1,0 +1,100 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">后台用户</h1>
+        <p class="text-sm text-gray-400 mt-1">
+            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
+        </p>
+    </div>
+    <div class="flex gap-3">
+        <a href="/dashboard/admin/tenants" class="btn btn-ghost">客户管理</a>
+        <a href="/dashboard/admin/accounts" class="btn btn-ghost">Zoom 账号</a>
+        <a href="/dashboard/admin/channels" class="btn btn-ghost">推送频道</a>
+        <button onclick="document.getElementById('userModal').classList.add('active')" class="btn btn-primary">新增用户</button>
+    </div>
+</div>
+
+<!-- User list -->
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>用户名</th>
+                <th>显示名称</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th>创建时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in users %}
+            <tr>
+                <td style="font-family:monospace;">{{ u.username }}</td>
+                <td>{{ u.display_name }}</td>
+                <td>
+                    <span class="badge {{ 'badge-owner' if u.role == 'owner' else 'badge-admin' if u.role == 'admin' else 'badge-viewer' }}">
+                        {{ {'owner':'拥有者','admin':'管理员','viewer':'只读'}.get(u.role, u.role) }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge {{ 'badge-active' if u.active == 'true' else 'badge-inactive' }}">
+                        {{ '启用' if u.active == 'true' else '停用' }}
+                    </span>
+                </td>
+                <td style="color:#64748b; font-size:0.8rem;">{{ u.created_at[:10] if u.created_at else '' }}</td>
+                <td>
+                    <div class="flex gap-2">
+                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle" style="display:inline">
+                            <button type="submit" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">
+                                {{ '停用' if u.active == 'true' else '启用' }}
+                            </button>
+                        </form>
+                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="display:inline"
+                              onsubmit="return confirm('确认删除用户 {{ u.username }}？')">
+                            <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" style="text-align:center; color:#64748b; padding:2rem;">暂无后台用户</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Create user modal -->
+<div id="userModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">新增后台用户</h2>
+        <form method="post" action="/dashboard/admin/users/create">
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">用户名 <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="username" required placeholder="例如: admin">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">密码 <span style="color:#ef4444;">*</span></label>
+                <input type="password" name="password" required>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">显示名称</label>
+                <input type="text" name="display_name" placeholder="管理员">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">角色</label>
+                <select name="role">
+                    <option value="owner">Owner — 拥有者（完全控制）</option>
+                    <option value="admin">Admin — 管理员（配置管理）</option>
+                    <option value="viewer" selected>Viewer — 只读查看</option>
+                </select>
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('userModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">创建</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

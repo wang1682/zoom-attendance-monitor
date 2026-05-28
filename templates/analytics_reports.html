@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}AI 报告 - Zoom Monitor{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">🤖 AI 报告</h1>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">DeepSeek 智能生成的每日会议行为总结</p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="triggerReport()" class="px-4 py-2 text-sm font-medium bg-primary-500 hover:bg-primary-600 text-white rounded-lg transition-colors">
+                🔄 生成今日报告
+            </button>
+        </div>
+    </div>
+
+    <!-- 日期筛选 -->
+    <div class="card p-4">
+        <div class="flex flex-wrap gap-2">
+            <a href="/dashboard/analytics/reports"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors
+                      {% if not filter_date %}bg-primary-500 text-white
+                      {% else %}bg-gray-100 dark:bg-surface-850 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-surface-800{% endif %}">
+                全部
+            </a>
+            {% for d in report_dates %}
+            <a href="/dashboard/analytics/reports?date={{ d }}"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors
+                      {% if filter_date == d %}bg-primary-500 text-white
+                      {% else %}bg-gray-100 dark:bg-surface-850 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-surface-800{% endif %}">
+                {{ d }}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 报告列表 -->
+    <div class="space-y-4">
+        {% for r in reports %}
+        <div class="card p-5">
+            <div class="flex items-start justify-between mb-3">
+                <div>
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ r.title }}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ r.date }} · {{ r.ai_provider }}</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    {% if r.sent %}
+                    <span class="badge-green">✅ 已推送</span>
+                    {% else %}
+                    <span class="badge-gray">📝 未推送</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            {% set data = r.metrics|from_json if r.metrics else {} %}
+            {% if data.get('score') %}
+            <div class="flex gap-4 mb-3">
+                <span class="text-sm"><span class="text-gray-500">评分:</span> <strong>{{ data.score }}/100</strong></span>
+                <span class="text-sm"><span class="text-gray-500">参会:</span> <strong>{{ data.total_persons }}</strong></span>
+                <span class="text-sm"><span class="text-gray-500">迟到:</span> <strong class="text-red-500">{{ data.late_count|default(0) }}</strong></span>
+                <span class="text-sm"><span class="text-gray-500">短停:</span> <strong class="text-amber-500">{{ data.short_stay_count|default(0) }}</strong></span>
+            </div>
+            {% endif %}
+
+            <div class="prose prose-sm dark:prose-invert max-w-none">
+                <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ r.summary }}</p>
+            </div>
+
+            <div class="mt-3 text-xs text-gray-400">
+                生成时间: {{ r.created_at }}
+            </div>
+        </div>
+        {% endfor %}
+        {% if not reports %}
+        <div class="card p-8 text-center">
+            <p class="text-gray-400">暂无 AI 报告</p>
+            <p class="text-sm text-gray-500 mt-2">引擎将在每天 23:00 MYT 自动生成，或点击上方按钮手动触发</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+async function triggerReport() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ 生成中...';
+    try {
+        const res = await fetch('/api/v2/analytics/reports/generate?force=true&send=false', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+            btn.textContent = '✅ 生成成功';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            btn.textContent = '❌ ' + (data.error || '失败');
+            setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 生成今日报告'; }, 3000);
+        }
+    } catch (e) {
+        btn.textContent = '❌ 请求失败';
+        setTimeout(() => { btn.disabled = false; btn.textContent = '🔄 生成今日报告'; }, 3000);
+    }
+}
+</script>
+{% endblock %}

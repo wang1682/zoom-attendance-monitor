@@ -1,0 +1,18 @@
+     1|[Unit]
+     2|Description=Zoom Monitor Polling Service
+     3|After=network.target
+     4|
+     5|[Service]
+     6|Type=simple
+     7|ExecStart=/usr/bin/python3 -u /opt/zoom-monitor/app.py monitor
+     8|WorkingDirectory=/opt/zoom-monitor
+     9|Restart=always
+    10|RestartSec=10
+    11|User=root
+    12|StandardOutput=journal
+    13|StandardError=journal
+    14|EnvironmentFile=/opt/zoom-monitor/.env
+    15|
+    16|[Install]
+    17|WantedBy=multi-user.target
+    18|

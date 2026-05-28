@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}日报汇总 — Zoom Monitor{% endblock %}
+{% set active = "summary" %}
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">今日日报</h1>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ data.date }} · 数据来自 Phase 2 资产库</p>
+        </div>
+        <span class="badge-blue text-sm">最后更新 {{ data.date }}</span>
+    </div>
+
+    <!-- 日报卡片 -->
+    <div class="card overflow-hidden mb-6">
+        <!-- 头部 -->
+        <div class="bg-gradient-to-r from-primary-500 to-primary-700 px-6 py-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="text-white text-xl font-bold">Zoom 监控日报</h2>
+                    <p class="text-primary-100 text-sm mt-1">{{ data.date }}</p>
+                </div>
+                <div class="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- 核心指标 -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-gray-100 dark:divide-surface-700">
+            <div class="p-5 text-center">
+                <div class="text-2xl font-bold text-primary-600 dark:text-primary-400">{{ data.events }}</div>
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">Webhook 事件</div>
+            </div>
+            <div class="p-5 text-center">
+                <div class="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{{ data.participants.unique_people }}</div>
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">独立参会人</div>
+            </div>
+            <div class="p-5 text-center">
+                <div class="text-2xl font-bold text-amber-600 dark:text-amber-400">{{ data.active_meetings }}</div>
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">活跃会议</div>
+            </div>
+            <div class="p-5 text-center">
+                <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">{{ data.pushes.success }}/{{ data.pushes.total }}</div>
+                <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">推送成功率</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 详细信息 -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-6">
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">入场 / 离场</h3>
+            <div class="flex items-end gap-4">
+                <div>
+                    <div class="stat-value text-emerald-600 dark:text-emerald-400">{{ data.participants.enter }}</div>
+                    <div class="stat-label">入场</div>
+                </div>
+                <div class="text-2xl text-gray-300 dark:text-gray-600">/</div>
+                <div>
+                    <div class="stat-value">{{ data.participants.leave }}</div>
+                    <div class="stat-label">离场</div>
+                </div>
+            </div>
+        </div>
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">推送成功率</h3>
+            <div class="flex items-center gap-3">
+                <div class="flex-1 bg-gray-100 dark:bg-surface-850 rounded-full h-3 overflow-hidden">
+                    <div class="bg-emerald-500 h-full rounded-full transition-all" style="width: {% if data.pushes.total > 0 %}{{ (data.pushes.success / data.pushes.total * 100)|int }}{% else %}0{% endif %}%"></div>
+                </div>
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {% if data.pushes.total > 0 %}{{ (data.pushes.success / data.pushes.total * 100)|int }}%{% else %}N/A{% endif %}
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 原始数据 -->
+    <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">原始数据</h3>
+            <span class="text-xs text-gray-400 dark:text-gray-500">JSON 格式</span>
+        </div>
+        <pre class="bg-gray-50 dark:bg-surface-850 rounded-lg p-4 text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto">{{ data_json }}</pre>
+    </div>
+</div>
+
+{% endblock %}

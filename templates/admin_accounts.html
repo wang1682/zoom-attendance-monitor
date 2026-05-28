@@ -1,0 +1,154 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">Zoom 账号 & 会议室</h1>
+        <p class="text-sm text-gray-400 mt-1">
+            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
+        </p>
+    </div>
+    <div class="flex gap-3">
+        <a href="/dashboard/admin/tenants" class="btn btn-ghost">客户管理</a>
+        <a href="/dashboard/admin/users" class="btn btn-ghost">后台用户</a>
+        <a href="/dashboard/admin/channels" class="btn btn-ghost">推送频道</a>
+    </div>
+</div>
+
+<!-- Zoom Accounts -->
+<div class="card mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">Zoom 账号</h2>
+        <button onclick="document.getElementById('accModal').classList.add('active')" class="btn btn-primary">绑定账号</button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>备注</th>
+                <th>Account ID</th>
+                <th>Host Email</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in accounts %}
+            <tr>
+                <td><strong>{{ a.label }}</strong></td>
+                <td style="font-family:monospace; font-size:0.8rem;">{{ a.account_id[:20] }}...</td>
+                <td>{{ a.host_email }}</td>
+                <td>
+                    <form method="post" action="/dashboard/admin/accounts/{{ a.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('确认删除此账号？')">
+                        <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="4" style="text-align:center; color:#64748b; padding:2rem;">暂无 Zoom 账号配置</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Meetings -->
+<div class="card">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">被监控的会议室</h2>
+        <button onclick="document.getElementById('mtgModal').classList.add('active')" class="btn btn-primary">添加会议室</button>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>会议号</th>
+                <th>备注</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in meetings %}
+            <tr>
+                <td style="font-family:monospace;">{{ m.meeting_id }}</td>
+                <td>{{ m.label }}</td>
+                <td><span class="badge" style="background:#1e3a5f; color:#60a5fa;">{{ m.meeting_type }}</span></td>
+                <td>
+                    <span class="badge {{ 'badge-active' if m.active == 'true' else 'badge-inactive' }}">
+                        {{ '启用' if m.active == 'true' else '停用' }}
+                    </span>
+                </td>
+                <td>
+                    <form method="post" action="/dashboard/admin/meetings/{{ m.id }}/delete" style="display:inline"
+                          onsubmit="return confirm('确认删除此会议室？')">
+                        <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center; color:#64748b; padding:2rem;">暂无监控会议室</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Account create modal -->
+<div id="accModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">绑定 Zoom 账号</h2>
+        <form method="post" action="/dashboard/admin/accounts/create">
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
+                <input type="text" name="label" placeholder="例如: 主账号">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Account ID <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="account_id" required>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Client ID <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="client_id" required>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Client Secret <span style="color:#ef4444;">*</span></label>
+                <input type="password" name="client_secret" required>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Host Email</label>
+                <input type="email" name="host_email" placeholder="admin@example.com">
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('accModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Meeting create modal -->
+<div id="mtgModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">添加会议室</h2>
+        <form method="post" action="/dashboard/admin/meetings/create">
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">会议号 <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="meeting_id" required placeholder="例如: 123456789">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
+                <input type="text" name="label" placeholder="自习室/周会">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">类型</label>
+                <select name="meeting_type">
+                    <option value="pmi">PMI 个人会议号</option>
+                    <option value="scheduled">定时会议</option>
+                    <option value="recurring">重复会议</option>
+                </select>
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('mtgModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">添加</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

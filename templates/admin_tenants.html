@@ -1,0 +1,112 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">客户管理</h1>
+        <p class="text-sm text-gray-400 mt-1">
+            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
+        </p>
+    </div>
+    <div class="flex gap-3">
+        <a href="/dashboard/admin/accounts" class="btn btn-ghost">Zoom 账号</a>
+        <a href="/dashboard/admin/users" class="btn btn-ghost">后台用户</a>
+        <a href="/dashboard/admin/channels" class="btn btn-ghost">推送频道</a>
+        <button onclick="document.getElementById('createModal').classList.add('active')" class="btn btn-primary">新增租户</button>
+    </div>
+</div>
+
+<!-- Tenant list -->
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>名称</th>
+                <th>方案</th>
+                <th>状态</th>
+                <th>全局管理</th>
+                <th>API Token</th>
+                <th>创建时间</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in tenants %}
+            <tr>
+                <td style="font-family:monospace; font-size:0.8rem;">{{ t.id }}</td>
+                <td><strong>{{ t.display_name or t.name }}</strong></td>
+                <td><span class="badge" style="background:#1e3a5f; color:#60a5fa;">{{ t.plan }}</span></td>
+                <td>
+                    <span class="badge {{ 'badge-active' if t.active == 'true' else 'badge-inactive' }}">
+                        {{ '启用' if t.active == 'true' else '停用' }}
+                    </span>
+                </td>
+                <td>{{ '是' if t.is_global_admin == 'true' else '否' }}</td>
+                <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">
+                    {% if t.api_token %}
+                    <code style="font-size:0.65rem; display:block; word-break:break-all;">{{ t.api_token }}</code>
+                    <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/token" style="display:inline; margin-top:2px;">
+                        <button type="submit" class="btn btn-ghost" style="padding:1px 6px; font-size:0.6rem;"
+                                onclick="return confirm('确认重新生成 API Token？已有客户端将立即失效。')">重新生成</button>
+                    </form>
+                    {% else %}
+                    <span style="color:#64748b; font-size:0.75rem;">未设置</span>
+                    <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/token" style="display:inline;">
+                        <button type="submit" class="btn btn-primary" style="padding:1px 6px; font-size:0.6rem;">生成</button>
+                    </form>
+                    {% endif %}
+                </td>
+                <td style="color:#64748b; font-size:0.8rem;">{{ t.created_at[:10] if t.created_at else '' }}</td>
+                <td>
+                    <div class="flex gap-2">
+                        <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/toggle" style="display:inline">
+                            <button type="submit" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">
+                                {{ '停用' if t.active == 'true' else '启用' }}
+                            </button>
+                        </form>
+                        <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/switch" style="display:inline">
+                            <button type="submit" class="btn btn-primary" style="padding:2px 10px; font-size:0.75rem;">切换</button>
+                        </form>
+                        {% if t.id != 'default' %}
+                        <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/delete" style="display:inline"
+                              onsubmit="return confirm('确认删除租户 {{ t.display_name or t.name }}？')">
+                            <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Create modal -->
+<div id="createModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">新增租户</h2>
+        <form method="post" action="/dashboard/admin/tenants/create">
+            <div class="mb-4">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">名称</label>
+                <input type="text" name="name" required placeholder="例如: client-a">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">显示名称</label>
+                <input type="text" name="display_name" placeholder="例如: 客户 A 公司">
+            </div>
+            <div class="mb-4">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">方案</label>
+                <select name="plan">
+                    <option value="free">Free</option>
+                    <option value="pro" selected>Pro</option>
+                    <option value="business">Business</option>
+                </select>
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('createModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">创建</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

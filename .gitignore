@@ -1,0 +1,41 @@
+# Environment
+.env
+*.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.venv/
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Backups
+backups/
+
+# Build artifacts
+dist/
+*.tar.gz
+*.tgz
+
+# Docker
+.dockerignore

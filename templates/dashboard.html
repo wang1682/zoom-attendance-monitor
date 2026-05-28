@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.app_name_zh }}{% endblock %}
+
+{% block head %}
+<style>
+  .hero-gradient {
+    background: linear-gradient(135deg, {{ brand.primary_color }}15 0%, {{ brand.bg_dark }} 100%);
+  }
+  .brand-icon {
+    width: 48px; height: 48px;
+    background: {{ brand.primary_color }};
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="p-6">
+
+  <!-- Hero / 品牌区 -->
+  <div class="card p-6 mb-6 hero-gradient border-l-4" style="border-left-color: {{ brand.primary_color }};">
+    <div class="flex items-center gap-4">
+      <div class="brand-icon">{{ brand.header_emoji }}</div>
+      <div>
+        <h1 class="text-2xl font-bold text-white">{{ brand.app_name }}</h1>
+        <p class="text-sm" style="color: {{ brand.text_secondary }};">{{ brand.slogan }}</p>
+        <p class="text-xs mt-1" style="color: {{ brand.text_muted }};">{{ brand.slogan_en }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stat 卡片 -->
+  <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+    <div class="card p-4">
+      <div class="stat-label">👥 今日参会</div>
+      <div class="stat-value">{{ participant_count }}</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">截至目前</div>
+    </div>
+    <div class="card p-4">
+      <div class="stat-label">📋 告警</div>
+      <div class="stat-value">{{ alert_count }}</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">近期告警数</div>
+    </div>
+    <div class="card p-4">
+      <div class="stat-label">📅 日期</div>
+      <div class="stat-value text-lg" style="color: {{ brand.secondary_color }};">{{ today }}</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">UTC 日期</div>
+    </div>
+    <div class="card p-4">
+      <div class="stat-label">🔔 推送</div>
+      <div class="stat-value text-lg" style="color: {{ brand.accent_color }};">{{ alert_count }}</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">Telegram 推送</div>
+    </div>
+  </div>
+
+  <!-- 最新参会 -->
+  <div class="card mb-6">
+    <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">📋 最新参会 ({{ participant_count }})</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th class="table-header">姓名</th>
+            <th class="table-header">邮箱</th>
+            <th class="table-header">动作</th>
+            <th class="table-header">时间</th>
+            <th class="table-header">来源</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in participants %}
+          <tr class="hover-row">
+            <td class="table-cell">{{ p.name }}</td>
+            <td class="table-cell" style="color: {{ brand.text_secondary }};">{{ p.email or '-' }}</td>
+            <td class="table-cell">
+              {% if p.action == 'enter' %}
+              <span class="badge-green">进入</span>
+              {% else %}
+              <span class="badge-red">离开</span>
+              {% endif %}
+            </td>
+            <td class="table-cell font-mono text-xs" style="color: {{ brand.text_muted }};">{{ p.action_time[:19] }}</td>
+            <td class="table-cell" style="color: {{ brand.text_secondary }};">{{ p.source }}</td>
+          </tr>
+          {% endfor %}
+          {% if not participants %}
+          <tr><td colspan="5" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无记录</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 告警列表 -->
+  <div class="card">
+    <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🔔 近期告警 ({{ alert_count }})</h2>
+    </div>
+    <ul class="divide-y" style="border-color: {{ brand.border_color }};">
+      {% for a in alerts %}
+      <li class="px-4 py-3 hover-row flex items-start gap-3">
+        <span>
+          {% if a.severity == 'error' %}🔴{% elif a.severity == 'warning' %}🟡{% else %}🔵{% endif %}
+        </span>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-white truncate">{{ a.title }}</p>
+          <p class="text-xs truncate" style="color: {{ brand.text_muted }};">{{ a.message[:80] }}</p>
+        </div>
+        <span class="text-xs whitespace-nowrap" style="color: {{ brand.text_muted }};">{{ a.created_at[:16] }}</span>
+      </li>
+      {% endfor %}
+      {% if not alerts %}
+      <li class="px-4 py-8 text-center" style="color: {{ brand.text_muted }};">暂无告警</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  <!-- Footer -->
+  <div class="mt-8 text-center text-xs" style="color: {{ brand.text_muted }};">
+    {{ brand.footer_text }}
+  </div>
+</div>
+{% endblock %}
