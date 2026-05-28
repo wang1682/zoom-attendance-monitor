@@ -4,6 +4,8 @@
 >
 > 自动记录参会 · Telegram 实时预警 · AI 出勤分析 · 三分钟部署
 
+<sup>**v1.0.0-lite** — [更新日志](CHANGELOG.md) · [安装文档](docs/INSTALL.md) · [安全审计](RELEASE_AUDIT.md)</sup>
+
 <p align="center">
   <a href="#">
     <img src="static/screenshot-landing.png" alt="Zoom Attendance Monitor" width="800">
@@ -15,6 +17,12 @@
   <a href="#部署方式"><b>🚀 快速部署</b></a> ·
   <a href="docs/INSTALL.md"><b>📖 安装文档</b></a> ·
   <a href="CHANGELOG.md"><b>📋 更新日志</b></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/security_audit-6/6_PASS-success?style=flat-square" alt="Security Audit">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python">
 </p>
 
 ---
@@ -127,17 +135,17 @@ docker compose ps
 ```
 ZOOM_ACCOUNT_ID=        # Zoom 账户 ID（Server-to-Server OAuth）
 ZOOM_CLIENT_ID=         # Zoom App Client ID
-ZOOM_CLIENT_SECRET=     # Zoom App Client Secret
+ZOOM_CLIENT_SECRET=*** # Zoom App Client Secret
 ZOOM_HOST_EMAIL=        # 主持人邮箱（用于过滤主持人）
 ZOOM_PMI_ID=            # 自习室 PMI 编号
 ZOOM_EXTRA_MEETING_IDS= # 额外会议 ID（逗号分隔）
 
-TELEGRAM_BOT_TOKEN=         # Telegram Bot Token（从 @BotFather 获取）
+TELEGRAM_BOT_TOKEN=*** # Telegram Bot Token（从 @BotFather 获取）
 TELEGRAM_PRIVATE_CHAT_ID=   # 私聊推送目标 Chat ID
 TELEGRAM_GROUP_CHAT_ID=     # 群聊推送目标 Chat ID（可选）
 TELEGRAM_GROUP_ENABLED=false
 
-ZOOM_WEBHOOK_SECRET=    # Zoom Webhook Secret（用于签名验证）
+ZOOM_WEBHOOK_SECRET=*** # Zoom Webhook Secret（用于签名验证）
 PUSH_START_HOUR=7       # 推送启用开始时间（MYT）
 PUSH_END_HOUR=23        # 推送启用结束时间（MYT）
 SIGNIN_DEADLINE_HOUR=9  # 签到截止时间（MYT）
@@ -268,4 +276,3 @@ scripts/check_health.sh
 | systemd 启动后退出 | .env 路径不对 | 检查 `EnvironmentFile=/opt/zoom-monitor/.env` |
 | pip install 失败 | Python 版本 < 3.10 | `python3 --version` 检查 |
 | "no such table" | DB 未初始化 | 重启应用：`systemctl restart zoom-api` 自动建表 |
-
