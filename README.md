@@ -69,7 +69,34 @@
     └── style.css
 ```
 
-## 部署方式
+## 快速演示 🔥
+
+不需要 Zoom 账号、不需要 Telegram Token，一行命令启动：
+
+```bash
+# 方式一：Docker（推荐）
+cp .env.example .env && echo "DEMO_MODE=true" >> .env
+docker compose up -d
+```
+
+```bash
+# 方式二：裸跑（开发）
+pip install -r requirements.txt
+DEMO_MODE=true python app.py api
+```
+
+打开浏览器访问 `http://localhost:8000/demo` 即可看到：
+
+- 📊 实时看板 — 参会人数、签到率、新面孔识别
+- 👥 参会明细 — 进出记录、姓名、邮箱
+- 🔔 告警日志 — 陌生人检测、签到提醒、超时通知
+- 📄 AI 报告 — 自动生成的日/周/分析报告
+- 📈 参会行为分析 — 小时分布、在线趋势
+- 📱 Telegram 推送模拟 — 真实推送格式预览
+
+> **注意：** 演示模式下所有数据为程序随机生成，仅供功能预览。重启容器后数据重置。
+
+## 📦 部署方式
 
 ### 方案 A：Docker Compose（推荐）
 

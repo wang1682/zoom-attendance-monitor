@@ -76,8 +76,17 @@ echo "  1) Docker Compose（推荐——推荐）"
 echo "  2) systemd + Python 虚拟环境（Legacy——手动模式）"
 echo "  3) 裸跑 Python（仅调试/开发）"
 echo ""
-read -r -p "  请输入 [1-3] (默认 1): " DEPLOY_MODE </dev/tty
+echo "  输入 d 可直接进入 Demo 模式（无需 Zoom 凭据）"
+echo ""
+read -r -p "  请输入 [1-3/d] (默认 1): " DEPLOY_MODE </dev/tty
 : "${DEPLOY_MODE:=1}"
+
+if [ "$DEPLOY_MODE" = "d" ] || [ "$DEPLOY_MODE" = "D" ]; then
+    DEMO_MODE=true
+    DEPLOY_MODE=1
+else
+    DEMO_MODE=false
+fi
 
 case "$DEPLOY_MODE" in
     1)
@@ -148,20 +157,25 @@ if [ -f "$INSTALL_DIR/.env" ]; then
 else
     cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
     chmod 600 "$INSTALL_DIR/.env"
-    ok ".env 已创建 (${INSTALL_DIR}/.env)"
+    if [ "$DEMO_MODE" = "true" ]; then
+        sed -i 's/^DEMO_MODE=false/DEMO_MODE=true/' "$INSTALL_DIR/.env"
+        ok "已设置为 DEMO 模式（无需 Zoom 凭据）"
+    else
+        ok ".env 已创建 (${INSTALL_DIR}/.env)"
 
-    log ""
-    log "请编辑 .env 填入 Zoom 凭据和 Telegram Token:"
-    log "  vim ${INSTALL_DIR}/.env"
-    log ""
-    log "需要准备:"
-    log "  · Zoom Account ID（Server-to-Server OAuth）"
-    log "  · Zoom Client ID"
-    log "  · Zoom Client Secret"
-    log "  · Telegram Bot Token（@BotFather）"
-    log "  · Telegram Chat ID（@userinfobot）"
-    log ""
-    read -r -p "  准备好后按 Enter 继续..." </dev/tty
+        log ""
+        log "请编辑 .env 填入 Zoom 凭据和 Telegram Token:"
+        log "  vim ${INSTALL_DIR}/.env"
+        log ""
+        log "需要准备:"
+        log "  · Zoom Account ID（Server-to-Server OAuth）"
+        log "  · Zoom Client ID"
+        log "  · Zoom Client Secret"
+        log "  · Telegram Bot Token（@BotFather）"
+        log "  · Telegram Chat ID（@userinfobot）"
+        log ""
+        read -r -p "  准备好后按 Enter 继续..." </dev/tty
+    fi
 fi
 
 # ─── 安装依赖 ────────────────────────────────────────────────────────────

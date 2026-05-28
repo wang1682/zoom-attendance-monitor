@@ -1,50 +1,23 @@
-# Zoom Attendance Monitor — v1.0.0-lite
+# Zoom Attendance Monitor — v1.0.1-lite
 
 > 让参会管理像喝水一样简单 · 自动记录参会 · Telegram 实时预警 · AI 出勤分析
 
-## 核心特性
+## 更新内容 (v1.0.0-lite → v1.0.1-lite)
 
-### 📹 双源参会监控
-- **Zoom API v2 Polling** — 每 30 秒拉取参会列表，零漏录
-- **Webhook 事件回调** — 实时接收 `Meeting Participant Joined / Left` 事件
-- **双通道冗余** — Webhook 主通道 + Polling 回填，网络抖动不掉数据
+### 🔧 生产环境加固
 
-### 🤖 Telegram 智能推送
-- **进出实时推送** — 谁进来了、谁走了，即时推送到你手机
-- **陌生人检测** — 首次出现的邮箱自动标记 + 首现告警
-- **签到提醒** — `SIGNIN_DEADLINE_HOUR` 自动标记迟到
-- **推送时段控制** — `PUSH_START_HOUR` / `PUSH_END_HOUR` 避免非工作时间骚扰
-- **静默模式** — 临时关推送不关记录
-- **品牌化推送模板** — 全部文案通过 brand.json 自定义，无需改代码
+- **API_HOST 修复** — 默认改为 `0.0.0.0`，解决 Docker 容器外无法访问的问题
+- **Webhook 解析修复** — 正确处理 Zoom v2 事件格式嵌套 `payload.object`，参会数据不再丢失
+- **健康检查修复** — command/monitor 容器从 `pgrep` 改为 `kill -0 1`，适配 slim 镜像
+- **`docker-compose.yml` 清理** — 移除废弃的 `version: "3.9"` 字段，消除警告
 
-### 📊 品牌化 Web 看板
-- **FastAPI 驱动的仪表盘** — 实时数据看板 + 历史记录查询
-- **暗色主题 + 品牌配色** — 通过 brand.json 自定义颜色、名称、Logo
-- **RBAC 角色管理** — admin / viewer / operator
-- **多租户支持** — 一套部署服务 N 个会议室/组织
+### 📦 Docker 优先部署
 
-### 🧠 AI 出勤分析（可选）
-- **每日/每周自动化报告** — DeepSeek / OpenAI API 驱动
-- **出勤风险分析** — 迟到率、旷工趋势、异常识别
-- **报告定时推送到 Telegram**
+- **README 重构** — Docker Compose 作为默认部署方式，systemd 降级为 Legacy/手动模式
+- **install.sh 更新** — 默认选项改为 Docker，端口/路径全部同步 Docker
+- **`.env.example` 更新** — 默认路径指向 Docker volume，附带 systemd 备选注释
 
-### 🔒 安全架构
-- **密钥外置** — 全部密钥集中在 `.env`，chmod 600 保护
-- **systemd EnvironmentFile** — 不暴露在进程列表
-- **Webhook 签名验证** — Zoom Webhook Secret HMAC 校验
-- **安全审计 6/6 PASS** — 源码 / 发布包 / env.example / 演示数据 / 安装脚本全清
-- **Docker 非 root 用户运行** — 最小权限原则
-
-### ⚡ 部署灵活
-- **systemd 四服务架构** — api / webhook / monitor / command
-- **Docker Compose 四容器** — 环境隔离
-- **Cloudflare Tunnel 兼容** — 无需公网 IP
-- **SQLite 持久化** — 零外部依赖
-- **三分钟部署** — cp .env → pip install → systemctl start
-
----
-
-## 安全审计结果
+### 🔒 安全审计
 
 | 审计项 | 结果 |
 |--------|------|
@@ -55,40 +28,41 @@
 | install.sh 安全性 | ✅ PASS |
 | 审计文档完整性 | ✅ PASS |
 
-**Build hash:** `8c66c8371d6c491ac6cf7499781239154a5aeffa866d7d6739df76a4540ecf1a`
+**Build hash:** `15cf32e4`
 
 ---
 
-## 快速开始
+## 快速开始 (Docker 推荐)
 
 ```bash
-# 下载发布包
-curl -LO https://github.com/your-org/zoom-attendance-monitor/releases/download/v1.0.0-lite/zoom-monitor-v1.0.0-lite.tar.gz
-tar -xzf zoom-monitor-v1.0.0-lite.tar.gz
-cd zoom-monitor-v1.0.0-lite
+# 环境准备
+sudo mkdir -p /opt/zoom-monitor
+cd /opt/zoom-monitor
 
-# 配置 → 部署 → 检查
+# 下载 tarball 或 git clone 后：
 cp .env.example .env && chmod 600 .env
-pip install -r requirements.txt
-sudo systemctl enable --now zoom-{api,webhook,monitor,command}
+# 编辑 .env 填入凭据
+
+# 一行启动
+docker compose up -d
+
+# 验证
 scripts/check_health.sh
 ```
 
-详细安装文档：[docs/INSTALL.md](docs/INSTALL.md)
+详细文档见 [README.md](README.md)
 
 ---
 
 ## 技术栈
 
-- **Runtime:** Python 3.10+ / FastAPI / uvicorn
+- **Runtime:** Python 3.12 / FastAPI / uvicorn
 - **Database:** SQLite 3.46+ (WAL mode)
 - **Bot:** python-telegram-bot v21.x
-- **Zoom:** zoom-python-sdk / REST API v2
+- **Zoom:** REST API v2 (Server-to-Server OAuth)
 - **AI Reports:** DeepSeek / OpenAI API (optional)
-- **Deploy:** systemd / Docker + Compose
+- **Deploy:** Docker Compose (primary) / systemd (legacy)
 - **Tunnel:** Cloudflare Tunnel (recommended)
+- **Base Image:** python:3.12-slim
 
 ---
-
-**给 Star ⭐** 如果这个项目对你有帮助！
-**提 Issue 🐛** 如果遇到问题或有建议！

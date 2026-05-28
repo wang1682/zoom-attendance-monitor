@@ -4,6 +4,7 @@ Modes:
   python app.py api       → FastAPI dashboard on port 8000
   python app.py webhook   → FastAPI webhook receiver on port 9000
   python app.py monitor   → Polling service (no FastAPI deps needed)
+  python app.py demo      → Demo mode (mock data, no credentials needed)
 """
 import asyncio
 import hashlib
@@ -24,6 +25,17 @@ with open(BASE_DIR / "brand.json") as _f:
 # ── FastAPI app (lazy init, only for api/webhook modes) ─────────────────────
 _app = None
 DB_INITED = False
+
+# ── Demo 数据函数（惰性导入）────────────────────────────────────────────────
+_DEMO_MODULE = None
+
+
+def _ensure_demo():
+    global _DEMO_MODULE
+    if _DEMO_MODULE is None:
+        import importlib
+        _DEMO_MODULE = importlib.import_module("demo_data")
+    return _DEMO_MODULE
 
 
 def build_app() -> "FastAPI":
@@ -46,7 +58,10 @@ def build_app() -> "FastAPI":
     async def _ensure_db(request: Request, call_next):
         global DB_INITED
         if not DB_INITED:
-            db.init_db()
+            if settings.demo_mode:
+                _ensure_demo().seed_demo_data()
+            else:
+                db.init_db()
             DB_INITED = True
         response = await call_next(request)
         return response
@@ -57,104 +72,188 @@ def build_app() -> "FastAPI":
         """Landing Page — 销售介绍页"""
         # 尝试加载 demo 数据用于预览
         try:
-            from demo_data import get_demo_stats
-            demo_data = get_demo_stats()
+            demo_data = _ensure_demo().get_demo_stats()
+            demo_participants = _ensure_demo().get_demo_participants(limit=5)
         except Exception:
-            demo_data = {
-                "participant_count": 12,
-                "new_face_count": 3,
-                "checkin_rate": 78,
-                "alert_count": 2,
-                "recent_participants": [
-                    {"name": "张三", "email": "zhang@example.com", "time": "08:32", "is_new": False},
-                    {"name": "李四", "email": "li@example.com", "time": "08:45", "is_new": False},
-                    {"name": "新用户", "email": "new@example.com", "time": "09:02", "is_new": True},
-                ],
-            }
+            demo_data = {"participant_count": 12, "new_face_count": 3, "checkin_rate": 78, "alert_count": 2}
+            demo_participants = [
+                {"name": "张三", "email": "zhang@example.com", "action_time": "08:32", "is_new": False},
+                {"name": "李四", "email": "li@example.com", "action_time": "08:45", "is_new": False},
+                {"name": "新用户", "email": "new@example.com", "action_time": "09:02", "is_new": True},
+            ]
         return tmpl.TemplateResponse(request, "landing.html", {
             "brand": BRAND,
             "demo_data": demo_data,
+            "demo_participants": demo_participants,
         })
 
     @app.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard(request: Request):
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        participants = db.get_today_participants(limit=100)
-        alerts = db.get_recent_alerts(limit=20)
+    async def dashboard_page(request: Request):
+        if settings.demo_mode:
+            demo = _ensure_demo()
+            demo.seed_demo_data()
+            participants = demo.get_demo_participants()
+            alerts = demo.get_demo_alerts()
+            stats = demo.get_demo_stats()
+        else:
+            participants = db.get_today_participants(limit=100)
+            alerts = db.get_recent_alerts(limit=20)
+            stats = {
+                "participant_count": len(participants),
+                "alert_count": len(alerts),
+                "new_face_count": 0,
+                "checkin_rate": 0,
+            }
         return tmpl.TemplateResponse(request, "dashboard.html", {
-            "today": today,
+            "today": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "participants": participants,
             "alerts": alerts,
-            "participant_count": len(participants),
-            "alert_count": len(alerts),
+            "stats": stats,
             "brand": BRAND,
+            "demo_mode": settings.demo_mode,
         })
 
     # ── Demo ──────────────────────────────────────────────────────────────────
     @app.get("/demo", response_class=HTMLResponse)
     async def demo_page(request: Request, tab: str = "overview"):
-        """Demo 模式 — 免 Zoom 账号体验"""
-        from demo_data import seed_demo_data, get_demo_stats, get_demo_alerts, get_demo_participants
-        seed_demo_data()
-        stats = get_demo_stats()
-        alerts = get_demo_alerts()
-        participants = get_demo_participants()
+        """Demo 模式 — 免 Zoom 账号完整体验"""
+        demo = _ensure_demo()
+        demo.seed_demo_data()
+        stats = demo.get_demo_stats()
+        alerts = demo.get_demo_alerts()
+        participants = demo.get_demo_participants()
+        events = demo.get_demo_events()
+        reports = demo.get_demo_reports()
+        analytics = demo.get_demo_analytics()
         return tmpl.TemplateResponse(request, "demo.html", {
             "brand": BRAND,
             "stats": stats,
             "alerts": alerts,
             "participants": participants,
+            "events": events,
+            "reports": reports,
+            "analytics": analytics,
             "active_tab": tab,
+            "demo_mode": True,
         })
 
     @app.get("/api/demo/reset")
     async def demo_reset():
         """重置 demo 数据并重新 seed"""
-        from demo_data import reset_demo, seed_demo_data, get_demo_stats
-        reset_demo()
-        seed_demo_data()
-        return get_demo_stats()
+        demo = _ensure_demo()
+        demo.reset_demo()
+        demo.seed_demo_data()
+        return demo.get_demo_stats()
 
+    # ── 生产数据页面 ───────────────────────────────────────────────────────────
     @app.get("/events", response_class=HTMLResponse)
     async def events_page(request: Request):
-        events = db.get_recent_events(limit=100)
+        if settings.demo_mode:
+            events = _ensure_demo().get_demo_events()
+        else:
+            events = db.get_recent_events(limit=100)
         return tmpl.TemplateResponse(request, "events.html", {
             "events": events,
             "brand": BRAND,
+            "demo_mode": settings.demo_mode,
         })
 
     @app.get("/participants", response_class=HTMLResponse)
     async def participants_page(request: Request):
-        participants = db.get_today_participants(limit=200)
+        if settings.demo_mode:
+            participants = _ensure_demo().get_demo_participants()
+        else:
+            participants = db.get_today_participants(limit=200)
         return tmpl.TemplateResponse(request, "participants.html", {
             "participants": participants,
             "brand": BRAND,
+            "demo_mode": settings.demo_mode,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
     async def alerts_page(request: Request):
-        alerts = db.get_recent_alerts(limit=100)
+        if settings.demo_mode:
+            alerts = _ensure_demo().get_demo_alerts()
+        else:
+            alerts = db.get_recent_alerts(limit=100)
         return tmpl.TemplateResponse(request, "alerts.html", {
             "alerts": alerts,
             "brand": BRAND,
+            "demo_mode": settings.demo_mode,
+        })
+
+    @app.get("/reports", response_class=HTMLResponse)
+    async def reports_page(request: Request):
+        if settings.demo_mode:
+            reports = _ensure_demo().get_demo_reports()
+        else:
+            reports = []
+        return tmpl.TemplateResponse(request, "reports.html", {
+            "reports": reports,
+            "brand": BRAND,
+            "demo_mode": settings.demo_mode,
+        })
+
+    @app.get("/analytics", response_class=HTMLResponse)
+    async def analytics_page(request: Request):
+        if settings.demo_mode:
+            analytics = _ensure_demo().get_demo_analytics()
+        else:
+            analytics = {}
+        return tmpl.TemplateResponse(request, "analytics.html", {
+            "analytics": analytics,
+            "brand": BRAND,
+            "demo_mode": settings.demo_mode,
         })
 
     # ── API ──────────────────────────────────────────────────────────────────
     @app.get("/api/participants")
     async def api_participants(limit: int = 200):
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_participants(limit=limit)
         return db.get_today_participants(limit=limit)
 
     @app.get("/api/alerts")
     async def api_alerts(limit: int = 50):
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_alerts(limit=limit)
         return db.get_recent_alerts(limit=limit)
 
     @app.get("/api/events")
     async def api_events(limit: int = 50):
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_events(limit=limit)
         return db.get_recent_events(limit=limit)
+
+    @app.get("/api/reports")
+    async def api_reports():
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_reports()
+        return []
+
+    @app.get("/api/analytics")
+    async def api_analytics():
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_analytics()
+        return {}
+
+    @app.get("/api/stats")
+    async def api_stats():
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_stats()
+        participants = db.get_today_participants(limit=200)
+        alerts = db.get_recent_alerts(limit=50)
+        return {
+            "participant_count": len(participants),
+            "alert_count": len(alerts),
+        }
 
     # ── Webhook ──────────────────────────────────────────────────────────────
     @app.post("/webhook")
     async def zoom_webhook(request: Request):
+        if settings.demo_mode:
+            return {"ok": True, "demo": True}
+
         body = await request.body()
         try:
             payload = json.loads(body)
@@ -169,7 +268,7 @@ def build_app() -> "FastAPI":
                 hashlib.sha256,
             ).hexdigest()
             if not hmac.compare_digest(expected, signature):
-                sys.stderr.write(f"[WEBHOOK] 签名验证失败\n")
+                sys.stderr.write("[WEBHOOK] 签名验证失败\n")
                 raise HTTPException(403, "signature mismatch")
 
         event_type = payload.get("event", "")
@@ -178,7 +277,6 @@ def build_app() -> "FastAPI":
         sys.stdout.flush()
 
         if event_type in ("meeting.participant_joined", "meeting.participant_left"):
-            # Zoom v2 webhook: event.payload.object
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
@@ -195,7 +293,11 @@ def build_app() -> "FastAPI":
     # ── 健康检查 ─────────────────────────────────────────────────────────────
     @app.get("/health")
     async def health():
-        return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+        return {
+            "status": "ok",
+            "demo_mode": settings.demo_mode,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
 
     _app = app
     return app
@@ -207,17 +309,33 @@ def start_api():
     import uvicorn
     settings.validate_required()
     app = build_app()
+    if settings.demo_mode:
+        print("[API] DEMO MODE — 无 Zoom/Telegram 凭据要求")
     uvicorn.run(app, host=settings.api_host, port=settings.api_port, log_level="info")
 
 
 def start_webhook():
     import uvicorn
-    settings.validate_required()
-    app = build_app()
-    uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
+    if settings.demo_mode:
+        print("[WEBHOOK] DEMO MODE — Webhook 不处理真实事件，返回 OK")
+        settings.validate_required()
+        app = build_app()
+        uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
+    else:
+        settings.validate_required()
+        app = build_app()
+        uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
 
 
 def start_monitor():
+    if settings.demo_mode:
+        print("[MONITOR] DEMO MODE — 跳过 Monitor（无真实 Zoom API 可轮询）")
+        import time
+        while True:
+            time.sleep(60)
+            sys.stdout.write("[MONITOR] DEMO 模式运行中...\n")
+            sys.stdout.flush()
+        return
     settings.validate_required()
     db.init_db()
     from monitor import monitor_loop
@@ -225,7 +343,14 @@ def start_monitor():
 
 
 def start_command():
-    """启动 Telegram 指令轮询（独立服务，不阻塞）"""
+    if settings.demo_mode:
+        print("[COMMAND] DEMO MODE — 跳过 Telegram CommandBot（无真实 Bot Token）")
+        import time
+        while True:
+            time.sleep(60)
+            sys.stdout.write("[COMMAND] DEMO 模式运行中...\n")
+            sys.stdout.flush()
+        return
     from command_bot import poll_loop
     from db import init_bot_state
     init_bot_state()
@@ -244,6 +369,14 @@ if __name__ == "__main__":
         start_monitor()
     elif mode == "command":
         start_command()
+    elif mode == "demo":
+        # Demo 模式：启动 api（dashboard） + webhook（mock），不启动 monitor/command
+        import os
+        os.environ["DEMO_MODE"] = "true"
+        settings.demo_mode = True
+        print("[DEMO] Zoom Monitor DEMO 模式启动")
+        from fastapi.responses import RedirectResponse
+        start_api()
     else:
-        print(f"Usage: python app.py [api|webhook|monitor|command]")
+        print(f"Usage: python app.py [api|webhook|monitor|command|demo]")
         _sys.exit(1)

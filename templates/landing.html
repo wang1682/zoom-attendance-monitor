@@ -121,14 +121,14 @@
                         </div>
                     </div>
                     <div class="space-y-0.5">
-                        {% for p in demo_data.recent_participants[:5] %}
+                        {% for p in demo_participants %}
                         <div class="demo-row">
                             <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-xs font-bold text-white shrink-0">{{ p.name[0] }}</div>
                             <div class="flex-1 min-w-0">
                                 <div class="text-sm font-medium truncate">{{ p.name }}</div>
                                 <div class="text-xs text-gray-500 truncate">{{ p.email }}</div>
                             </div>
-                            <div class="text-xs text-gray-500">{{ p.time }}</div>
+                            <div class="text-xs text-gray-500">{{ p.action_time[:5] if 'action_time' in p and p.action_time is string else p.action_time }}</div>
                             {% if p.is_new %}
                             <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 font-medium">新</span>
                             {% endif %}

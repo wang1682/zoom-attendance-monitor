@@ -28,6 +28,9 @@ def _bool(key: str) -> bool:
 
 
 class Settings:
+    # Demo 模式
+    demo_mode: bool = _bool("DEMO_MODE")
+
     # Zoom API
     zoom_account_id: str = _env("ZOOM_ACCOUNT_ID")
     zoom_client_id: str = _env("ZOOM_CLIENT_ID")
@@ -86,6 +89,8 @@ class Settings:
             return [16, 23]
 
     def validate_required(self):
+        if self.demo_mode:
+            return  # Demo 模式不需要真实凭据
         missing = []
         if not self.zoom_account_id:
             missing.append("ZOOM_ACCOUNT_ID")

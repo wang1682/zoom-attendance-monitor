@@ -28,6 +28,13 @@
         <p class="text-sm" style="color: {{ brand.text_secondary }};">{{ brand.slogan }}</p>
         <p class="text-xs mt-1" style="color: {{ brand.text_muted }};">{{ brand.slogan_en }}</p>
       </div>
+      {% if demo_mode %}
+      <div class="ml-auto">
+        <span class="px-3 py-1 text-xs rounded-full bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
+          ⚡ DEMO MODE
+        </span>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -35,30 +42,30 @@
   <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
     <div class="card p-4">
       <div class="stat-label">👥 今日参会</div>
-      <div class="stat-value">{{ participant_count }}</div>
+      <div class="stat-value">{{ stats.participant_count }}</div>
       <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">截至目前</div>
     </div>
     <div class="card p-4">
       <div class="stat-label">📋 告警</div>
-      <div class="stat-value">{{ alert_count }}</div>
+      <div class="stat-value">{{ stats.alert_count }}</div>
       <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">近期告警数</div>
     </div>
     <div class="card p-4">
-      <div class="stat-label">📅 日期</div>
-      <div class="stat-value text-lg" style="color: {{ brand.secondary_color }};">{{ today }}</div>
-      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">UTC 日期</div>
+      <div class="stat-label">👤 新面孔</div>
+      <div class="stat-value text-lg" style="color: {{ brand.accent_color }};">{{ stats.new_face_count }}</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">今日首次出现</div>
     </div>
     <div class="card p-4">
-      <div class="stat-label">🔔 推送</div>
-      <div class="stat-value text-lg" style="color: {{ brand.accent_color }};">{{ alert_count }}</div>
-      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">Telegram 推送</div>
+      <div class="stat-label">📊 签到率</div>
+      <div class="stat-value text-lg" style="color: {{ brand.secondary_color }};">{{ stats.checkin_rate }}%</div>
+      <div class="text-xs mt-1" style="color: {{ brand.text_muted }};">签到占比</div>
     </div>
   </div>
 
   <!-- 最新参会 -->
   <div class="card mb-6">
     <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
-      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">📋 最新参会 ({{ participant_count }})</h2>
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">📋 最新参会 ({{ stats.participant_count }})</h2>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full">
@@ -98,7 +105,7 @@
   <!-- 告警列表 -->
   <div class="card">
     <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
-      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🔔 近期告警 ({{ alert_count }})</h2>
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🔔 近期告警 ({{ stats.alert_count }})</h2>
     </div>
     <ul class="divide-y" style="border-color: {{ brand.border_color }};">
       {% for a in alerts %}
@@ -122,6 +129,9 @@
   <!-- Footer -->
   <div class="mt-8 text-center text-xs" style="color: {{ brand.text_muted }};">
     {{ brand.footer_text }}
+    {% if demo_mode %}
+    · <span class="text-amber-400">DEMO 模式</span>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

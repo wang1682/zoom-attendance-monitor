@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}AI 报告 - {{ brand.app_name_zh }}{% endblock %}
+
+{% block content %}
+<div class="p-6">
+
+  <!-- 标题 -->
+  <div class="card p-6 mb-6 hero-gradient border-l-4" style="border-left-color: {{ brand.primary_color }};">
+    <div class="flex items-center gap-4">
+      <div class="brand-icon">{{ brand.header_emoji }}</div>
+      <div>
+        <h1 class="text-2xl font-bold text-white">AI 自动报告</h1>
+        <p class="text-sm" style="color: {{ brand.text_secondary }};">智能分析与日报</p>
+      </div>
+      {% if demo_mode %}
+      <div class="ml-auto">
+        <span class="px-3 py-1 text-xs rounded-full bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">⚡ DEMO MODE</span>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 报告列表 -->
+  {% if reports %}
+  <div class="space-y-4">
+    {% for r in reports %}
+    <div class="card p-5">
+      <div class="flex items-center gap-2 mb-3">
+        <i class="fas fa-file-lines text-emerald-400"></i>
+        <span class="text-sm font-semibold text-white">{{ r.title }}</span>
+        <span class="text-xs ml-auto" style="color: {{ brand.text_muted }};">{{ r.created_at[:16] }}</span>
+      </div>
+      <div class="prose prose-invert prose-sm max-w-none" style="color: {{ brand.text_secondary }};">
+        {{ r.content | safe }}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card p-8 text-center" style="color: {{ brand.text_muted }};">
+    <i class="fas fa-file-circle-plus text-4xl mb-3 block"></i>
+    <p>暂无报告</p>
+  </div>
+  {% endif %}
+
+  <!-- Footer -->
+  <div class="mt-8 text-center text-xs" style="color: {{ brand.text_muted }};">
+    {{ brand.footer_text }}
+    {% if demo_mode %}· <span class="text-amber-400">DEMO 模式</span>{% endif %}
+  </div>
+</div>
+{% endblock %}
