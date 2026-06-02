@@ -1,12 +1,17 @@
-<!-- TEMPLATE: events.html v081-manual -->
+<!-- TEMPLATE: events.html v082-polish -->
 {% extends "base.html" %}
 {% block title %}事件记录{% endblock %}
 {% block content %}
 <div class="page-container">
 <div class="page-header"><h1 class="page-title">事件记录</h1><p class="page-subtitle">系统事件流水</p></div>
-<div class="card"><table class="data-table"><thead><tr><th>时间</th><th>事件类型</th><th>内容</th></tr></thead><tbody>
-{% for e in events %}<tr><td class="td-mono">{{ to_myt(e.created_at) }}</td><td class="td-name">{{ e.event_type[:40] }}</td><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts);font-size:12px">{{ (e.payload or "")[:80] }}{% if (e.payload or "")|length > 80 %}...{% endif %}</td></tr>
-{% else %}<tr><td colspan="3" class="td-empty">暂无事件</td></tr>{% endfor %}
-</tbody></table></div>
+<div class="card">
+  {% if events %}
+  <table class="data-table"><thead><tr><th>时间</th><th>事件类型</th><th>内容</th></tr></thead><tbody>
+  {% for e in events %}<tr><td class="td-mono">{{ to_myt(e.created_at) }}</td><td class="td-name">{{ e.event_type[:40] }}</td><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts);font-size:12px">{{ (e.payload or "")[:80] }}{% if (e.payload or "")|length > 80 %}...{% endif %}</td></tr>
+  {% endfor %}</tbody></table>
+  {% else %}
+  <div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无事件</div><div class="es-desc">系统运行正常</div></div>
+  {% endif %}
+</div>
 </div>
 {% endblock %}

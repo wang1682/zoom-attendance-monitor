@@ -6,18 +6,61 @@
   <div class="page-header"><h1>📈 报表分析</h1><p>趋势与排行</p>
     <div style="display:flex;gap:8px"><button class="bt bt-p bt-s" onclick="loadRep(7)" id="r7">7天</button><button class="bt bt-s" onclick="loadRep(30)" id="r30">30天</button><button class="bt bt-s" onclick="expCSV()">📥 CSV</button></div>
   </div>
+
+  <div class="trend-summary" id="trendSummaryArea">
+    <div class="trend-card"><div class="t-icon">📈</div><div class="t-value" id="tsEvents">—</div><div class="t-label">总事件</div></div>
+    <div class="trend-card"><div class="t-icon">👥</div><div class="t-value" id="tsActive">—</div><div class="t-label">活跃人数</div></div>
+    <div class="trend-card"><div class="t-icon">⚠</div><div class="t-value" style="color:var(--wa)" id="tsRisk">—</div><div class="t-label">风险人数</div></div>
+  </div>
+
   <div class="card cp" style="margin-bottom:16px"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">📊 趋势</h2><div class="bar-wrap" id="chartArea"><div style="text-align:center;padding:32px;width:100%;color:var(--tm)">加载中...</div></div></div>
-  <div class="card"><table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>次数</th></tr></thead><tbody id="topTable"></tbody></table></div>
+  <div class="card"><div class="card-header"><h2>排行</h2></div>
+    <table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>次数</th></tr></thead><tbody id="topTable"></tbody></table>
+  </div>
 </div>
 <script>
 let cd=null;
-async function loadRep(d){document.getElementById("r7").className="bt bt-s"+(d===7?' bt-p':'');document.getElementById("r30").className="bt bt-s"+(d===30?' bt-p':'');
-document.getElementById("chartArea").innerHTML='<div style="text-align:center;padding:32px;color:var(--tm)">加载中...</div>';
-const r=await fetch("/api/report-data?days="+d);const j=await r.json();if(!j.ok)return;cd=j;
-const mx=Math.max(...j.trend.map(t=>t.count),1);
-document.getElementById("chartArea").innerHTML=j.trend.map(t=>{const h=Math.max((t.count/mx)*100,t.count>0?6:2);return`<div class="bar" style="height:${h}px" title="${t.date}:${t.count}次"><div class="v">${t.count||""}</div><div class="l">${t.date.slice(5)}</div></div>`}).join("");
-document.getElementById("topTable").innerHTML=j.top.length?j.top.map((p,i)=>`<tr><td class="i">${i+1}</td><td class="nm">${p.name}</td><td>${p.count}次</td></tr>`).join(""):'<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';}
-function expCSV(){if(!cd)return;let c="\uFEFF日期,次数,人数\n";cd.trend.forEach(t=>c+=t.date+","+t.count+","+t.unique+"\n");c+="\n排行\n姓名,次数\n";cd.top.forEach(p=>c+=p.name+","+p.count+"\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([c],{type:"text/csv;charset=utf-8"}));a.download="zoom-report-"+new Date().toISOString().slice(0,10)+".csv";a.click()}
+async function loadRep(d){
+  document.getElementById("r7").className="bt bt-s"+(d===7?' bt-p':'');
+  document.getElementById("r30").className="bt bt-s"+(d===30?' bt-p':'');
+  document.getElementById("chartArea").innerHTML='<div style="text-align:center;padding:32px;color:var(--tm)">加载中...</div>';
+  const r=await fetch("/api/report-data?days="+d);
+  const j=await r.json();if(!j.ok)return;cd=j;
+
+  // Trend summary
+  const totalEvents=j.trend.reduce((s,t)=>s+t.count,0);
+  const totalActive=new Set();
+  j.top.forEach(p=>totalActive.add(p.name));
+  document.getElementById("tsEvents").textContent=totalEvents;
+  document.getElementById("tsActive").textContent=totalActive.size+"人";
+  document.getElementById("tsRisk").textContent="—";
+
+  // Chart
+  const mx=Math.max(...j.trend.map(t=>t.count),1);
+  document.getElementById("chartArea").innerHTML=j.trend.map(t=>{
+    const h=Math.max((t.count/mx)*100,t.count>0?6:2);
+    return `<div class="bar" style="height:${h}px" title="${t.date}:${t.count}次"><div class="v">${t.count||""}</div><div class="l">${t.date.slice(5)}</div></div>`;
+  }).join("");
+
+  // Top table
+  const tb=document.getElementById("topTable");
+  if(j.top.length){
+    tb.innerHTML=j.top.map((p,i)=>`<tr><td class="i">${i+1}</td><td class="nm">${p.name}</td><td>${p.count}次</td></tr>`).join("");
+  } else {
+    tb.innerHTML='<tr><td colspan="3"><div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">选择的时间范围内无记录</div></div></td></tr>';
+  }
+}
+function expCSV(){
+  if(!cd)return;
+  let c="\uFEFF日期,次数,人数\n";
+  cd.trend.forEach(t=>c+=t.date+","+t.count+","+t.unique+"\n");
+  c+="\n排行\n姓名,次数\n";
+  cd.top.forEach(p=>c+=p.name+","+p.count+"\n");
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([c],{type:"text/csv;charset=utf-8"}));
+  a.download="zoom-report-"+new Date().toISOString().slice(0,10)+".csv";
+  a.click();
+}
 loadRep(7);
 </script>
 {% endblock %}

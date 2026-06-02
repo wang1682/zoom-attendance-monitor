@@ -61,64 +61,6 @@ a{color:var(--pr);text-decoration:none}
 ::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:2px}
 .mo{display:none}.st{display:none}
 @media(max-width:768px){.as{position:fixed;left:-260px;top:0;bottom:0;z-index:50;transition:left .25s}.as.op{left:0}.mo{display:none;position:fixed;inset:0;background:var(--ov);z-index:40}.mo.sh{display:block}.st{display:flex}}
-</style>
-{% block head %}{% endblock %}
-</head>
-<body>
-<header class="ah">
-  <button class="st" onclick="tM()" style="color:var(--tm);padding:4px;border:none;background:none;cursor:pointer"><i data-lucide="menu" class="w-5 h-5"></i></button>
-  <a href="/dashboard" style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;text-decoration:none;flex-shrink:0">ZM</a>
-  <a href="/dashboard" style="font-size:13px;font-weight:600;color:var(--ht);text-decoration:none">Zoom Monitor</a>
-  <span style="font-size:10px;color:var(--tm)">v0.8.0</span>
-  <div style="flex:1;min-width:0"></div>
-  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-    <button onclick="tT()" id="tB" style="padding:5px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--card);color:var(--tm);font-size:12px;cursor:pointer">☀️</button>
-    {% if not demo_mode %}<a href="#" onclick="cZ();return false" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none;border:1px solid var(--cb)">🔗 连接 Zoom</a>{% endif %}
-    <a href="about:blank" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none">退出</a>
-  </div>
-</header>
-<div class="mo" id="mO" onclick="tM()"></div>
-<div class="ab">
-  <aside class="as" id="sd">
-    <div class="asc">
-      <div class="ng"><div class="nh" onclick="tN('m',this)"><i data-lucide="monitor" style="width:14px;height:14px"></i><span style="flex:1">监控</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="m">
-        <a href="/dashboard" class="ni {% if request.url.path == '/dashboard' %}act{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>仪表盘</span></a>
-        <a href="/live" class="ni {% if request.url.path == '/live' %}act{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
-        <a href="/participants" class="ni {% if request.url.path == '/participants' %}act{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
-        <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
-      </div></div>
-      <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
-        <a href="/summary" class="ni {% if request.url.path == '/summary' %}act{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
-        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}act{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
-        <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
-        <a href="/reports" class="ni {% if request.url.path == '/reports' %}act{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
-      </div></div>
-      <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">
-        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}act{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
-        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}act{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
-        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}act{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
-      </div></div>
-      <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
-        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}act{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
-        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}act{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
-        <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}act{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
-      </div></div>
-    </div>
-  </aside>
-  <main class="ac"><div class="pc">{% block content %}{% endblock %}</div></main>
-</div>
-<script>
-lucide.createIcons();
-(function(){const s=localStorage.getItem('t');const p=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',s||p);uB(s||p)})();
-function tT(){const c=document.documentElement.getAttribute('data-theme');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('t',n);uB(n)}
-function uB(t){const b=document.getElementById('tB');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
-function tN(id,el){const s=document.getElementById(id);if(!s)return;s.classList.toggle('cl');const c=el.querySelector('.cv');if(c)c.classList.toggle('op')}
-function tM(){document.getElementById('sd').classList.toggle('op');document.getElementById('mO').classList.toggle('sh')}
-function to_myt(s){if(!s||s==='—')return'—';try{const d=new Date(s.replace('Z','+00:00'));if(isNaN(d.getTime()))return s.slice(11,16);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'Asia/Kuala_Lumpur'})}catch(e){return s.slice(11,16)}}
-async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.json();if(d.ok&&d.auth_url){if(d.is_mobile){const t=setTimeout(()=>window.location.href=d.fallback_url,3000);window.location.href=d.auth_url;document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(t)})}else window.location.href=d.auth_url}}
-</script>
-</body>
-</html>
 .page-container{max-width:1340px;margin:0 auto;padding:32px;width:100%}
 @media(max-width:1024px){.page-container{padding:20px 16px}}
 .page-header{margin-bottom:24px}
@@ -151,3 +93,124 @@ async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.js
 .btn-primary{background:var(--pr);color:#fff;border-color:var(--pr)}
 .btn-primary:hover{opacity:.9}
 .btn-sm{padding:5px 12px;font-size:11px}
+.kpi-grid.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:20px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:768px){.grid-2{grid-template-columns:1fr}}
+
+/* Phase 2 -- SaaS Product Polish */
+.card{transition:transform .15s,box-shadow .15s}
+.card:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+[data-theme=dark] .card:hover{box-shadow:0 4px 20px rgba(0,0,0,.3)}
+
+/* Sidebar section titles */
+.st-label{font-size:10px;font-weight:600;color:var(--sb-t);text-transform:uppercase;letter-spacing:.8px;padding:12px 12px 6px;opacity:.5}
+
+/* Metric cards (enhanced KPI with sublabel) */
+.metric-grid{display:grid;gap:12px;margin-bottom:24px}
+.metric-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;min-height:96px;display:flex;flex-direction:column}
+.metric-card .mc-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;margin-bottom:10px}
+.metric-card .mc-value{font-size:28px;font-weight:700;line-height:1.1;color:var(--text)}
+.metric-card .mc-label{font-size:12px;color:var(--ts);margin-top:2px}
+.metric-card .mc-sub{font-size:10px;color:var(--tm);margin-top:1px}
+
+/* Insight grid (3-column insight cards) */
+.insight-grid{display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:16px;margin-bottom:20px}
+@media(max-width:900px){.insight-grid{grid-template-columns:1fr}}
+.insight-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px}
+.insight-card .insight-header{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text)}
+.insight-card .insight-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--div)}
+.insight-card .insight-item:last-child{border-bottom:none}
+.insight-card .insight-name{font-size:13px;font-weight:500;color:var(--text)}
+.insight-card .insight-meta{font-size:11px;color:var(--ts)}
+.insight-card .insight-empty{padding:16px;text-align:center;font-size:12px;color:var(--tm)}
+
+/* Top 3 ranking */
+.top-three{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px}
+@media(max-width:768px){.top-three{grid-template-columns:1fr}}
+.top-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;text-align:center;position:relative}
+.top-card .tc-rank{font-size:28px;margin-bottom:4px}
+.top-card .tc-name{font-size:15px;font-weight:600;color:var(--text)}
+.top-card .tc-stat{font-size:12px;color:var(--ts);margin-top:2px}
+.top-card .tc-sub{font-size:10px;color:var(--tm);margin-top:1px}
+
+/* Empty state */
+.empty-state{text-align:center;padding:48px 24px}
+.empty-state .es-icon{font-size:40px;margin-bottom:12px}
+.empty-state .es-title{font-size:16px;font-weight:600;color:var(--text);margin-bottom:4px}
+.empty-state .es-desc{font-size:13px;color:var(--tm)}
+
+/* Trend summary cards */
+.trend-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+@media(max-width:600px){.trend-summary{grid-template-columns:1fr}}
+.trend-card{background:var(--card);border:1px solid var(--cb);border-radius:10px;padding:14px}
+.trend-card .t-icon{font-size:18px;margin-bottom:6px}
+.trend-card .t-value{font-size:22px;font-weight:700;color:var(--text);line-height:1.1}
+.trend-card .t-label{font-size:11px;color:var(--ts);margin-top:1px}
+
+/* metric-grid columns */
+.mg-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+.mg-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.mg-5,.mg-3{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:500px){.mg-5,.mg-3{grid-template-columns:1fr}}
+</style>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header class="ah">
+  <button class="st" onclick="tM()" style="color:var(--tm);padding:4px;border:none;background:none;cursor:pointer"><i data-lucide="menu" class="w-5 h-5"></i></button>
+  <a href="/dashboard" style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;text-decoration:none;flex-shrink:0">ZM</a>
+  <a href="/dashboard" style="font-size:13px;font-weight:600;color:var(--ht);text-decoration:none">Zoom Monitor</a>
+  <span style="font-size:10px;color:var(--tm)">v0.8.0</span>
+  <div style="flex:1;min-width:0"></div>
+  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+    <button onclick="tT()" id="tB" style="padding:5px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--card);color:var(--tm);font-size:12px;cursor:pointer">☀️</button>
+    {% if not demo_mode %}<a href="#" onclick="cZ();return false" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none;border:1px solid var(--cb)">🔗 连接 Zoom</a>{% endif %}
+    <a href="about:blank" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none">退出</a>
+  </div>
+</header>
+<div class="mo" id="mO" onclick="tM()"></div>
+<div class="ab">
+  <aside class="as" id="sd">
+    <div class="asc">
+      <div class="st-label">MONITOR</div>
+      <div class="ng"><div class="nh" onclick="tN('m',this)"><i data-lucide="monitor" style="width:14px;height:14px"></i><span style="flex:1">监控</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="m">
+        <a href="/dashboard" class="ni {% if request.url.path == '/dashboard' %}act{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>仪表盘</span></a>
+        <a href="/live" class="ni {% if request.url.path == '/live' %}act{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
+        <a href="/participants" class="ni {% if request.url.path == '/participants' %}act{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
+        <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
+      </div></div>
+      <div class="st-label">ANALYTICS</div>
+      <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
+        <a href="/summary" class="ni {% if request.url.path == '/summary' %}act{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
+        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}act{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
+        <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
+        <a href="/reports" class="ni {% if request.url.path == '/reports' %}act{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
+      </div></div>
+      <div class="st-label">AI REPORTS</div>
+      <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">
+        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}act{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
+        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}act{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
+        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}act{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
+      </div></div>
+      <div class="st-label">SETTINGS</div>
+      <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
+        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}act{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
+        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}act{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
+        <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}act{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
+      </div></div>
+    </div>
+  </aside>
+  <main class="ac"><div class="pc">{% block content %}{% endblock %}</div></main>
+</div>
+<script>
+lucide.createIcons();
+(function(){const s=localStorage.getItem('t');const p=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',s||p);uB(s||p)})();
+function tT(){const c=document.documentElement.getAttribute('data-theme');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('t',n);uB(n)}
+function uB(t){const b=document.getElementById('tB');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
+function tN(id,el){const s=document.getElementById(id);if(!s)return;s.classList.toggle('cl');const c=el.querySelector('.cv');if(c)c.classList.toggle('op')}
+function tM(){document.getElementById('sd').classList.toggle('op');document.getElementById('mO').classList.toggle('sh')}
+function to_myt(s){if(!s||s==='—')return'—';try{const d=new Date(s.replace('Z','+00:00'));if(isNaN(d.getTime()))return s.slice(11,16);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'Asia/Kuala_Lumpur'})}catch(e){return s.slice(11,16)}}
+async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.json();if(d.ok&&d.auth_url){if(d.is_mobile){const t=setTimeout(()=>window.location.href=d.fallback_url,3000);window.location.href=d.auth_url;document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(t)})}else window.location.href=d.auth_url}}
+</script>
+</body>
+</html>

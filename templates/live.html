@@ -1,28 +1,80 @@
-<!-- TEMPLATE: live.html v081-manual -->
+<!-- TEMPLATE: live.html v081-final -->
 {% extends "base.html" %}
 {% block title %}实时在线{% endblock %}
 {% block content %}
 <div class="page-container">
   <div class="page-header">
-    <h1 class="page-title">实时在线</h1>
+    <h1 class="page-title">🟢 实时在线</h1>
     <p class="page-subtitle">当前在线参会者</p>
   </div>
-  <div class="kpi-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:20px">
-    <div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:var(--sc-b);color:var(--sc)">🟢</div><span class="kpi-value" id="liveTotal">—</span></div><div class="kpi-label">在线人数</div></div>
-    <div class="kpi-card"><div class="kpi-top"><div class="kpi-icon" style="background:var(--in-b);color:var(--in)">🏢</div><span class="kpi-value" id="liveMeetings">—</span></div><div class="kpi-label">活跃会议室</div></div>
+
+  <div class="kpi-grid two">
+    <div class="kpi-card">
+      <div class="kpi-label">在线人数</div>
+      <div class="kpi-value" id="liveTotal">—</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">活跃会议室</div>
+      <div class="kpi-value" id="liveMeetings">—</div>
+    </div>
   </div>
-  <div class="card" style="margin-bottom:16px"><div class="card-header"><h2>当前在线</h2></div>
-    <table class="data-table"><thead><tr><th>姓名</th><th>会议室</th><th>进入时间</th><th>在线时长</th></tr></thead><tbody id="liveTable"><tr><td colspan="4" class="td-empty">加载中...</td></tr></tbody></table>
-  </div>
-  <div class="card"><div class="card-header"><h2>活跃会议室</h2></div>
-    <table class="data-table"><thead><tr><th>会议 ID</th><th>在线人数</th><th>已进行</th><th>最早进入</th></tr></thead><tbody id="meetingLiveTable"><tr><td colspan="4" class="td-empty">加载中...</td></tr></tbody></table>
+
+  <div class="grid-2">
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">当前在线</h2>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>姓名</th><th>会议室</th><th>进入时间</th><th>在线时长</th></tr>
+        </thead>
+        <tbody id="liveTable">
+          <tr><td colspan="4" class="td-empty">加载中...</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">活跃会议室</h2>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>会议 ID</th><th>在线人数</th><th>已进行</th><th>最早进入</th></tr>
+        </thead>
+        <tbody id="meetingLiveTable">
+          <tr><td colspan="4" class="td-empty">加载中...</td></tr>
+        </tbody>
+      </table>
+    </section>
   </div>
 </div>
 <script>
-async function loadLive(){try{const r=await fetch("/api/v2/live");const d=await r.json();if(!d.ok)return;
-document.getElementById("liveTotal").textContent=d.total_online;document.getElementById("liveMeetings").textContent=Object.keys(d.meetings||{}).length;
-const lt=document.getElementById("liveTable");if(d.online.length){lt.innerHTML=d.online.map(m=>`<tr><td class="td-name">${m.name}</td><td class="td-mono">${m.meeting_id}</td><td>${to_myt(m.enter_time)}</td><td><span class="badge badge-green">${m.online_display||m.online_minutes+"分钟"}</span></td></tr>`).join("")}else{lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>'}
-const mt=document.getElementById("meetingLiveTable");const ms=Object.values(d.meetings||{});if(ms.length){mt.innerHTML=ms.map(m=>`<tr><td class="td-mono">${Object.keys(d.meetings).find(k=>d.meetings[k]===m)}</td><td>${m.participant_count}</td><td>${m.elapsed_minutes}分钟</td><td>${to_myt(m.earliest_enter)}</td></tr>`).join("")}else{mt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>'}}catch(e){document.getElementById("liveTable").innerHTML='<tr><td colspan="4" class="td-empty">失败</td></tr>'}}
-loadLive();setInterval(loadLive,30000);
+async function loadLive(){
+  try{
+    const r=await fetch("/api/v2/live");
+    const d=await r.json();
+    if(!d.ok) return;
+    document.getElementById("liveTotal").textContent=d.total_online;
+    document.getElementById("liveMeetings").textContent=Object.keys(d.meetings||{}).length;
+    const lt=document.getElementById("liveTable");
+    if(d.online.length){
+      lt.innerHTML=d.online.map(m=>`<tr><td class="td-name">${m.name}</td><td class="td-mono">${m.meeting_id}</td><td>${to_myt(m.enter_time)}</td><td><span class="badge badge-green">${m.online_display||m.online_minutes+"分钟"}</span></td></tr>`).join("");
+    } else {
+      lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>';
+    }
+    const mt=document.getElementById("meetingLiveTable");
+    const ms=Object.values(d.meetings||{});
+    if(ms.length){
+      mt.innerHTML=ms.map(m=>`<tr><td class="td-mono">${Object.keys(d.meetings).find(k=>d.meetings[k]===m)}</td><td>${m.participant_count}</td><td>${m.elapsed_minutes}分钟</td><td>${to_myt(m.earliest_enter)}</td></tr>`).join("");
+    } else {
+      mt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>';
+    }
+  } catch(e) {
+    document.getElementById("liveTable").innerHTML='<tr><td colspan="4" class="td-empty">失败</td></tr>';
+  }
+}
+loadLive();
+setInterval(loadLive,30000);
 </script>
 {% endblock %}
