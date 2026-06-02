@@ -2,10 +2,10 @@
 {% block title %}参会明细{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1 class="page-title">参会明细_TEXT</h1><p class="page-subtitle">SUB参会明细</p></div>
-  <div class="card"><table class="data-table"><thead><tr><th>姓名</th><th>动作</th><th>时间</th><th>来源</th></tr></thead><tbody>
+<div class="page-header"><h1 class="page-title">&#128203; 参会明细</h1><p class="page-subtitle">今日所有参会记录</p></div>
+<div class="card"><table class="data-table"><thead><tr><th>姓名</th><th>动作</th><th>时间</th><th>来源</th></tr></thead><tbody>
 {% for p in participants %}<tr><td class="td-name">{{ p.name }}</td><td>{% if p.action == 'enter' %}<span class="badge badge-green">进入</span>{% else %}<span class="badge badge-red">离开</span>{% endif %}</td><td class="td-mono">{{ to_myt(p.action_time) }}</td><td>{{ p.source }}</td></tr>
-{% else %}<tr><td colspan="4" class="td-empty">暂无</td></tr>{% endfor %}
+{% else %}<tr><td colspan="4" class="td-empty">暂无数据</td></tr>{% endfor %}
 </tbody></table></div>
 </div>
 {% endblock %}

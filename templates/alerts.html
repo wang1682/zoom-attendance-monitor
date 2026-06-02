@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}告警日志{% endblock %}
 {% block content %}
-<div class="page-container"><div class="page-header"><h1 class="page-title">&#128276; 告警日志</h1><p class="page-subtitle">监控告警记录</p></div><div class="card">{% if alerts %}<table class="data-table"><thead><tr><th>类型</th><th>标题</th><th>时间</th></tr></thead><tbody>{% for a in alerts %}<tr><td>{% if a.severity == 'error' %}&#128308;{% elif a.severity == 'warning' %}&#128993;{% else %}&#128309;{% endif %}</td><td class="td-name">{{ a.title }}</td><td class="td-mono">{{ to_myt(a.created_at) }}</td></tr>{% endfor %}</tbody></table>{% else %}<div class="td-empty">暂无告警</div>{% endif %}</div></div>
+<div class="page-container">
+<div class="page-header"><h1 class="page-title">&#128276; 告警日志</h1><p class="page-subtitle">监控告警记录</p></div>
+<div class="card">{% if alerts %}<table class="data-table"><thead><tr><th>类型</th><th>标题</th><th>时间</th></tr></thead><tbody>
+{% for a in alerts %}<tr><td>{% if a.severity == 'error' %}&#128308;{% elif a.severity == 'warning' %}&#128993;{% else %}&#128309;{% endif %}</td><td class="td-name">{{ a.title }}</td><td class="td-mono">{{ to_myt(a.created_at) }}</td></tr>
+{% endfor %}</tbody></table>{% else %}<div class="td-empty">暂无告警</div>{% endif %}</div>
+</div>
 {% endblock %}
