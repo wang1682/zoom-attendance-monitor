@@ -1,6 +1,13 @@
-<!-- TEMPLATE: attendance.html v082-polish -->
+<!-- TEMPLATE: attendance.html v090-chart -->
 {% extends "base.html" %}
 {% block title %}出勤统计{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+.chart-wrap{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;margin-bottom:16px}
+.chart-wrap h3{font-size:14px;font-weight:600;margin:0 0 12px;color:var(--text)}
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-container">
 <div class="page-header"><h1 class="page-title">出勤统计</h1><p class="page-subtitle">周/月维度出勤报表</p>
@@ -48,6 +55,11 @@
   </div>
 </div>
 
+<div class="chart-wrap">
+  <h3>📊 出勤趋势</h3>
+  <canvas id="attChart" height="180"></canvas>
+</div>
+
 <div class="card" id="attCard">
   <div class="card-header"><h2>出勤排行</h2></div>
   <table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>天数</th><th>次数</th><th>总时长</th><th>平均</th></tr></thead><tbody id="attTable"><tr><td colspan="6" class="td-empty">加载中...</td></tr></tbody></table>
@@ -55,6 +67,7 @@
 </div>
 
 <script>
+let attChart=null;
 async function loadAtt(p){
   document.getElementById("bw").className="btn btn-sm"+(p==='week'?' btn-primary':'');
   document.getElementById("bm").className="btn btn-sm"+(p==='month'?' btn-primary':'');
@@ -68,18 +81,9 @@ async function loadAtt(p){
   const ms=d.members||[];
   // Top 3
   const top3=ms.slice(0,3);
-  const names=["t1Name","t2Name","t3Name"];
-  const stats=["t1Stat","t2Stat","t3Stat"];
-  const tops=["top1","top2","top3"];
   for(let i=0;i<3;i++){
-    if(top3[i]){
-      document.getElementById(names[i]).textContent=top3[i].name;
-      document.getElementById(stats[i]).textContent=top3[i].total_duration_min+"分钟";
-      document.getElementById(tops[i]).style.display="block";
-    } else {
-      document.getElementById(names[i]).textContent="—";
-      document.getElementById(stats[i]).textContent="—";
-    }
+    document.getElementById("t"+(i+1)+"Name").textContent=top3[i]?top3[i].name:"—";
+    document.getElementById("t"+(i+1)+"Stat").textContent=top3[i]?top3[i].total_duration_min+"分钟":"—";
   }
 
   // Table
@@ -89,7 +93,46 @@ async function loadAtt(p){
   } else {
     t.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">今天还没有出勤记录</div></div></td></tr>';
   }
+
+  // Chart — duration per member (top 8)
+  const top8=ms.slice(0,8);
+  if(attChart) attChart.destroy();
+  const isDark=document.documentElement.getAttribute('data-theme')==='dark';
+  const textColor=isDark?'#94a3b8':'#64748b';
+  const gridColor=isDark?'#1a2540':'#f1f5f9';
+  attChart=new Chart(document.getElementById('attChart'),{
+    type:'bar',
+    data:{
+      labels:top8.map(m=>m.name),
+      datasets:[{
+        label:'总时长（分钟）',
+        data:top8.map(m=>m.total_duration_min),
+        backgroundColor:top8.map((_,i)=>['rgba(99,102,241,.8)','rgba(59,130,246,.8)','rgba(34,197,94,.8)','rgba(251,146,60,.8)','rgba(236,72,153,.8)','rgba(168,85,247,.8)','rgba(20,184,166,.8)','rgba(148,163,184,.8)'][i]),
+        borderRadius:4
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:textColor,font:{size:10}},grid:{display:false}},
+        y:{ticks:{color:textColor,font:{size:10}},grid:{color:gridColor},beginAtZero:true}
+      }
+    }
+  });
 }
 loadAtt('week');
+// Watch theme toggle
+const _origTheme=document.querySelector('#tB')?.onclick;
+const _obs=new MutationObserver(()=>{
+  if(attChart){
+    const isDark=document.documentElement.getAttribute('data-theme')==='dark';
+    attChart.options.scales.x.ticks.color=isDark?'#94a3b8':'#64748b';
+    attChart.options.scales.y.ticks.color=isDark?'#94a3b8':'#64748b';
+    attChart.options.scales.y.grid.color=isDark?'#1a2540':'#f1f5f9';
+    attChart.update();
+  }
+});
+_obs.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 </script>
 {% endblock %}

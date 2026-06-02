@@ -780,6 +780,101 @@ def build_app() -> "FastAPI":
 
         return {"ok": True, "report": report}
 
+    @app.get("/api/v2/ai-daily-report")
+    async def api_ai_daily_report():
+        """Generate formatted AI daily report text for Telegram push"""
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        MYT = timezone(timedelta(hours=8))
+        now_myt = datetime.now(MYT)
+        date_str = now_myt.strftime("%Y-%m-%d")
+
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                live_r = await client.get("http://localhost:8000/api/v2/live")
+                live = live_r.json() if live_r.status_code == 200 else {}
+            except:
+                live = {}
+            try:
+                sum_r = await client.get("http://localhost:8000/api/v2/summary")
+                summary = sum_r.json() if sum_r.status_code == 200 else {}
+            except:
+                summary = {}
+
+        stats = summary.get("stats", {})
+        members = summary.get("members", [])
+        anomalies = live.get("anomalies", [])
+        top_online = live.get("top_online", [])
+        top_active = live.get("top_active", [])
+        ai_summary = live.get("ai_summary", "")
+        online_count = live.get("total_online", 0)
+        total_participants = live.get("unique_participants", stats.get("total_participants", 0))
+        total_events = live.get("total_events", 0)
+
+        lines = []
+        lines.append(f"\U0001f4ca Zoom Monitor \u65e5\u62a5")
+        lines.append(f"\U0001f4c5 {date_str}")
+        lines.append("")
+        late = stats.get("late_count", 0)
+        early = stats.get("early_leave_count", 0)
+        risk = late + early
+        lines.append(f"\U0001f465 \u53c2\u4e0e: {total_participants}  |  \U0001f7e2 \u5728\u7ebf: {online_count}")
+        lines.append(f"\U0001f4cb \u4e8b\u4ef6: {total_events}  |  \u26a0 \u98ce\u9669: {risk}")
+        lines.append(f"\u23f1 \u5e73\u5747: {stats.get('avg_duration_min', 0)} \u5206\u949f")
+        lines.append("")
+
+        if top_active:
+            lines.append("\U0001f3c6 \u6700\u6d3b\u8dc3")
+            for ta in top_active[:3]:
+                lines.append(f"  {ta['name']} \u2014 {ta['count']} \u6b21")
+            lines.append("")
+        if top_online:
+            lines.append("\u23f1 \u6700\u957f\u5728\u7ebf")
+            for to in top_online[:3]:
+                lines.append(f"  {to['name']} \u2014 {to['duration_display']}")
+            lines.append("")
+        if anomalies:
+            lines.append("\U0001f6a8 \u98ce\u9669")
+            for a in anomalies[:5]:
+                lines.append(f"  \u26a0 {a['name']} \u2014 {', '.join(a['flags'])} ({a['actions']}\u6b21)")
+            lines.append("")
+        if ai_summary:
+            lines.append("\U0001f916 AI \u5206\u6790")
+            lines.append(f"  {ai_summary}")
+            lines.append("")
+        if late > 0 or early > 0:
+            lines.append(f"\u26a0 \u5f02\u5e38: \u8fdf\u5230 {late}  |  \u65e9\u9000 {early}")
+            risk_members = [m for m in members if m.get("is_late") or m.get("is_early_leave")]
+            for rm in risk_members[:5]:
+                tags = []
+                if rm.get("is_late"): tags.append("\u8fdf\u5230")
+                if rm.get("is_early_leave"): tags.append("\u65e9\u9000")
+                lines.append(f"  {rm['name']} ({', '.join(tags)})")
+
+        return {"ok": True, "report": "\n".join(lines), "date": date_str}
+
+    @app.get("/api/v2/tg-send-daily-report")
+    async def api_tg_send_daily_report():
+        """Send AI daily report to Telegram"""
+        import httpx
+        report_resp = await api_ai_daily_report()
+        if not report_resp.get("ok"):
+            return {"ok": False, "error": "Daily report generation failed"}
+        text = report_resp["report"]
+        token = settings.telegram_bot_token
+        chat_id = settings.telegram_group_chat_id or settings.telegram_private_chat_id
+        if not token or not chat_id:
+            return {"ok": False, "error": "Telegram not configured"}
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text},
+                )
+                return {"ok": r.json().get("ok", False)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     # ── 实时功能 ────────────────────────────────────────────────────────────
 
     @app.get("/api/v2/live")

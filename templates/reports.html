@@ -1,6 +1,18 @@
 {% extends "base.html" %}
 {% block title %}报表分析{% endblock %}
-{% block head %}<style>.bar-wrap{display:flex;align-items:end;gap:4px;height:100px;padding:0 4px}.bar{flex:1;border-radius:2px 2px 0 0;min-height:2px;position:relative;transition:height .3s;cursor:pointer;background:linear-gradient(180deg,var(--in),var(--pr))}.bar .v{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9px;color:var(--tm);margin-bottom:2px;white-space:nowrap}.bar .l{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:8px;color:var(--tm);margin-top:2px;white-space:nowrap}</style>{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+.bar-wrap{display:flex;align-items:end;gap:4px;height:100px;padding:0 4px}
+.bar{flex:1;border-radius:2px 2px 0 0;min-height:2px;position:relative;transition:height .3s;cursor:pointer;background:linear-gradient(180deg,var(--in),var(--pr))}
+.bar .v{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9px;color:var(--tm);margin-bottom:2px;white-space:nowrap}
+.bar .l{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:8px;color:var(--tm);margin-top:2px;white-space:nowrap}
+.chart-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;margin-bottom:16px}
+.chart-card h3{font-size:14px;font-weight:600;margin:0 0 12px;color:var(--text)}
+.cc2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:768px){.cc2{grid-template-columns:1fr}}
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-container">
   <div class="page-header"><h1>📈 报表分析</h1><p>趋势与排行</p>
@@ -13,13 +25,41 @@
     <div class="trend-card"><div class="t-icon">⚠</div><div class="t-value" style="color:var(--wa)" id="tsRisk">—</div><div class="t-label">风险人数</div></div>
   </div>
 
-  <div class="card cp" style="margin-bottom:16px"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">📊 趋势</h2><div class="bar-wrap" id="chartArea"><div style="text-align:center;padding:32px;width:100%;color:var(--tm)">加载中...</div></div></div>
+  <div class="cc2">
+    <div class="chart-card">
+      <h3>🏆 Top 10 成员</h3>
+      <canvas id="topChart" height="180"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>📊 每日事件数</h3>
+      <canvas id="dailyChart" height="180"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <h3>📈 趋势</h3>
+    <div class="bar-wrap" id="chartArea"><div style="text-align:center;padding:32px;width:100%;color:var(--tm)">加载中...</div></div>
+  </div>
+
   <div class="card"><div class="card-header"><h2>排行</h2></div>
     <table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>次数</th></tr></thead><tbody id="topTable"></tbody></table>
   </div>
 </div>
 <script>
 let cd=null;
+let topChartInst=null;
+let dailyChartInst=null;
+
+function getChartColors(){
+  const isDark=document.documentElement.getAttribute('data-theme')==='dark';
+  return{
+    text:isDark?'#94a3b8':'#64748b',
+    grid:isDark?'#1a2540':'#f1f5f9',
+    card:isDark?'#12182b':'#fff',
+    barColors:['rgba(99,102,241,.85)','rgba(59,130,246,.85)','rgba(34,197,94,.85)','rgba(251,146,60,.85)','rgba(236,72,153,.85)','rgba(168,85,247,.85)','rgba(20,184,166,.85)','rgba(148,163,184,.85)','rgba(239,68,68,.85)','rgba(245,158,11,.85)']
+  };
+}
+
 async function loadRep(d){
   document.getElementById("r7").className="bt bt-s"+(d===7?' bt-p':'');
   document.getElementById("r30").className="bt bt-s"+(d===30?' bt-p':'');
@@ -29,13 +69,68 @@ async function loadRep(d){
 
   // Trend summary
   const totalEvents=j.trend.reduce((s,t)=>s+t.count,0);
-  const totalActive=new Set();
-  j.top.forEach(p=>totalActive.add(p.name));
+  const activeSet=new Set();
+  j.top.forEach(p=>activeSet.add(p.name));
   document.getElementById("tsEvents").textContent=totalEvents;
-  document.getElementById("tsActive").textContent=totalActive.size+"人";
+  document.getElementById("tsActive").textContent=activeSet.size+"人";
   document.getElementById("tsRisk").textContent="—";
 
-  // Chart
+  // Chart colors
+  const cc=getChartColors();
+
+  // Top 10 chart
+  const top10=j.top.slice(0,10);
+  if(topChartInst) topChartInst.destroy();
+  topChartInst=new Chart(document.getElementById('topChart'),{
+    type:'bar',
+    data:{
+      labels:top10.map(p=>p.name),
+      datasets:[{
+        label:'次数',
+        data:top10.map(p=>p.count),
+        backgroundColor:top10.map((_,i)=>cc.barColors[i]),
+        borderRadius:4
+      }]
+    },
+    options:{
+      indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true},
+        y:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}}
+      }
+    }
+  });
+
+  // Daily events chart
+  const trend=j.trend.filter(t=>t.count>0);
+  if(dailyChartInst) dailyChartInst.destroy();
+  dailyChartInst=new Chart(document.getElementById('dailyChart'),{
+    type:'line',
+    data:{
+      labels:trend.map(t=>{const p=t.date.split('-');return p[1]+'/'+p[2]}),
+      datasets:[{
+        label:'事件',
+        data:trend.map(t=>t.count),
+        borderColor:'rgba(99,102,241,.9)',
+        backgroundColor:'rgba(99,102,241,.1)',
+        fill:true,
+        tension:.3,
+        pointRadius:3,
+        pointBackgroundColor:'rgba(99,102,241,.9)'
+      }]
+    },
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false}},
+      scales:{
+        x:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}},
+        y:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true}
+      }
+    }
+  });
+
+  // Mini bar chart
   const mx=Math.max(...j.trend.map(t=>t.count),1);
   document.getElementById("chartArea").innerHTML=j.trend.map(t=>{
     const h=Math.max((t.count/mx)*100,t.count>0?6:2);
@@ -50,6 +145,7 @@ async function loadRep(d){
     tb.innerHTML='<tr><td colspan="3"><div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">选择的时间范围内无记录</div></div></td></tr>';
   }
 }
+
 function expCSV(){
   if(!cd)return;
   let c="\uFEFF日期,次数,人数\n";
@@ -61,6 +157,21 @@ function expCSV(){
   a.download="zoom-report-"+new Date().toISOString().slice(0,10)+".csv";
   a.click();
 }
+
 loadRep(7);
+
+// Theme sync
+const _obs=new MutationObserver(()=>{
+  const cc=getChartColors();
+  [topChartInst,dailyChartInst].forEach(chart=>{
+    if(!chart)return;
+    chart.options.scales.x.ticks.color=cc.text;
+    chart.options.scales.y.ticks.color=cc.text;
+    if(chart.options.scales.y.grid) chart.options.scales.y.grid.color=cc.grid;
+    if(chart.options.scales.x.grid) chart.options.scales.x.grid.color=cc.grid;
+    chart.update();
+  });
+});
+_obs.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
 </script>
 {% endblock %}
