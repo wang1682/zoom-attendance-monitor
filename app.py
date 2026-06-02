@@ -26,9 +26,26 @@ def to_myt(dt_str):
     try:
         s = dt_str.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
-        return dt.astimezone(MYT).strftime("%m-%d %H:%M")
+        return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
     except:
         return dt_str[:16]
+
+
+
+def dedup_participants(participants):
+    """合并连续同人的进出记录，只保留状态变化"""
+    if not participants:
+        return []
+    result = [participants[0]]
+    for p in participants[1:]:
+        p_name = p.get('name', '') if isinstance(p, dict) else ''
+        p_act = p.get('action', '') if isinstance(p, dict) else ''
+        last = result[-1]
+        l_name = last.get('name', '') if isinstance(last, dict) else ''
+        l_act = last.get('action', '') if isinstance(last, dict) else ''
+        if p_name != l_name or p_act != l_act:
+            result.append(p)
+    return result
 
 BASE_DIR = Path(__file__).parent
 
@@ -66,6 +83,7 @@ def build_app() -> "FastAPI":
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
+    tmpl.env.filters["myt"] = to_myt
 
     # ── DB 初始化中间件 ─────────────────────────────────────────────────────
     @app.middleware("http")
@@ -95,7 +113,7 @@ def build_app() -> "FastAPI":
             alerts = demo.get_demo_alerts()
             stats = demo.get_demo_stats()
         else:
-            participants = db.get_today_participants(limit=100)
+            participants = dedup_participants(db.get_today_participants(limit=100))
             alerts = db.get_recent_alerts(limit=20)
             stats = {
                 "participant_count": len(participants),
@@ -346,7 +364,7 @@ def build_app() -> "FastAPI":
     async def api_tg_send_test():
         """发送测试消息到 Telegram"""
         token = "8791140288:AAHL_7Az6vQitTIJUhlP-M8YaMXzPz2joG4"
-        now_str = datetime.now(MYT).strftime("%m-%d %H:%M")
+        now_str = datetime.now(MYT).strftime("%m-%d %H:%M:%S")
         try:
             import requests as req
             r = req.post(f"https://api.telegram.org/bot{token}/sendMessage", json={
@@ -797,7 +815,7 @@ def build_app() -> "FastAPI":
                 "name": d["name"],
                 "meeting_id": d["meeting_id"],
                 "enter_time": d["action_time"],
-                "online_minutes": duration,
+                "online_minutes": duration, "online_display": f"{duration//60}h{duration%60:02d}" if duration >= 60 else f"{duration}分钟",
             })
 
         # 会议维度：当前有多少会开着
@@ -820,7 +838,25 @@ def build_app() -> "FastAPI":
             info["participant_count"] = len(set(info["participants"]))
             del info["participants"]
 
-        return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online)}
+        # 在线时长排行
+        sorted_online = sorted(online, key=lambda x: -x["online_minutes"])
+        top_online = [{"name": p["name"], "duration_display": p["online_display"], "minutes": p["online_minutes"]} for p in sorted_online[:5]]
+
+        # 今日总记录数
+        total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        online_rate = round(len(online) / total_today * 100, 1) if total_today > 0 else 0
+
+        # 活跃时段（按小时）
+        hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+        active_hours = [f"{r[0]:02d}:00-{r[0]+1:02d}:00" for r in hour_dist]
+
+        # 最活跃成员
+        top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+
+        return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
+                "total_today": total_today, "online_rate": online_rate,
+                "top_online": top_online, "active_hours": active_hours,
+                "top_active": [{"name": r[0], "count": r[1]} for r in top_active]}
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
