@@ -856,44 +856,93 @@ def build_app() -> "FastAPI":
         # 最活跃成员
         top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY c DESC LIMIT 3", (today,)).fetchall()
 
-        # 参与者汇总（去重后每人统计）
+        # 参与者汇总（去重后每人统计，含异常检测）
         participants_summary = []
+        anomalies = []  # 异常成员列表
         unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ?", (today,)).fetchall()
         for (name,) in unique_names_rows:
             enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'enter'", (today, name)).fetchone()[0]
             leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'leave'", (today, name)).fetchone()[0]
+            total_actions = enters + leaves
             last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND name = ?", (today, name)).fetchone()[0]
             last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
             is_online = last_action and last_action[0] == "enter"
-            # 计算在线时长（配对 enter/leave）
+
+            # 在线时长（前30对进出配对）
             pairs = conn.execute("""
                 SELECT e.action_time, l.action_time FROM zoom_participants e
                 LEFT JOIN zoom_participants l ON e.rowid < l.rowid AND e.name = l.name AND e.meeting_id = l.meeting_id
                 AND e.action = 'enter' AND l.action = 'leave'
                 WHERE e.name = ? AND e.action_time >= ?
-                ORDER BY e.action_time
+                ORDER BY e.action_time LIMIT 30
             """, (name, today)).fetchall()
-            total_secs = 0
+            total_secs = 0; short_sessions = 0
             for et, lt in pairs:
                 try:
                     if lt:
-                        total_secs += (datetime.fromisoformat(lt) - datetime.fromisoformat(et)).total_seconds()
+                        secs = (datetime.fromisoformat(lt) - datetime.fromisoformat(et)).total_seconds()
+                        total_secs += secs
+                        if 0 < secs < 60: short_sessions += 1  # 少于1分钟
                 except: pass
             duration_min = int(total_secs / 60) if total_secs else 0
             duration_display = f"{duration_min//60}h{duration_min%60:02d}" if duration_min >= 60 else f"{duration_min}分钟"
+
+            # 异常检测
+            flags = []
+            if total_actions >= 10:
+                flags.append("高频进出")
+            if enters > 0 and leaves > 0 and short_sessions >= 3:
+                flags.append("频繁断线")
+            if enters > 0 and duration_min < 1 and short_sessions == 0:
+                flags.append("秒进秒出")
+            if enters > 0 and duration_min > 0:
+                avg_per_session = total_secs / enters / 60
+                if avg_per_session < 2:
+                    flags.append("在线过短")
+
             participants_summary.append({
                 "name": name, "enters": enters, "leaves": leaves,
                 "total_duration_min": duration_min, "duration_display": duration_display,
-                "is_online": is_online, "last_active": (last_time or "")[:19]
+                "is_online": is_online, "last_active": (last_time or "")[:19],
+                "flags": flags, "total_actions": total_actions, "short_sessions": short_sessions,
+                "avg_min": round(total_secs / enters / 60, 1) if enters else 0
             })
-        participants_summary.sort(key=lambda x: -x["total_duration_min"])
+            if flags:
+                anomalies.append({"name": name, "flags": flags, "actions": total_actions})
+
+        # 排序：异常优先，再按时长
+        participants_summary.sort(key=lambda x: (-len(x["flags"]), -x["total_duration_min"]))
+
+        # 健康度
+        health_level = "green"
+        if len(anomalies) >= 3:
+            health_level = "red"
+        elif len(anomalies) >= 1:
+            health_level = "yellow"
+
+        # AI 总结
+        ai_summary_parts = [f"今天共有 {unique_participants} 位参与者。"]
+        if online:
+            ai_summary_parts.append(f"当前在线 {len(online)} 人。")
+        if anomalies:
+            top_anomaly = anomalies[0]
+            if "高频进出" in top_anomaly["flags"]:
+                ai_summary_parts.append(f"{top_anomaly['name']} 出现 {top_anomaly['actions']} 次进出，疑似网络不稳定。")
+            for a in anomalies[1:2]:
+                ai_summary_parts.append(f"{a['name']} {'、'.join(a['flags'])}。")
+            ai_summary_parts.append("建议关注：" + "、".join(a["name"] for a in anomalies[:3]))
+        else:
+            ai_summary_parts.append("整体情况正常。")
+        ai_summary = "".join(ai_summary_parts)
 
         return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
                 "total_events": total_events, "unique_participants": unique_participants,
                 "unique_online_rate": unique_online_rate,
                 "top_online": top_online, "active_hours": active_hours,
                 "top_active": [{"name": r[0], "count": r[1]} for r in top_active],
-                "participants_summary": participants_summary}
+                "participants_summary": participants_summary,
+                "anomalies": anomalies, "health_level": health_level,
+                "ai_summary": ai_summary}
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
