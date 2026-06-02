@@ -96,21 +96,21 @@ body { background: #f1f5f9 !important; }
     <!-- 左：异常 Top 3 -->
     <div class="card-w p-4">
       <div class="hdr"><h2>🚨 TOP 异常成员</h2><span class="cnt" id="anomalyTotal">—</span></div>
-      <div id="anomalyList"><div class="text-xs text-gray-400 text-center py-6">加载中...</div></div>
+      <div id="anomalyList"><div class="text-xs  text-center py-6">加载中...</div></div>
     </div>
 
     <!-- 中：AI 总结 -->
     <div class="card-w p-4">
       <div class="hdr"><h2>🤖 AI 总结</h2></div>
       <div id="aiBlock">
-        <div class="text-xs text-gray-400">加载中...</div>
+        <div class="text-xs ">加载中...</div>
       </div>
     </div>
 
     <!-- 右：当前在线 -->
     <div class="card-w p-4">
       <div class="hdr"><h2>🟢 当前在线</h2><span class="cnt" id="onlineCount">—</span></div>
-      <div id="onlineList"><div class="text-xs text-gray-400 text-center py-6">暂无在线</div></div>
+      <div id="onlineList"><div class="text-xs  text-center py-6">暂无在线</div></div>
     </div>
   </div>
 
@@ -191,7 +191,7 @@ async function load() {
         const flags = a.flags?.join("、") || "异常";
         return `<div class="rank-card"><span class="rank-num ${rankClass}">${i+1}</span><div style="flex:1"><div class="rank-name">${a.name}</div><div class="rank-detail">${flags}</div></div><div class="rank-count">${a.actions} 次</div></div>`;
       }).join("");
-    } else { al.innerHTML = '<div class="text-xs text-gray-400 text-center py-6">✅ 今日无异常</div>'; }
+    } else { al.innerHTML = '<div class="text-xs  text-center py-6">✅ 今日无异常</div>'; }
 
     // AI
     const ai = document.getElementById("aiBlock");
@@ -206,7 +206,7 @@ async function load() {
       ol.innerHTML = d.online.map((p, i) =>
         `<div class="online-item"><span class="online-dot"></span><span style="flex:1;font-size:13px;font-weight:500;color:#0f172a">${p.name}</span><span style="font-size:12px;color:#64748b">${p.online_display || p.online_minutes + '分钟'}</span></div>`
       ).join("");
-    } else { ol.innerHTML = '<div class="text-xs text-gray-400 text-center py-6">暂无在线</div>'; }
+    } else { ol.innerHTML = '<div class="text-xs  text-center py-6">暂无在线</div>'; }
 
     // 参与者概览
     summaryFull = d.participants_summary || [];

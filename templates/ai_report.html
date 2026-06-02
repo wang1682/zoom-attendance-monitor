@@ -4,33 +4,33 @@
 <div class="max-w-[1400px] mx-auto">
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h1 class="text-lg font-semibold text-white">🤖 AI {{ period_name }}</h1>
-      <p class="text-xs text-gray-500 mt-0.5">自动生成参会分析报告</p>
+      <h1 class="text-lg font-semibold ">🤖 AI {{ period_name }}</h1>
+      <p class="text-xs  mt-0.5">自动生成参会分析报告</p>
     </div>
-    <button onclick="generateReport()" class="text-xs px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors" id="genBtn">📄 生成报告</button>
+    <button onclick="generateReport()" class="text-xs px-4 py-2 rounded-lg btn-primary  hover:bg-primary-500 transition-colors" id="genBtn">📄 生成报告</button>
   </div>
 
   <!-- 统计概览 -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6" id="statsRow" style="display:none">
-    <div class="card p-5"><div class="text-xs text-gray-500">参会人数</div><div class="text-2xl font-bold text-white mt-1" id="statPeople">—</div></div>
-    <div class="card p-5"><div class="text-xs text-gray-500">进入次数</div><div class="text-2xl font-bold text-white mt-1" id="statEntries">—</div></div>
-    <div class="card p-5"><div class="text-xs text-gray-500">报告周期</div><div class="text-lg font-semibold text-white mt-1" id="statPeriod">—</div></div>
+    <div class="card card-p"><div class="text-xs ">参会人数</div><div class="text-2xl font-bold  mt-1" id="statPeople">—</div></div>
+    <div class="card card-p"><div class="text-xs ">进入次数</div><div class="text-2xl font-bold  mt-1" id="statEntries">—</div></div>
+    <div class="card card-p"><div class="text-xs ">报告周期</div><div class="text-lg font-semibold  mt-1" id="statPeriod">—</div></div>
   </div>
 
   <!-- AI 报告内容 -->
-  <div class="card p-6" id="reportCard">
+  <div class="card card-p" id="reportCard">
     <div class="text-center py-16" id="emptyState">
       <div class="text-4xl mb-4">📄</div>
-      <div class="text-base font-medium text-gray-300 mb-2">暂无 {{ period_name }}</div>
-      <div class="text-sm text-gray-500 mb-6">点击「生成报告」按钮，AI 会自动分析该周期内的参会数据</div>
-      <button onclick="generateReport()" class="text-sm px-5 py-2.5 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors">🚀 生成 {{ period_name }}</button>
+      <div class="text-base font-medium  mb-2">暂无 {{ period_name }}</div>
+      <div class="text-sm  mb-6">点击「生成报告」按钮，AI 会自动分析该周期内的参会数据</div>
+      <button onclick="generateReport()" class="text-sm px-5 py-2.5 rounded-lg btn-primary  hover:bg-primary-500 transition-colors">🚀 生成 {{ period_name }}</button>
     </div>
     <div id="reportContent" style="display:none">
-      <div class="flex items-center gap-2 mb-4 pb-4 border-b border-surface-700">
-        <span class="text-xs text-gray-500">🤖 AI 分析报告</span>
+      <div class="flex items-center gap-2 mb-4 pb-4 border-b ">
+        <span class="text-xs ">🤖 AI 分析报告</span>
         <span class="text-xs px-2 py-0.5 rounded bg-primary-900/40 text-primary-400 border border-primary-800/30">{{ period_name }}</span>
       </div>
-      <div id="reportText" class="text-sm leading-relaxed text-gray-300 whitespace-pre-wrap"></div>
+      <div id="reportText" class="text-sm leading-relaxed  whitespace-pre-wrap"></div>
     </div>
   </div>
 </div>
@@ -58,7 +58,7 @@ async function generateReport() {
       document.getElementById("statPeriod").textContent = "{{ period_name }}";
       text.innerHTML = d.report.replace(/\n/g, "<br>");
     } else if (d.note) {
-      text.innerHTML = '<div class="text-center py-8 text-gray-500">' + d.note + '</div>';
+      text.innerHTML = '<div class="text-center py-8 ">' + d.note + '</div>';
     } else {
       text.textContent = "生成失败: " + (d.error || "未知错误");
     }

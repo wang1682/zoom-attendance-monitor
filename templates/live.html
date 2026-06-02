@@ -4,21 +4,21 @@
 <div class="max-w-[1400px] mx-auto">
   <div class="flex items-center justify-between mb-6">
     <div>
-      <h1 class="text-lg font-semibold text-white">🟢 实时在线</h1>
-      <p class="text-xs text-gray-500 mt-0.5">当前在线参会者</p>
+      <h1 class="text-lg font-semibold ">🟢 实时在线</h1>
+      <p class="text-xs  mt-0.5">当前在线参会者</p>
     </div>
   </div>
   <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-    <div class="card p-5"><div class="text-xs text-gray-500">在线人数</div><div class="text-2xl font-bold text-white mt-1" id="liveTotal">—</div></div>
-    <div class="card p-5"><div class="text-xs text-gray-500">活跃会议室</div><div class="text-2xl font-bold text-white mt-1" id="liveMeetings">—</div></div>
+    <div class="card card-p"><div class="text-xs ">在线人数</div><div class="text-2xl font-bold  mt-1" id="liveTotal">—</div></div>
+    <div class="card card-p"><div class="text-xs ">活跃会议室</div><div class="text-2xl font-bold  mt-1" id="liveMeetings">—</div></div>
   </div>
-  <div class="card overflow-hidden mb-6">
-    <div class="px-5 py-3.5 border-b border-surface-700"><h2 class="text-sm font-semibold text-gray-300">👤 当前在线</h2></div>
-    <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="table-header">姓名</th><th class="table-header hidden sm:table-cell">会议室</th><th class="table-header">进入时间</th><th class="table-header">已在线</th></tr></thead><tbody id="liveTable"></tbody></table></div>
+  <div class="card mb-6">
+    <div class="px-5 py-3.5 border-b "><h2 class="text-sm font-semibold ">👤 当前在线</h2></div>
+    <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="dtable th">姓名</th><th class="dtable th hidden sm:dtable td">会议室</th><th class="dtable th">进入时间</th><th class="dtable th">已在线</th></tr></thead><tbody id="liveTable"></tbody></table></div>
   </div>
-  <div class="card overflow-hidden">
-    <div class="px-5 py-3.5 border-b border-surface-700"><h2 class="text-sm font-semibold text-gray-300">🏢 活跃会议室</h2></div>
-    <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="table-header">会议 ID</th><th class="table-header">在线人数</th><th class="table-header">已进行</th><th class="table-header">最早进入</th></tr></thead><tbody id="meetingLiveTable"></tbody></table></div>
+  <div class="card">
+    <div class="px-5 py-3.5 border-b "><h2 class="text-sm font-semibold ">🏢 活跃会议室</h2></div>
+    <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="dtable th">会议 ID</th><th class="dtable th">在线人数</th><th class="dtable th">已进行</th><th class="dtable th">最早进入</th></tr></thead><tbody id="meetingLiveTable"></tbody></table></div>
   </div>
 </div>
 <script>
@@ -27,9 +27,9 @@ async function loadLive() {
   if (!d.ok) return;
   document.getElementById("liveTotal").textContent = d.total_online;
   document.getElementById("liveMeetings").textContent = Object.keys(d.meetings||{}).length;
-  document.getElementById("liveTable").innerHTML = d.online.length ? d.online.map(m=>`<tr class="hover-row"><td class="table-cell font-medium">${m.name}</td><td class="table-cell hidden sm:table-cell font-mono">${m.meeting_id}</td><td class="table-cell font-mono text-xs text-gray-500">${to_myt(m.enter_time)}</td><td class="table-cell"><span class="badge-green">${m.online_minutes}分钟</span></td></tr>`).join("") : '<tr><td colspan="4" class="text-center py-12 text-gray-600">暂无</td></tr>';
+  document.getElementById("liveTable").innerHTML = d.online.length ? d.online.map(m=>`<tr class="hover-row"><td class="dtable td font-medium">${m.name}</td><td class="dtable td hidden sm:dtable td font-mono">${m.meeting_id}</td><td class="dtable td font-mono text-xs ">${to_myt(m.enter_time)}</td><td class="dtable td"><span class="badge-green">${m.online_display || m.online_minutes + "分钟"}</span></td></tr>`).join("") : '<tr><td colspan="4" class="text-center py-12 ">暂无</td></tr>';
   const ms = Object.values(d.meetings||{});
-  document.getElementById("meetingLiveTable").innerHTML = ms.length ? ms.map(m=>`<tr class="hover-row"><td class="table-cell font-mono">${Object.keys(d.meetings).find(k=>d.meetings[k]===m)}</td><td class="table-cell">${m.participant_count}</td><td class="table-cell">${m.elapsed_minutes}分钟</td><td class="table-cell font-mono text-xs text-gray-500">${to_myt(m.earliest_enter)}</td></tr>`).join("") : '<tr><td colspan="4" class="text-center py-12 text-gray-600">暂无</td></tr>';
+  document.getElementById("meetingLiveTable").innerHTML = ms.length ? ms.map(m=>`<tr class="hover-row"><td class="dtable td font-mono">${Object.keys(d.meetings).find(k=>d.meetings[k]===m)}</td><td class="dtable td">${m.participant_count}</td><td class="dtable td">${Math.floor(m.elapsed_minutes/60) > 0 ? Math.floor(m.elapsed_minutes/60)+"h"+String(m.elapsed_minutes%60).padStart(2,"0") : m.elapsed_minutes+"分钟"}</td><td class="dtable td font-mono text-xs ">${to_myt(m.earliest_enter)}</td></tr>`).join("") : '<tr><td colspan="4" class="text-center py-12 ">暂无</td></tr>';
 }
 loadLive();
 setInterval(loadLive, 30000);

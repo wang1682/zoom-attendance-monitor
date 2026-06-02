@@ -3,55 +3,55 @@
 {% block content %}
 <div class="max-w-[1400px] mx-auto">
   <div class="mb-6">
-    <h1 class="text-lg font-semibold text-white">📤 Telegram 配置</h1>
-    <p class="text-xs text-gray-500 mt-0.5">Bot 推送配置</p>
+    <h1 class="text-lg font-semibold ">📤 Telegram 配置</h1>
+    <p class="text-xs  mt-0.5">Bot 推送配置</p>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Bot 状态 -->
-    <div class="card p-5">
-      <h2 class="text-sm font-semibold text-gray-300 mb-4">🤖 Bot 状态</h2>
+    <div class="card card-p">
+      <h2 class="text-sm font-semibold  mb-4">🤖 Bot 状态</h2>
       <div class="space-y-3">
-        <div class="flex justify-between items-center py-2 border-b border-surface-700">
-          <span class="text-sm text-gray-400">状态</span>
+        <div class="flex justify-between items-center py-2 border-b ">
+          <span class="text-sm ">状态</span>
           <span class="text-sm {% if bot_ok %}text-emerald-400{% else %}text-red-400{% endif %}">
             {% if bot_ok %}🟢 在线{% else %}🔴 离线{% endif %}
           </span>
         </div>
-        <div class="flex justify-between items-center py-2 border-b border-surface-700">
-          <span class="text-sm text-gray-400">Bot 用户名</span>
-          <span class="text-sm text-gray-200">{% if bot_ok %}@{{ bot_username }}{% else %}—{% endif %}</span>
+        <div class="flex justify-between items-center py-2 border-b ">
+          <span class="text-sm ">Bot 用户名</span>
+          <span class="text-sm ">{% if bot_ok %}@{{ bot_username }}{% else %}—{% endif %}</span>
         </div>
-        <div class="flex justify-between items-center py-2 border-b border-surface-700">
-          <span class="text-sm text-gray-400">通知 chat ID</span>
-          <span class="text-sm font-mono text-gray-200">{{ home_chat_id }}</span>
+        <div class="flex justify-between items-center py-2 border-b ">
+          <span class="text-sm ">通知 chat ID</span>
+          <span class="text-sm font-mono ">{{ home_chat_id }}</span>
         </div>
       </div>
     </div>
 
     <!-- 测试 -->
-    <div class="card p-5">
-      <h2 class="text-sm font-semibold text-gray-300 mb-4">🧪 测试推送</h2>
-      <p class="text-xs text-gray-500 mb-4">发送测试消息到你的 Telegram</p>
-      <button onclick="testPush()" class="text-sm px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors" id="testBtn">📨 发送测试消息</button>
+    <div class="card card-p">
+      <h2 class="text-sm font-semibold  mb-4">🧪 测试推送</h2>
+      <p class="text-xs  mb-4">发送测试消息到你的 Telegram</p>
+      <button onclick="testPush()" class="text-sm px-4 py-2 rounded-lg btn-primary  hover:bg-primary-500 transition-colors" id="testBtn">📨 发送测试消息</button>
       <div id="testResult" class="mt-3 text-sm"></div>
     </div>
 
     <!-- Bot 配置说明 -->
-    <div class="card p-5 lg:col-span-2">
-      <h2 class="text-sm font-semibold text-gray-300 mb-3">📋 Bot 命令列表</h2>
+    <div class="card card-p lg:col-span-2">
+      <h2 class="text-sm font-semibold  mb-3">📋 Bot 命令列表</h2>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div class="p-3 rounded-lg bg-surface-850">
-          <div class="text-sm font-medium text-gray-200">/start</div>
-          <div class="text-xs text-gray-500 mt-1">开始使用</div>
+        <div class="p-3 rounded-lg ">
+          <div class="text-sm font-medium ">/start</div>
+          <div class="text-xs  mt-1">开始使用</div>
         </div>
-        <div class="p-3 rounded-lg bg-surface-850">
-          <div class="text-sm font-medium text-gray-200">/status</div>
-          <div class="text-xs text-gray-500 mt-1">今日概览</div>
+        <div class="p-3 rounded-lg ">
+          <div class="text-sm font-medium ">/status</div>
+          <div class="text-xs  mt-1">今日概览</div>
         </div>
-        <div class="p-3 rounded-lg bg-surface-850">
-          <div class="text-sm font-medium text-gray-200">/report</div>
-          <div class="text-xs text-gray-500 mt-1">AI 报告</div>
+        <div class="p-3 rounded-lg ">
+          <div class="text-sm font-medium ">/report</div>
+          <div class="text-xs  mt-1">AI 报告</div>
         </div>
       </div>
     </div>

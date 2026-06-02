@@ -7,30 +7,30 @@
 
   <!-- Stat 卡片 -->
   <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6" id="summaryStats">
-    <div class="card p-4 text-center">
+    <div class="card card-p text-center">
       <div class="stat-label">👥 参与人数</div>
       <div class="stat-value" id="statTotal">—</div>
     </div>
-    <div class="card p-4 text-center">
+    <div class="card card-p text-center">
       <div class="stat-label">📝 记录数</div>
       <div class="stat-value" id="statRecords">—</div>
     </div>
-    <div class="card p-4 text-center">
+    <div class="card card-p text-center">
       <div class="stat-label">⏱ 平均时长</div>
       <div class="stat-value" id="statAvg">—</div>
     </div>
-    <div class="card p-4 text-center" style="border-color: #f59e0b40">
+    <div class="card card-p text-center" style="border-color: #f59e0b40">
       <div class="stat-label">⚠️ 迟到</div>
       <div class="stat-value text-amber-400" id="statLate">—</div>
     </div>
-    <div class="card p-4 text-center" style="border-color: #ef444440">
+    <div class="card card-p text-center" style="border-color: #ef444440">
       <div class="stat-label">🚪 早退</div>
       <div class="stat-value text-red-400" id="statEarly">—</div>
     </div>
   </div>
 
   <!-- 参会明细表 -->
-  <div class="card mb-6">
+  <div class="card card-p mb-4">
     <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
       <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">👤 参会明细</h2>
     </div>
@@ -38,12 +38,12 @@
       <table class="w-full">
         <thead>
           <tr>
-            <th class="table-header">姓名</th>
-            <th class="table-header">会议室</th>
-            <th class="table-header">进入时间</th>
-            <th class="table-header">离开时间</th>
-            <th class="table-header">时长</th>
-            <th class="table-header">状态</th>
+            <th class="dtable th">姓名</th>
+            <th class="dtable th">会议室</th>
+            <th class="dtable th">进入时间</th>
+            <th class="dtable th">离开时间</th>
+            <th class="dtable th">时长</th>
+            <th class="dtable th">状态</th>
           </tr>
         </thead>
         <tbody id="memberTable">
@@ -54,7 +54,7 @@
   </div>
 
   <!-- 会议室统计 -->
-  <div class="card mb-6">
+  <div class="card card-p mb-4">
     <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
       <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🏢 会议室统计</h2>
     </div>
@@ -62,11 +62,11 @@
       <table class="w-full">
         <thead>
           <tr>
-            <th class="table-header">会议 ID</th>
-            <th class="table-header">参与人数</th>
-            <th class="table-header">唯一人数</th>
-            <th class="table-header">最早进入</th>
-            <th class="table-header">最晚离开</th>
+            <th class="dtable th">会议 ID</th>
+            <th class="dtable th">参与人数</th>
+            <th class="dtable th">唯一人数</th>
+            <th class="dtable th">最早进入</th>
+            <th class="dtable th">最晚离开</th>
           </tr>
         </thead>
         <tbody id="meetingTable">
@@ -80,7 +80,7 @@
   <div class="card">
     <div class="px-4 py-3 border-b flex justify-between items-center" style="border-color: {{ brand.border_color }};">
       <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🤖 AI 出勤分析</h2>
-      <button onclick="runAIAnalysis()" class="px-3 py-1 text-xs rounded bg-primary-600 text-white hover:bg-primary-700" id="aiBtn">生成报告</button>
+      <button onclick="runAIAnalysis()" class="px-3 py-1 text-xs rounded btn-primary  hover:bg-primary-700" id="aiBtn">生成报告</button>
     </div>
     <div class="p-4" id="aiReport" style="color: {{ brand.text_muted }}; font-size: 13px; line-height: 1.6;">
       点击「生成报告」按钮，AI 会自动分析今天的参会数据
@@ -111,7 +111,7 @@ async function loadSummary() {
       if (m.is_late && m.is_early_leave) badge = '<span class="badge-red">迟到+早退</span>';
       else if (m.is_late) badge = '<span class="badge-yellow">⚠️ 迟到</span>';
       else if (m.is_early_leave) badge = '<span class="badge-yellow">🚪 早退</span>';
-      return `<tr class="hover-row"><td class="table-cell font-medium">${m.name}</td><td class="table-cell">${m.meeting_id}</td><td class="table-cell font-mono text-xs">${m.enter_time.slice(11,19) || '—'}</td><td class="table-cell font-mono text-xs">${m.leave_time.slice(11,19) || '—'}</td><td class="table-cell">${m.duration_min}分钟</td><td class="table-cell">${badge}</td></tr>`;
+      return `<tr class="hover-row"><td class="dtable td font-medium">${m.name}</td><td class="dtable td">${m.meeting_id}</td><td class="dtable td font-mono text-xs">${m.enter_time.slice(11,19) || '—'}</td><td class="dtable td font-mono text-xs">${m.leave_time.slice(11,19) || '—'}</td><td class="dtable td">${m.duration_min}分钟</td><td class="dtable td">${badge}</td></tr>`;
     }).join("");
   }
 
@@ -121,7 +121,7 @@ async function loadSummary() {
     mtbody.innerHTML = '<tr><td colspan="5" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无数据</td></tr>';
   } else {
     mtbody.innerHTML = d.meetings.map(m =>
-      `<tr class="hover-row"><td class="table-cell font-mono">${m.meeting_id}</td><td class="table-cell">${m.count}</td><td class="table-cell">${m.unique_people}</td><td class="table-cell font-mono text-xs">${m.first_enter.slice(11,19) || '—'}</td><td class="table-cell font-mono text-xs">${m.last_leave.slice(11,19) || '—'}</td></tr>`
+      `<tr class="hover-row"><td class="dtable td font-mono">${m.meeting_id}</td><td class="dtable td">${m.count}</td><td class="dtable td">${m.unique_people}</td><td class="dtable td font-mono text-xs">${m.first_enter.slice(11,19) || '—'}</td><td class="dtable td font-mono text-xs">${m.last_leave.slice(11,19) || '—'}</td></tr>`
     ).join("");
   }
 }

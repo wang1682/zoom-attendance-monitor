@@ -5,28 +5,28 @@
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-bold">📊 出勤统计</h1>
     <div class="flex gap-2">
-      <button onclick="loadAttendance('week')" class="px-3 py-1 text-xs rounded bg-primary-600 text-white hover:bg-primary-700" id="btnWeek">本周</button>
-      <button onclick="loadAttendance('month')" class="px-3 py-1 text-xs rounded bg-surface-800 text-gray-400 hover:text-white" id="btnMonth">本月</button>
+      <button onclick="loadAttendance('week')" class="px-3 py-1 text-xs rounded btn-primary  hover:bg-primary-700" id="btnWeek">本周</button>
+      <button onclick="loadAttendance('month')" class="px-3 py-1 text-xs rounded   hover:" id="btnMonth">本月</button>
     </div>
   </div>
 
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-    <div class="card p-4"><div class="stat-label">👥 总人数</div><div class="stat-value" id="attTotal">—</div></div>
-    <div class="card p-4"><div class="stat-label">⏱ 总时长</div><div class="stat-value" id="attMinutes">—</div></div>
-    <div class="card p-4"><div class="stat-label">📅 周期</div><div class="stat-value text-lg" id="attPeriod">本周</div></div>
+    <div class="card card-p"><div class="stat-label">👥 总人数</div><div class="stat-value" id="attTotal">—</div></div>
+    <div class="card card-p"><div class="stat-label">⏱ 总时长</div><div class="stat-value" id="attMinutes">—</div></div>
+    <div class="card card-p"><div class="stat-label">📅 周期</div><div class="stat-value text-lg" id="attPeriod">本周</div></div>
   </div>
 
   <div class="card">
     <div class="px-4 py-3 border-b" style="border-color:{{brand.border_color}}"><h2 class="text-sm font-semibold" style="color:{{brand.text_secondary}};">👤 出勤排行</h2></div>
     <div class="overflow-x-auto"><table class="w-full"><thead><tr>
-      <th class="table-header">#</th><th class="table-header">姓名</th><th class="table-header">出勤天数</th><th class="table-header">参会次数</th><th class="table-header">总时长</th><th class="table-header">平均时长</th><th class="table-header">会议室数</th>
+      <th class="dtable th">#</th><th class="dtable th">姓名</th><th class="dtable th">出勤天数</th><th class="dtable th">参会次数</th><th class="dtable th">总时长</th><th class="dtable th">平均时长</th><th class="dtable th">会议室数</th>
     </tr></thead><tbody id="attTable"></tbody></table></div>
   </div>
 </div>
 <script>
 async function loadAttendance(p) {
-  document.getElementById("btnWeek").className = "px-3 py-1 text-xs rounded bg-surface-800 text-gray-400 " + (p==='week'?'bg-primary-600 text-white':'');
-  document.getElementById("btnMonth").className = "px-3 py-1 text-xs rounded bg-surface-800 text-gray-400 " + (p==='month'?'bg-primary-600 text-white':'');
+  document.getElementById("btnWeek").className = "px-3 py-1 text-xs rounded   " + (p==='week'?'btn-primary ':'');
+  document.getElementById("btnMonth").className = "px-3 py-1 text-xs rounded   " + (p==='month'?'btn-primary ':'');
   document.getElementById("attPeriod").textContent = p==='week'?'本周':'本月';
   const r = await fetch(`/api/v2/attendance?period=${p}`); const d = await r.json();
   if (!d.ok) return;
@@ -34,7 +34,7 @@ async function loadAttendance(p) {
   document.getElementById("attMinutes").textContent = d.total_minutes + "分钟";
   const t = document.getElementById("attTable");
   if (!d.members.length) { t.innerHTML = '<tr><td colspan="7" class="text-center py-10" style="color:{{brand.text_muted}}">暂无</td></tr>'; }
-  else { t.innerHTML = d.members.map((m,i) => `<tr class="hover-row"><td class="table-cell text-xs text-gray-500">${i+1}</td><td class="table-cell font-medium">${m.name}</td><td class="table-cell">${m.total_days}天</td><td class="table-cell">${m.total_entries}次</td><td class="table-cell">${m.total_duration_min}分钟</td><td class="table-cell">${m.avg_duration_min}分钟</td><td class="table-cell">${m.meeting_count}</td></tr>`).join(""); }
+  else { t.innerHTML = d.members.map((m,i) => `<tr class="hover-row"><td class="dtable td text-xs ">${i+1}</td><td class="dtable td font-medium">${m.name}</td><td class="dtable td">${m.total_days}天</td><td class="dtable td">${m.total_entries}次</td><td class="dtable td">${m.total_duration_min}分钟</td><td class="dtable td">${m.avg_duration_min}分钟</td><td class="dtable td">${m.meeting_count}</td></tr>`).join(""); }
 }
 loadAttendance('week');
 </script>
