@@ -6,10 +6,9 @@
 <title>{% block title %}Zoom Monitor{% endblock %}</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <style>
-:root{--bg:#f8fafc;--card:#fff;--cb:#e5e7eb;--div:#f1f5f9;--text:#0f172a;--ts:#475569;--tm:#94a3b8;--sb-bg:#0f172a;--sb-bd:#1e293b;--sb-t:#94a3b8;--sb-th:#f1f5f9;--sb-ab:rgba(99,102,241,.12);--sb-at:#a5b4fc;--sb-abd:rgba(99,102,241,.25);--hb:rgba(255,255,255,.9);--hbd:#e5e7eb;--ht:#0f172a;--sc:#22c55e;--sc-b:#f0fdf4;--da:#ef4444;--da-b:#fef2f2;--wa:#f59e0b;--wa-b:#fefce8;--in:#3b82f6;--in-b:#eff6ff;--pr:#6366f1;--rh:#f8fafc;--scroll:#cbd5e1;--ov:rgba(0,0,0,.4);--kb:#fff;--tb:#f1f5f9;--tc:#475569}
-[data-theme=dark]{--bg:#0b1020;--card:#12182b;--cb:#24304a;--div:#1a2540;--text:#f1f5f9;--ts:#94a3b8;--tm:#64748b;--sb-bg:#080c18;--sb-bd:#1a2540;--sb-t:#64748b;--sb-th:#e2e8f0;--sb-ab:rgba(99,102,241,.1);--sb-at:#a5b4fc;--sb-abd:rgba(99,102,241,.2);--hb:rgba(11,16,32,.9);--hbd:#24304a;--ht:#f1f5f9;--sc:#22c55e;--sc-b:rgba(34,197,94,.1);--da:#ef4444;--da-b:rgba(239,68,68,.1);--wa:#f59e0b;--wa-b:rgba(245,158,11,.1);--in:#60a5fa;--in-b:rgba(59,130,246,.1);--pr:#818cf8;--rh:#1a2540;--scroll:#334155;--ov:rgba(0,0,0,.6);--kb:#12182b;--tb:#1a2540;--tc:#94a3b8}
-*,*::before,*::after{box-sizing:border-box}
-html,body{margin:0;padding:0}
+:root{--bg:#f8fafc;--card:#fff;--cb:#e5e7eb;--text:#0f172a;--ts:#475569;--tm:#94a3b8;--sb-bg:#0f172a;--sb-bd:#1e293b;--sb-t:#94a3b8;--sb-th:#f1f5f9;--sb-ab:rgba(99,102,241,.12);--sb-at:#a5b4fc;--hb:rgba(255,255,255,.9);--hbd:#e5e7eb;--ht:#0f172a;--sc:#22c55e;--sc-b:#f0fdf4;--da:#ef4444;--da-b:#fef2f2;--wa:#f59e0b;--wa-b:#fefce8;--in:#3b82f6;--in-b:#eff6ff;--pr:#6366f1;--rh:#f8fafc;--scroll:#cbd5e1;--ov:rgba(0,0,0,.4);--div:#f1f5f9}
+[data-theme=dark]{--bg:#0b1020;--card:#12182b;--cb:#26324a;--text:#f8fafc;--ts:#94a3b8;--tm:#64748b;--sb-bg:#080c18;--sb-bd:#1a2540;--sb-t:#64748b;--sb-th:#e2e8f0;--sb-ab:rgba(99,102,241,.1);--sb-at:#a5b4fc;--hb:rgba(11,16,32,.9);--hbd:#26324a;--ht:#f8fafc;--sc:#22c55e;--sc-b:rgba(34,197,94,.1);--da:#ef4444;--da-b:rgba(239,68,68,.1);--wa:#f59e0b;--wa-b:rgba(245,158,11,.1);--in:#60a5fa;--in-b:rgba(59,130,246,.1);--pr:#818cf8;--rh:#1a2540;--scroll:#334155;--ov:rgba(0,0,0,.6);--div:#1a2540}
+*,*::before,*::after{box-sizing:border-box}html,body{margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',Roboto,'Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg);color:var(--text);transition:background .15s,color .15s}
 a{color:var(--pr);text-decoration:none}
 .ah{height:48px;display:flex;align-items:center;padding:0 20px;gap:10px;background:var(--hb);backdrop-filter:blur(12px);border-bottom:1px solid var(--hbd);position:sticky;top:0;z-index:30}
@@ -17,65 +16,51 @@ a{color:var(--pr);text-decoration:none}
 .as{width:240px;background:var(--sb-bg);border-right:1px solid var(--sb-bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
 .asc{flex:1;overflow-y:auto;padding:10px}
 .ac{flex:1;overflow-y:auto;min-width:0}
-.ai{max-width:1340px;margin:0 auto;padding:28px 32px}
-@media(max-width:1024px){.ai{padding:20px 16px}}
+.pc{max-width:1340px;margin:0 auto;padding:28px 32px}
+@media(max-width:1024px){.pc{padding:20px 16px}}
 .ng{margin-bottom:1px}
 .nh{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:var(--sb-t);text-transform:uppercase;letter-spacing:.6px;user-select:none;transition:color .15s}
-.nh:hover{color:var(--sb-th)}
-.nh .cv{width:13px;height:13px;transition:transform .2s;opacity:.5}
-.nh .cv.op{transform:rotate(90deg)}
-.ns{overflow:hidden;transition:max-height .2s}
-.ns.cl{max-height:0!important}
+.nh:hover{color:var(--sb-th)}.nh .cv{width:13px;height:13px;transition:transform .2s;opacity:.5}
+.nh .cv.op{transform:rotate(90deg)}.ns{overflow:hidden;transition:max-height .2s}.ns.cl{max-height:0!important}
 .ni{display:flex;align-items:center;gap:10px;padding:6px 12px 6px 32px;border-radius:6px;font-size:13px;color:var(--sb-t);transition:all .12s;cursor:pointer;text-decoration:none}
 .ni:hover{color:var(--sb-th);background:rgba(255,255,255,.04)}
-.ni.ac{color:var(--sb-at);background:var(--sb-ab);border:1px solid var(--sb-abd)}
+.ni.act{color:var(--sb-at);background:var(--sb-ab);border:1px solid rgba(99,102,241,.25)}
 .ni .ic{width:15px;height:15px;flex-shrink:0;opacity:.7}
-.cd{background:var(--card);border:1px solid var(--cb);border-radius:8px}
-.cp{padding:20px}
-.kg{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
-.k{background:var(--kb);border:1px solid var(--cb);border-radius:8px;padding:18px 16px}
-.k .t{display:flex;align-items:center;gap:10px;margin-bottom:2px}
-.k .n{font-size:30px;font-weight:700;line-height:1;color:var(--text)}
-.k .l{font-size:12px;color:var(--ts);margin-top:4px}
-.k .ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px}
+.card{background:var(--card);border:1px solid var(--cb);border-radius:12px}.cp{padding:18px}
+.kg{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:20px}
+.kc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;min-height:92px}
+.kc .kr{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.kc .kv{font-size:28px;font-weight:700;line-height:1;color:var(--text)}
+.kc .kl{font-size:11px;color:var(--ts);margin-top:3px}
+.kc .ki{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px}
 @media(max-width:900px){.kg{grid-template-columns:repeat(3,1fr)}}
-.sh{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--cb)}
+.ig{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:900px){.ig{grid-template-columns:1fr}}
+.sh{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--cb)}
 .sh h2{font-size:14px;font-weight:600;margin:0;color:var(--text)}
-.sh .c{font-size:11px;color:var(--tm);background:var(--tb);padding:2px 10px;border-radius:10px}
-.tb{font-size:13px;width:100%;border-collapse:collapse}
-.tb th{padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cb);background:var(--card)}
-.tb td{padding:10px 16px;border-bottom:1px solid var(--div);color:var(--text)}
-.tb tr:last-child td{border-bottom:none}
-.tb tr:hover td{background:var(--rh)}
-.tb .i{font-weight:600;color:var(--tm);font-size:12px}
-.tb .nm{font-weight:500}
+.sh .c{font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px}
+.dt{font-size:13px;width:100%;border-collapse:collapse}
+.dt th{padding:10px 14px;text-align:left;font-size:11px;font-weight:600;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cb);background:var(--card)}
+.dt td{padding:10px 14px;border-bottom:1px solid var(--div);color:var(--text)}
+.dt tr:last-child td{border-bottom:none}.dt tr:hover td{background:var(--rh)}
+.dt .i{font-weight:600;color:var(--tm);font-size:12px}.dt .nm{font-weight:500}
 .bg{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:500;border:1px solid}
-.bg-g{background:var(--sc-b);color:var(--sc);border-color:var(--sc)}
-.bg-r{background:var(--da-b);color:var(--da);border-color:var(--da)}
-.bg-y{background:var(--wa-b);color:var(--wa);border-color:var(--wa)}
+.bg-g{background:var(--sc-b);color:var(--sc);border-color:rgba(34,197,94,.3)}
+.bg-r{background:var(--da-b);color:var(--da);border-color:rgba(239,68,68,.3)}
+.bg-y{background:var(--wa-b);color:var(--wa);border-color:rgba(245,158,11,.3)}
 .tg{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;margin-right:3px}
 .tg-d{background:var(--da-b);color:var(--da)}
-.tg-w{background:var(--wa-b);color:var(--wa)}
-.tg-i{background:var(--in-b);color:var(--in)}
-.dt{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
-.dt-on{background:var(--sc)}
-.dt-off{background:var(--tm)}
-.bt{padding:7px 18px;border-radius:6px;font-size:12px;border:1px solid var(--cb);cursor:pointer;transition:all .12s;background:var(--card);color:var(--text)}
-.bt:hover{background:var(--rh)}
-.bt-p{background:var(--pr);color:#fff;border-color:var(--pr)}
-.bt-p:hover{opacity:.9}
+.bt{padding:6px 16px;border-radius:6px;font-size:12px;border:1px solid var(--cb);cursor:pointer;transition:all .12s;background:var(--card);color:var(--text)}
+.bt:hover{background:var(--rh)}.bt-p{background:var(--pr);color:#fff;border-color:var(--pr)}.bt-p:hover{opacity:.9}.bt-s{padding:5px 12px;font-size:11px}
+.ph{margin-bottom:24px}
+.ph h1{font-size:20px;font-weight:700;margin:0;color:var(--text)}
+.ph p{font-size:13px;color:var(--ts);margin:4px 0 0 0}
+.mono{font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:var(--ts)}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:2px}
-.mo{display:none}
-.st{display:none}
-@media(max-width:768px){
-  .as{position:fixed;left:-260px;top:0;bottom:0;z-index:50;transition:left .25s}
-  .as.op{left:0}
-  .mo{display:none;position:fixed;inset:0;background:var(--ov);z-index:40}
-  .mo.sh{display:block}
-  .st{display:flex}
-}
+.mo{display:none}.st{display:none}
+@media(max-width:768px){.as{position:fixed;left:-260px;top:0;bottom:0;z-index:50;transition:left .25s}.as.op{left:0}.mo{display:none;position:fixed;inset:0;background:var(--ov);z-index:40}.mo.sh{display:block}.st{display:flex}}
 </style>
 {% block head %}{% endblock %}
 </head>
@@ -97,30 +82,30 @@ a{color:var(--pr);text-decoration:none}
   <aside class="as" id="sd">
     <div class="asc">
       <div class="ng"><div class="nh" onclick="tN('m',this)"><i data-lucide="monitor" style="width:14px;height:14px"></i><span style="flex:1">监控</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="m">
-        <a href="/dashboard" class="ni {% if request.url.path == '/dashboard' %}ac{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>仪表盘</span></a>
-        <a href="/live" class="ni {% if request.url.path == '/live' %}ac{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
-        <a href="/participants" class="ni {% if request.url.path == '/participants' %}ac{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
-        <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}ac{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
+        <a href="/dashboard" class="ni {% if request.url.path == '/dashboard' %}act{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>仪表盘</span></a>
+        <a href="/live" class="ni {% if request.url.path == '/live' %}act{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
+        <a href="/participants" class="ni {% if request.url.path == '/participants' %}act{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
+        <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
       </div></div>
       <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
-        <a href="/summary" class="ni {% if request.url.path == '/summary' %}ac{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
-        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}ac{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
-        <a href="/events" class="ni {% if request.url.path == '/events' %}ac{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
-        <a href="/reports" class="ni {% if request.url.path == '/reports' %}ac{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
+        <a href="/summary" class="ni {% if request.url.path == '/summary' %}act{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
+        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}act{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
+        <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
+        <a href="/reports" class="ni {% if request.url.path == '/reports' %}act{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
       </div></div>
       <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">
-        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}ac{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
-        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}ac{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
-        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}ac{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
+        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}act{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
+        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}act{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
+        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}act{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
       </div></div>
       <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
-        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}ac{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
-        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}ac{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
-        <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}ac{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
+        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}act{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
+        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}act{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
+        <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}act{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
       </div></div>
     </div>
   </aside>
-  <main class="ac"><div class="ai">{% block content %}{% endblock %}</div></main>
+  <main class="ac"><div class="pc">{% block content %}{% endblock %}</div></main>
 </div>
 <script>
 lucide.createIcons();
