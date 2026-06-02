@@ -6,167 +6,131 @@
 <title>{% block title %}Zoom Monitor{% endblock %}</title>
 <script src="https://unpkg.com/lucide@latest"></script>
 <style>
-:root {
-  --bg: #f8fafc; --card: #ffffff; --border: #e5e7eb; --border-light: #f1f5f9;
-  --text: #0f172a; --text-secondary: #64748b; --text-muted: #94a3b8;
-  --sidebar-bg: #ffffff; --sidebar-border: #e5e7eb; --sidebar-item: #64748b;
-  --sidebar-item-hover: #f1f5f9; --sidebar-item-active-bg: #eff6ff; --sidebar-item-active: #3b82f6;
-  --header-bg: rgba(255,255,255,0.85); --header-border: #e5e7eb;
-  --success: #22c55e; --danger: #ef4444; --warning: #f59e0b; --info: #3b82f6; --primary: #6366f1;
-  --primary-light: #eff6ff; --scrollbar: #d1d5db; --overlay: rgba(0,0,0,0.4); --row-hover: #f8fafc;
-  --badge-green-bg: #f0fdf4; --badge-green-text: #16a34a; --badge-green-border: #bbf7d0;
-  --badge-red-bg: #fef2f2; --badge-red-text: #dc2626; --badge-red-border: #fecaca;
-  --badge-yellow-bg: #fefce8; --badge-yellow-text: #ca8a04; --badge-yellow-border: #fef08a;
-  --kpi-bg: #ffffff; --tag-danger-bg: #fef2f2; --tag-danger-text: #ef4444;
-  --tag-warn-bg: #fefce8; --tag-warn-text: #f59e0b; --tag-info-bg: #eff6ff; --tag-info-text: #3b82f6;
-}
-[data-theme="dark"] {
-  --bg: #0b1020; --card: #12182b; --border: #24304a; --border-light: #1a2540;
-  --text: #e2e8f0; --text-secondary: #94a3b8; --text-muted: #64748b;
-  --sidebar-bg: #0b1020; --sidebar-border: #24304a; --sidebar-item: #64748b;
-  --sidebar-item-hover: #12182b; --sidebar-item-active-bg: rgba(99,102,241,0.1); --sidebar-item-active: #a5b4fc;
-  --header-bg: rgba(11,16,32,0.85); --header-border: #24304a;
-  --success: #22c55e; --danger: #ef4444; --warning: #f59e0b; --info: #3b82f6; --primary: #818cf8;
-  --primary-light: rgba(99,102,241,0.1); --scrollbar: #334155; --overlay: rgba(0,0,0,0.6); --row-hover: #1a2540;
-  --badge-green-bg: rgba(34,197,94,0.15); --badge-green-text: #4ade80; --badge-green-border: rgba(34,197,94,0.3);
-  --badge-red-bg: rgba(239,68,68,0.15); --badge-red-text: #f87171; --badge-red-border: rgba(239,68,68,0.3);
-  --badge-yellow-bg: rgba(234,179,8,0.15); --badge-yellow-text: #facc15; --badge-yellow-border: rgba(234,179,8,0.3);
-  --kpi-bg: #12182b; --tag-danger-bg: rgba(239,68,68,0.15); --tag-danger-text: #f87171;
-  --tag-warn-bg: rgba(234,179,8,0.15); --tag-warn-text: #facc15;
-  --tag-info-bg: rgba(99,102,241,0.15); --tag-info-text: #a5b4fc;
-}
+:root{--bg:#f8fafc;--card:#fff;--cb:#e5e7eb;--div:#f1f5f9;--text:#0f172a;--ts:#475569;--tm:#94a3b8;--sb-bg:#0f172a;--sb-bd:#1e293b;--sb-t:#94a3b8;--sb-th:#f1f5f9;--sb-ab:rgba(99,102,241,.12);--sb-at:#a5b4fc;--sb-abd:rgba(99,102,241,.25);--hb:rgba(255,255,255,.9);--hbd:#e5e7eb;--ht:#0f172a;--sc:#22c55e;--sc-b:#f0fdf4;--da:#ef4444;--da-b:#fef2f2;--wa:#f59e0b;--wa-b:#fefce8;--in:#3b82f6;--in-b:#eff6ff;--pr:#6366f1;--rh:#f8fafc;--scroll:#cbd5e1;--ov:rgba(0,0,0,.4);--kb:#fff;--tb:#f1f5f9;--tc:#475569}
+[data-theme=dark]{--bg:#0b1020;--card:#12182b;--cb:#24304a;--div:#1a2540;--text:#f1f5f9;--ts:#94a3b8;--tm:#64748b;--sb-bg:#080c18;--sb-bd:#1a2540;--sb-t:#64748b;--sb-th:#e2e8f0;--sb-ab:rgba(99,102,241,.1);--sb-at:#a5b4fc;--sb-abd:rgba(99,102,241,.2);--hb:rgba(11,16,32,.9);--hbd:#24304a;--ht:#f1f5f9;--sc:#22c55e;--sc-b:rgba(34,197,94,.1);--da:#ef4444;--da-b:rgba(239,68,68,.1);--wa:#f59e0b;--wa-b:rgba(245,158,11,.1);--in:#60a5fa;--in-b:rgba(59,130,246,.1);--pr:#818cf8;--rh:#1a2540;--scroll:#334155;--ov:rgba(0,0,0,.6);--kb:#12182b;--tb:#1a2540;--tc:#94a3b8}
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',Roboto,'Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg);color:var(--text);transition:background .2s,color .2s}
-.app-layout{display:flex;min-height:calc(100vh - 48px)}
-.app-main{flex:1;overflow-y:auto;padding:24px}
-.app-header{height:48px;display:flex;align-items:center;padding:0 16px;gap:8px;background:var(--header-bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--header-border);position:sticky;top:0;z-index:30}
-.app-sidebar{width:220px;background:var(--sidebar-bg);border-right:1px solid var(--sidebar-border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
-.app-sidebar .scroll{flex:1;overflow-y:auto;padding:8px}
-.nav-group{margin-bottom:2px}
-.nav-group-header{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;user-select:none;transition:color .15s}
-.nav-group-header:hover{color:var(--text-secondary)}
-.nav-group-header .chevron{width:14px;height:14px;transition:transform .2s}
-.nav-group-header .chevron.open{transform:rotate(90deg)}
-.nav-sub{overflow:hidden;transition:max-height .2s ease}
-.nav-sub.closed{max-height:0!important}
-.nav-item{display:flex;align-items:center;gap:10px;padding:7px 10px 7px 30px;border-radius:6px;font-size:13px;color:var(--sidebar-item);transition:all .15s;cursor:pointer;text-decoration:none}
-.nav-item:hover{color:var(--text);background:var(--sidebar-item-hover)}
-.nav-item.active{color:var(--sidebar-item-active);background:var(--sidebar-item-active-bg);border:1px solid var(--sidebar-item-active-bg)}
-.nav-item .icon{width:16px;height:16px;flex-shrink:0}
-.card{background:var(--card);border:1px solid var(--border);border-radius:8px}
-.card-p{padding:16px}
-.kpi-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
-.kpi{background:var(--kpi-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px}
-.kpi .top{display:flex;align-items:center;gap:10px;margin-bottom:2px}
-.kpi .num{font-size:26px;font-weight:700;line-height:1}
-.kpi .lbl{font-size:11px;color:var(--text-secondary);margin-top:2px}
-.kpi .ico{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px}
-.section-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
-.section-hdr h2{font-size:13px;font-weight:600;margin:0}
-.section-hdr .cnt{font-size:11px;color:var(--text-muted);background:var(--border-light);padding:2px 8px;border-radius:10px}
-.dtable{font-size:12px;width:100%;border-collapse:collapse}
-.dtable th{padding:8px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
-.dtable td{padding:8px 12px;border-bottom:1px solid var(--border-light)}
-.dtable tr:last-child td{border-bottom:none}
-.dtable tr:hover td{background:var(--row-hover)}
-.dtable .num{font-weight:600;color:var(--text-muted);font-size:11px}
-.dtable .name{font-weight:500}
-.badge{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:500;border:1px solid}
-.badge-green{background:var(--badge-green-bg);color:var(--badge-green-text);border-color:var(--badge-green-border)}
-.badge-red{background:var(--badge-red-bg);color:var(--badge-red-text);border-color:var(--badge-red-border)}
-.badge-yellow{background:var(--badge-yellow-bg);color:var(--badge-yellow-text);border-color:var(--badge-yellow-border)}
-.tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px}
-.tag-danger{background:var(--tag-danger-bg);color:var(--tag-danger-text)}
-.tag-warn{background:var(--tag-warn-bg);color:var(--tag-warn-text)}
-.tag-info{background:var(--tag-info-bg);color:var(--tag-info-text)}
-.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
-.dot-on{background:var(--success)}
-.dot-off{background:#d1d5db}
-.btn{padding:6px 16px;border-radius:6px;font-size:12px;border:1px solid var(--border);cursor:pointer;transition:all .15s;background:var(--card);color:var(--text)}
-.btn:hover{background:var(--row-hover)}
-.btn-primary{background:var(--primary);color:#fff;border-color:var(--primary)}
-.btn-primary:hover{opacity:.9}
-.mono{font-family:'SF Mono','Fira Code',monospace}
-.max-w-app{max-width:1320px;margin:0 auto}
+html,body{margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',Roboto,'Helvetica Neue',sans-serif;-webkit-font-smoothing:antialiased;background:var(--bg);color:var(--text);transition:background .15s,color .15s}
+a{color:var(--pr);text-decoration:none}
+.ah{height:48px;display:flex;align-items:center;padding:0 20px;gap:10px;background:var(--hb);backdrop-filter:blur(12px);border-bottom:1px solid var(--hbd);position:sticky;top:0;z-index:30}
+.ab{display:flex;min-height:calc(100vh - 48px)}
+.as{width:240px;background:var(--sb-bg);border-right:1px solid var(--sb-bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.asc{flex:1;overflow-y:auto;padding:10px}
+.ac{flex:1;overflow-y:auto;min-width:0}
+.ai{max-width:1340px;margin:0 auto;padding:28px 32px}
+@media(max-width:1024px){.ai{padding:20px 16px}}
+.ng{margin-bottom:1px}
+.nh{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;color:var(--sb-t);text-transform:uppercase;letter-spacing:.6px;user-select:none;transition:color .15s}
+.nh:hover{color:var(--sb-th)}
+.nh .cv{width:13px;height:13px;transition:transform .2s;opacity:.5}
+.nh .cv.op{transform:rotate(90deg)}
+.ns{overflow:hidden;transition:max-height .2s}
+.ns.cl{max-height:0!important}
+.ni{display:flex;align-items:center;gap:10px;padding:6px 12px 6px 32px;border-radius:6px;font-size:13px;color:var(--sb-t);transition:all .12s;cursor:pointer;text-decoration:none}
+.ni:hover{color:var(--sb-th);background:rgba(255,255,255,.04)}
+.ni.ac{color:var(--sb-at);background:var(--sb-ab);border:1px solid var(--sb-abd)}
+.ni .ic{width:15px;height:15px;flex-shrink:0;opacity:.7}
+.cd{background:var(--card);border:1px solid var(--cb);border-radius:8px}
+.cp{padding:20px}
+.kg{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
+.k{background:var(--kb);border:1px solid var(--cb);border-radius:8px;padding:18px 16px}
+.k .t{display:flex;align-items:center;gap:10px;margin-bottom:2px}
+.k .n{font-size:30px;font-weight:700;line-height:1;color:var(--text)}
+.k .l{font-size:12px;color:var(--ts);margin-top:4px}
+.k .ic{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px}
+@media(max-width:900px){.kg{grid-template-columns:repeat(3,1fr)}}
+.sh{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--cb)}
+.sh h2{font-size:14px;font-weight:600;margin:0;color:var(--text)}
+.sh .c{font-size:11px;color:var(--tm);background:var(--tb);padding:2px 10px;border-radius:10px}
+.tb{font-size:13px;width:100%;border-collapse:collapse}
+.tb th{padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cb);background:var(--card)}
+.tb td{padding:10px 16px;border-bottom:1px solid var(--div);color:var(--text)}
+.tb tr:last-child td{border-bottom:none}
+.tb tr:hover td{background:var(--rh)}
+.tb .i{font-weight:600;color:var(--tm);font-size:12px}
+.tb .nm{font-weight:500}
+.bg{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:500;border:1px solid}
+.bg-g{background:var(--sc-b);color:var(--sc);border-color:var(--sc)}
+.bg-r{background:var(--da-b);color:var(--da);border-color:var(--da)}
+.bg-y{background:var(--wa-b);color:var(--wa);border-color:var(--wa)}
+.tg{display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;margin-right:3px}
+.tg-d{background:var(--da-b);color:var(--da)}
+.tg-w{background:var(--wa-b);color:var(--wa)}
+.tg-i{background:var(--in-b);color:var(--in)}
+.dt{width:8px;height:8px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dt-on{background:var(--sc)}
+.dt-off{background:var(--tm)}
+.bt{padding:7px 18px;border-radius:6px;font-size:12px;border:1px solid var(--cb);cursor:pointer;transition:all .12s;background:var(--card);color:var(--text)}
+.bt:hover{background:var(--rh)}
+.bt-p{background:var(--pr);color:#fff;border-color:var(--pr)}
+.bt-p:hover{opacity:.9}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:2px}
-.mobile-overlay{display:none}
-.sidebar-toggle{display:none}
+::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:2px}
+.mo{display:none}
+.st{display:none}
 @media(max-width:768px){
-  .app-sidebar{position:fixed;left:-240px;top:0;bottom:0;z-index:50;transition:left .25s}
-  .app-sidebar.open{left:0}
-  .mobile-overlay{display:none;position:fixed;inset:0;background:var(--overlay);z-index:40}
-  .mobile-overlay.show{display:block}
-  .sidebar-toggle{display:flex}
+  .as{position:fixed;left:-260px;top:0;bottom:0;z-index:50;transition:left .25s}
+  .as.op{left:0}
+  .mo{display:none;position:fixed;inset:0;background:var(--ov);z-index:40}
+  .mo.sh{display:block}
+  .st{display:flex}
 }
 </style>
 {% block head %}{% endblock %}
 </head>
 <body>
-<header class="app-header">
-  <button class="sidebar-toggle" style="color:var(--text-secondary);padding:4px;border:none;background:none;cursor:pointer" onclick="toggleSidebar()"><i data-lucide="menu" class="w-5 h-5"></i></button>
-  <a href="/dashboard" style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;text-decoration:none">ZM</a>
-  <a href="/dashboard" style="font-size:13px;font-weight:600;color:var(--text);text-decoration:none">Zoom Monitor</a>
-  <span style="font-size:10px;color:var(--text-muted)">v0.8.0</span>
-  <div style="flex:1"></div>
-  <div style="display:flex;align-items:center;gap:4px">
-    <button onclick="toggleTheme()" id="themeBtn" style="padding:4px 8px;border-radius:5px;border:1px solid var(--border);background:var(--card);color:var(--text-secondary);font-size:11px;cursor:pointer">☀️</button>
-    {% if not demo_mode %}<a href="#" onclick="connectZoom();return false" style="padding:4px 10px;border-radius:5px;font-size:11px;color:var(--text-secondary);text-decoration:none;border:1px solid var(--border)">🔗 连接 Zoom</a>{% endif %}
-    <a href="about:blank" style="padding:4px 10px;border-radius:5px;font-size:11px;color:var(--text-muted);text-decoration:none">退出</a>
+<header class="ah">
+  <button class="st" onclick="tM()" style="color:var(--tm);padding:4px;border:none;background:none;cursor:pointer"><i data-lucide="menu" class="w-5 h-5"></i></button>
+  <a href="/dashboard" style="width:28px;height:28px;border-radius:7px;background:linear-gradient(135deg,#6366f1,#4f46e5);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;text-decoration:none;flex-shrink:0">ZM</a>
+  <a href="/dashboard" style="font-size:13px;font-weight:600;color:var(--ht);text-decoration:none">Zoom Monitor</a>
+  <span style="font-size:10px;color:var(--tm)">v0.8.0</span>
+  <div style="flex:1;min-width:0"></div>
+  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+    <button onclick="tT()" id="tB" style="padding:5px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--card);color:var(--tm);font-size:12px;cursor:pointer">☀️</button>
+    {% if not demo_mode %}<a href="#" onclick="cZ();return false" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none;border:1px solid var(--cb)">🔗 连接 Zoom</a>{% endif %}
+    <a href="about:blank" style="padding:5px 12px;border-radius:6px;font-size:11px;color:var(--tm);text-decoration:none">退出</a>
   </div>
 </header>
-<div id="mobileOverlay" class="mobile-overlay" onclick="toggleSidebar()"></div>
-<div class="app-layout">
-  <aside class="app-sidebar" id="sidebar">
-    <div class="scroll">
-      <div class="nav-group">
-        <div class="nav-group-header" onclick="toggleNav('g-mon',this)"><i data-lucide="monitor" class="w-3.5 h-3.5"></i><span style="flex:1">监控</span><i data-lucide="chevron-right" class="chevron open"></i></div>
-        <div class="nav-sub" id="g-mon">
-          <a href="/dashboard" class="nav-item {% if request.url.path == '/dashboard' %}active{% endif %}"><i data-lucide="layout-dashboard" class="icon"></i><span>仪表盘</span></a>
-          <a href="/live" class="nav-item {% if request.url.path == '/live' %}active{% endif %}"><i data-lucide="radio" class="icon"></i><span>实时在线</span></a>
-          <a href="/participants" class="nav-item {% if request.url.path == '/participants' %}active{% endif %}"><i data-lucide="users" class="icon"></i><span>参会明细</span></a>
-          <a href="/alerts" class="nav-item {% if request.url.path == '/alerts' %}active{% endif %}"><i data-lucide="bell" class="icon"></i><span>告警日志</span></a>
-        </div>
-      </div>
-      <div class="nav-group">
-        <div class="nav-group-header" onclick="toggleNav('g-ana',this)"><i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="chevron open"></i></div>
-        <div class="nav-sub" id="g-ana">
-          <a href="/summary" class="nav-item {% if request.url.path == '/summary' %}active{% endif %}"><i data-lucide="file-text" class="icon"></i><span>汇总分析</span></a>
-          <a href="/attendance" class="nav-item {% if request.url.path == '/attendance' %}active{% endif %}"><i data-lucide="calendar-check" class="icon"></i><span>出勤统计</span></a>
-          <a href="/events" class="nav-item {% if request.url.path == '/events' %}active{% endif %}"><i data-lucide="list" class="icon"></i><span>事件记录</span></a>
-          <a href="/reports" class="nav-item {% if request.url.path == '/reports' %}active{% endif %}"><i data-lucide="line-chart" class="icon"></i><span>报表分析</span></a>
-        </div>
-      </div>
-      <div class="nav-group">
-        <div class="nav-group-header" onclick="toggleNav('g-ai',this)"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="chevron open"></i></div>
-        <div class="nav-sub" id="g-ai">
-          <a href="/ai/daily" class="nav-item {% if request.url.path == '/ai/daily' %}active{% endif %}"><i data-lucide="sun" class="icon"></i><span>AI 日报</span></a>
-          <a href="/ai/weekly" class="nav-item {% if request.url.path == '/ai/weekly' %}active{% endif %}"><i data-lucide="calendar" class="icon"></i><span>AI 周报</span></a>
-          <a href="/ai/monthly" class="nav-item {% if request.url.path == '/ai/monthly' %}active{% endif %}"><i data-lucide="calendar-range" class="icon"></i><span>AI 月报</span></a>
-        </div>
-      </div>
-      <div class="nav-group">
-        <div class="nav-group-header" onclick="toggleNav('g-set',this)"><i data-lucide="settings" class="w-3.5 h-3.5"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="chevron"></i></div>
-        <div class="nav-sub closed" id="g-set">
-          <a href="/settings/zoom" class="nav-item {% if request.url.path == '/settings/zoom' %}active{% endif %}"><i data-lucide="video" class="icon"></i><span>Zoom 配置</span></a>
-          <a href="/settings/telegram" class="nav-item {% if request.url.path == '/settings/telegram' %}active{% endif %}"><i data-lucide="send" class="icon"></i><span>Telegram 配置</span></a>
-          <a href="/settings/system" class="nav-item {% if request.url.path == '/settings/system' %}active{% endif %}"><i data-lucide="sliders" class="icon"></i><span>系统设置</span></a>
-        </div>
-      </div>
+<div class="mo" id="mO" onclick="tM()"></div>
+<div class="ab">
+  <aside class="as" id="sd">
+    <div class="asc">
+      <div class="ng"><div class="nh" onclick="tN('m',this)"><i data-lucide="monitor" style="width:14px;height:14px"></i><span style="flex:1">监控</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="m">
+        <a href="/dashboard" class="ni {% if request.url.path == '/dashboard' %}ac{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>仪表盘</span></a>
+        <a href="/live" class="ni {% if request.url.path == '/live' %}ac{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
+        <a href="/participants" class="ni {% if request.url.path == '/participants' %}ac{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
+        <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}ac{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
+      </div></div>
+      <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
+        <a href="/summary" class="ni {% if request.url.path == '/summary' %}ac{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
+        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}ac{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
+        <a href="/events" class="ni {% if request.url.path == '/events' %}ac{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
+        <a href="/reports" class="ni {% if request.url.path == '/reports' %}ac{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
+      </div></div>
+      <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">
+        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}ac{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
+        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}ac{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
+        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}ac{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
+      </div></div>
+      <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
+        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}ac{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
+        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}ac{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
+        <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}ac{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
+      </div></div>
     </div>
   </aside>
-  <main class="app-main">{% block content %}{% endblock %}</main>
+  <main class="ac"><div class="ai">{% block content %}{% endblock %}</div></main>
 </div>
 <script>
 lucide.createIcons();
-(function(){const s=localStorage.getItem('theme');const p=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';const t=s||p;document.documentElement.setAttribute('data-theme',t);updateBtn(t)})();
-function toggleTheme(){const c=document.documentElement.getAttribute('data-theme');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('theme',n);updateBtn(n)}
-function updateBtn(t){const b=document.getElementById('themeBtn');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
-function toggleNav(id,el){const s=document.getElementById(id);if(!s)return;s.classList.toggle('closed');const c=el.querySelector('.chevron');if(c)c.classList.toggle('open')}
-function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('mobileOverlay').classList.toggle('show')}
+(function(){const s=localStorage.getItem('t');const p=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',s||p);uB(s||p)})();
+function tT(){const c=document.documentElement.getAttribute('data-theme');const n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('t',n);uB(n)}
+function uB(t){const b=document.getElementById('tB');if(b)b.textContent=t==='dark'?'🌙':'☀️'}
+function tN(id,el){const s=document.getElementById(id);if(!s)return;s.classList.toggle('cl');const c=el.querySelector('.cv');if(c)c.classList.toggle('op')}
+function tM(){document.getElementById('sd').classList.toggle('op');document.getElementById('mO').classList.toggle('sh')}
 function to_myt(s){if(!s||s==='—')return'—';try{const d=new Date(s.replace('Z','+00:00'));if(isNaN(d.getTime()))return s.slice(11,16);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'Asia/Kuala_Lumpur'})}catch(e){return s.slice(11,16)}}
-async function connectZoom(){const r=await fetch('/api/v2/auth/login');const d=await r.json();if(d.ok&&d.auth_url){if(d.is_mobile){const t=setTimeout(()=>window.location.href=d.fallback_url,3000);window.location.href=d.auth_url;document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(t)})}else window.location.href=d.auth_url}}
+async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.json();if(d.ok&&d.auth_url){if(d.is_mobile){const t=setTimeout(()=>window.location.href=d.fallback_url,3000);window.location.href=d.auth_url;document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(t)})}else window.location.href=d.auth_url}}
 </script>
 </body>
 </html>
