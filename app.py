@@ -843,20 +843,57 @@ def build_app() -> "FastAPI":
         top_online = [{"name": p["name"], "duration_display": p["online_display"], "minutes": p["online_minutes"]} for p in sorted_online[:5]]
 
         # 今日总记录数
-        total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
-        online_rate = round(len(online) / total_today * 100, 1) if total_today > 0 else 0
+        total_events = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        # 唯一参与者数
+        unique_participants = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        # 在线率 = 当前在线 / 唯一参与者
+        unique_online_rate = round(len(online) / unique_participants * 100, 1) if unique_participants > 0 else 0
 
-        # 活跃时段（按小时）
+        # 活跃时段
         hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (today,)).fetchall()
         active_hours = [f"{r[0]:02d}:00-{r[0]+1:02d}:00" for r in hour_dist]
 
         # 最活跃成员
         top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY c DESC LIMIT 3", (today,)).fetchall()
 
+        # 参与者汇总（去重后每人统计）
+        participants_summary = []
+        unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ?", (today,)).fetchall()
+        for (name,) in unique_names_rows:
+            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'enter'", (today, name)).fetchone()[0]
+            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'leave'", (today, name)).fetchone()[0]
+            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND name = ?", (today, name)).fetchone()[0]
+            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
+            is_online = last_action and last_action[0] == "enter"
+            # 计算在线时长（配对 enter/leave）
+            pairs = conn.execute("""
+                SELECT e.action_time, l.action_time FROM zoom_participants e
+                LEFT JOIN zoom_participants l ON e.rowid < l.rowid AND e.name = l.name AND e.meeting_id = l.meeting_id
+                AND e.action = 'enter' AND l.action = 'leave'
+                WHERE e.name = ? AND e.action_time >= ?
+                ORDER BY e.action_time
+            """, (name, today)).fetchall()
+            total_secs = 0
+            for et, lt in pairs:
+                try:
+                    if lt:
+                        total_secs += (datetime.fromisoformat(lt) - datetime.fromisoformat(et)).total_seconds()
+                except: pass
+            duration_min = int(total_secs / 60) if total_secs else 0
+            duration_display = f"{duration_min//60}h{duration_min%60:02d}" if duration_min >= 60 else f"{duration_min}分钟"
+            participants_summary.append({
+                "name": name, "enters": enters, "leaves": leaves,
+                "total_duration_min": duration_min, "duration_display": duration_display,
+                "is_online": is_online, "last_active": (last_time or "")[:19]
+            })
+        participants_summary.sort(key=lambda x: -x["total_duration_min"])
+
         return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
-                "total_today": total_today, "online_rate": online_rate,
+                "total_events": total_events, "unique_participants": unique_participants,
+                "unique_online_rate": unique_online_rate,
                 "top_online": top_online, "active_hours": active_hours,
-                "top_active": [{"name": r[0], "count": r[1]} for r in top_active]}
+                "top_active": [{"name": r[0], "count": r[1]} for r in top_active],
+                "participants_summary": participants_summary}
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
