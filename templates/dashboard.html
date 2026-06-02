@@ -1,197 +1,230 @@
 {% extends "base.html" %}
-{% block title %}{{ brand.app_name_zh }} — 管理看板{% endblock %}
+{% block title %}管理看板{% endblock %}
 {% block head %}
 <style>
 /* ── 全局 ── */
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-.stat-card { @apply card p-3; }
-.stat-card .row { display: flex; align-items: center; gap: 8px; }
-.stat-card .val { font-size: 24px; font-weight: 700; color: #f1f5f9; line-height: 1; }
-.stat-card .lbl { font-size: 10px; color: #64748b; margin-top: 2px; }
-.stat-card .ico { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
-
-/* ── 健康度 ── */
-.health-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
-.health-green { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
-.health-yellow { background: rgba(234,179,8,0.15); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
-.health-red { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
-
-/* ── 异常卡片 ── */
-.anomaly-card { @apply card p-3; border-left: 3px solid; }
-.anomaly-card.high { border-color: #ef4444; }
-.anomaly-card.med { border-color: #f59e0b; }
-.anomaly-card .name { font-size: 14px; font-weight: 600; color: #e2e8f0; }
-.anomaly-card .detail { font-size: 11px; color: #94a3b8; margin-top: 2px; }
-.anomaly-card .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-right: 4px; }
-.tag-red { background: rgba(239,68,68,0.15); color: #f87171; }
-.tag-yellow { background: rgba(234,179,8,0.15); color: #facc15; }
-.tag-blue { background: rgba(99,102,241,0.15); color: #a5b4fc; }
-
-/* ── 弱化区域 ── */
-.weak { opacity: 0.5; transition: opacity 0.2s; }
-.weak:hover { opacity: 1; }
-.weak-toggle { cursor: pointer; user-select: none; }
-
-/* ── 表格 ── */
-.data-table { font-size: 11px; width: 100%; }
-.data-table th { @apply px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider sticky top-0 bg-surface-800; }
-.data-table td { @apply px-3 py-2 text-gray-300 border-t border-surface-800; }
+body { background: #f1f5f9 !important; }
+.max-w-app { max-width: 1320px; margin: 0 auto; }
+.card-w { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
+.kpi .top { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+.kpi .num { font-size: 26px; font-weight: 700; color: #0f172a; line-height: 1; }
+.kpi .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
+.kpi .ico { width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+.icon-blue { background: #eff6ff; color: #3b82f6; }
+.icon-green { background: #f0fdf4; color: #22c55e; }
+.icon-red { background: #fef2f2; color: #ef4444; }
+.icon-yellow { background: #fefce8; color: #f59e0b; }
+.icon-purple { background: #f5f3ff; color: #8b5cf6; }
+.hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.hdr h2 { font-size: 13px; font-weight: 600; color: #0f172a; }
+.hdr .cnt { font-size: 11px; color: #94a3b8; background: #f1f5f9; padding: 2px 8px; border-radius: 10px; }
+/* 健康度 */
+.health-score { font-size: 32px; font-weight: 800; }
+.health-score.good { color: #22c55e; }
+.health-score.fair { color: #f59e0b; }
+.health-score.poor { color: #ef4444; }
+/* 异常卡片 */
+.rank-card { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+.rank-card:last-child { border-bottom: none; }
+.rank-num { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.rank-1 { background: #fef2f2; color: #ef4444; }
+.rank-2 { background: #fefce8; color: #f59e0b; }
+.rank-3 { background: #eff6ff; color: #3b82f6; }
+.rank-name { font-size: 14px; font-weight: 600; color: #0f172a; flex: 1; }
+.rank-detail { font-size: 11px; color: #64748b; }
+.rank-count { font-size: 14px; font-weight: 600; color: #64748b; }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; }
+.tag-danger { background: #fef2f2; color: #ef4444; }
+.tag-warn { background: #fefce8; color: #f59e0b; }
+.tag-info { background: #eff6ff; color: #3b82f6; }
+/* 在线列表 */
+.online-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+.online-item:last-child { border-bottom: none; }
+.online-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
+/* 表格 */
+.tbl { font-size: 12px; width: 100%; border-collapse: collapse; }
+.tbl th { padding: 8px 10px; text-align: left; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e5e7eb; }
+.tbl td { padding: 8px 10px; color: #334155; border-bottom: 1px solid #f1f5f9; }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl .num-col { font-weight: 600; color: #64748b; font-size: 11px; }
+.tbl .name-col { font-weight: 500; color: #0f172a; }
+.risk-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.risk-high { background: #ef4444; }
+.risk-med { background: #f59e0b; }
+.risk-low { background: #3b82f6; }
+.risk-none { background: #d1d5db; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.status-on { background: #22c55e; }
+.status-off { background: #d1d5db; }
+.btn-sm { padding: 4px 12px; border-radius: 6px; font-size: 11px; border: 1px solid #e5e7eb; color: #64748b; background: #fff; cursor: pointer; }
+.btn-sm:hover { background: #f8fafc; border-color: #cbd5e1; }
+/* AI 行 */
+.ai-line { padding: 3px 0; font-size: 13px; color: #334155; line-height: 1.6; }
+.ai-line strong { color: #0f172a; font-weight: 600; }
+.ai-suggest { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-[1400px] mx-auto">
+<div class="max-w-app" style="padding: 20px 16px;">
 
-  <!-- ═══════════ 第一层：状态总览 ═══════════ -->
+  <!-- ═══ 顶部 ═══ -->
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
-      <h1 class="text-lg font-semibold text-white">管理看板</h1>
-      <span id="healthBadge" class="health-badge health-green">🟢 正常</span>
+      <h1 class="text-lg font-bold" style="color:#0f172a">管理看板</h1>
+      <span class="text-xs" style="color:#94a3b8">实时监控</span>
+      <span class="text-xs" style="color:#94a3b8">{{ today }}</span>
     </div>
-    <div class="text-xs text-gray-500">{{ today }}</div>
+    <button onclick="location.reload()" class="btn-sm">↻ 刷新</button>
   </div>
 
-  <div class="stat-grid mb-5">
-    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(59,130,246,0.12);color:#60a5fa">👥</div><div class="val" id="hParticipants">—</div></div><div class="lbl">参与者</div></div>
-    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(16,185,129,0.12);color:#34d399">🟢</div><div class="val" id="hOnline">—</div></div><div class="lbl">在线</div></div>
-    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(239,68,68,0.12);color:#f87171">🚨</div><div class="val" id="hAnomalies">—</div></div><div class="lbl">异常</div></div>
-    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(245,158,11,0.12);color:#fbbf24">🔔</div><div class="val" id="hAlerts">{{ stats.alert_count }}</div></div><div class="lbl">告警</div></div>
+  <!-- ═══ KPI 行 ═══ -->
+  <div class="kpi-grid mb-5">
+    <div class="kpi"><div class="top"><div class="ico icon-purple">📊</div><div class="num" id="kpiHealth">—</div></div><div class="lbl">健康分数</div></div>
+    <div class="kpi"><div class="top"><div class="ico icon-blue">👥</div><div class="num" id="kpiParticipants">—</div></div><div class="lbl">参与者</div></div>
+    <div class="kpi"><div class="top"><div class="ico icon-green">🟢</div><div class="num" id="kpiOnline">—</div></div><div class="lbl">当前在线</div></div>
+    <div class="kpi"><div class="top"><div class="ico icon-red">🚨</div><div class="num" id="kpiAnomalies">—</div></div><div class="lbl">异常成员</div></div>
+    <div class="kpi"><div class="top"><div class="ico icon-yellow">🔔</div><div class="num" id="kpiAlerts">{{ stats.alert_count }}</div></div><div class="lbl">告警</div></div>
+    <div class="kpi"><div class="top"><div class="ico icon-blue">📋</div><div class="num" id="kpiEvents">—</div></div><div class="lbl">今日事件</div></div>
   </div>
 
-  <!-- ═══════════ 第二层：异常 + AI ═══════════ -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
-    <!-- 左侧：异常成员 Top 3 -->
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold text-gray-200">🚨 异常成员</h2>
-        <span class="text-xs text-gray-500" id="anomalyTotal">—</span>
-      </div>
-      <div id="anomalyCards" class="space-y-2">
-        <div class="text-xs text-gray-600 text-center py-6">加载中...</div>
+  <!-- ═══ 第二层：三栏 ═══ -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+
+    <!-- 左：异常 Top 3 -->
+    <div class="card-w p-4">
+      <div class="hdr"><h2>🚨 TOP 异常成员</h2><span class="cnt" id="anomalyTotal">—</span></div>
+      <div id="anomalyList"><div class="text-xs text-gray-400 text-center py-6">加载中...</div></div>
+    </div>
+
+    <!-- 中：AI 总结 -->
+    <div class="card-w p-4">
+      <div class="hdr"><h2>🤖 AI 总结</h2></div>
+      <div id="aiBlock">
+        <div class="text-xs text-gray-400">加载中...</div>
       </div>
     </div>
 
-    <!-- 右侧：AI 结论 -->
-    <div class="card p-4">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-semibold text-gray-200">🤖 AI 结论</h2>
-      </div>
-      <div id="aiConclusion" class="text-sm leading-relaxed text-gray-400 space-y-2">
-        <div class="text-xs text-gray-600">加载中...</div>
-      </div>
-      <div class="mt-4 pt-3 border-t border-surface-700">
-        <div class="text-xs text-gray-500 mb-2">🟢 当前在线</div>
-        <div id="onlineMembers" class="space-y-1 text-xs text-gray-400">
-          <div>—</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══════════ 第三层：详细数据（默认弱化） ═══════════ -->
-  <div class="weak-toggle mb-2 text-xs text-gray-600 hover:text-gray-400" onclick="toggleDetails()">▼ 详细数据</div>
-
-  <div id="detailSection" class="weak">
-    <!-- 参与者汇总 -->
-    <div class="dash-table-wrap mb-3">
-      <div class="hdr"><h2>参与者</h2><span class="cnt text-xs text-gray-500" id="summaryCount">—</span></div>
-      <div style="max-height:300px;overflow-y:auto">
-        <table class="data-table w-full">
-          <thead><tr><th>成员</th><th>风险</th><th>在线</th><th>状态</th></tr></thead>
-          <tbody id="summaryBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- 最近事件 -->
-    <div class="dash-table-wrap mb-3">
-      <div class="hdr"><h2>最近事件</h2><span class="cnt text-xs text-gray-500" id="eventCount">—</span></div>
-      <div style="max-height:250px;overflow-y:auto">
-        <table class="data-table w-full">
-          <thead><tr><th>成员</th><th>状态</th><th>时间</th></tr></thead>
-          <tbody id="eventBody"></tbody>
-        </table>
-      </div>
+    <!-- 右：当前在线 -->
+    <div class="card-w p-4">
+      <div class="hdr"><h2>🟢 当前在线</h2><span class="cnt" id="onlineCount">—</span></div>
+      <div id="onlineList"><div class="text-xs text-gray-400 text-center py-6">暂无在线</div></div>
     </div>
   </div>
 
+  <!-- ═══ 第三层：参与者概览 ═══ -->
+  <div class="card-w mb-4">
+    <div class="px-4 py-3 flex items-center justify-between" style="border-bottom:1px solid #e5e7eb">
+      <h2 class="text-sm font-semibold" style="color:#0f172a">👥 参与者概览</h2>
+      <span class="text-xs" style="color:#94a3b8" id="summaryCount">—</span>
+    </div>
+    <div style="overflow-x:auto;padding:0">
+      <table class="tbl">
+        <thead><tr>
+          <th style="width:32px">#</th><th>成员</th><th>事件</th><th>在线时长</th><th>在线率</th><th>风险</th><th>状态</th><th>最后</th>
+        </tr></thead>
+        <tbody id="summaryBody"></tbody>
+      </table>
+    </div>
+    <div class="text-center py-3">
+      <button class="btn-sm" id="expandBtn" onclick="toggleExpand()">展开更多</button>
+    </div>
+  </div>
+
+  <!-- ═══ 第四层：近期事件 ═══ -->
+  <div class="card-w">
+    <div class="px-4 py-3 flex items-center justify-between" style="border-bottom:1px solid #e5e7eb">
+      <h2 class="text-sm font-semibold" style="color:#0f172a">📋 近期事件</h2>
+      <span class="text-xs" style="color:#94a3b8" id="eventCount">—</span>
+    </div>
+    <div style="overflow-x:auto;padding:0">
+      <table class="tbl">
+        <thead><tr><th style="width:32px">#</th><th>成员</th><th>状态</th><th>时间</th></tr></thead>
+        <tbody id="eventBody"></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <script>
-let detailsVisible = false;
+let summaryFull = [];
+let expanded = false;
 
-function toggleDetails() {
-  detailsVisible = !detailsVisible;
-  const el = document.getElementById("detailSection");
-  el.style.opacity = detailsVisible ? "1" : "0.5";
+function toggleExpand() {
+  expanded = !expanded;
+  document.getElementById("expandBtn").textContent = expanded ? "收起" : "展开更多";
+  renderSummary(expanded ? summaryFull : summaryFull.slice(0, 8));
 }
 
-async function loadMgt() {
+function renderSummary(data) {
+  const body = document.getElementById("summaryBody");
+  if (!data.length) { body.innerHTML = '<tr><td colspan="8" class="text-center py-8" style="color:#94a3b8">暂无</td></tr>'; return; }
+  body.innerHTML = data.map((p, i) => {
+    const riskClass = p.flags?.length ? (p.flags.includes("高频进出") ? "risk-high" : "risk-med") : "risk-none";
+    const riskBadge = p.flags?.length ? p.flags.map(f => `<span class="tag tag-danger">${f}</span>`).join(" ") : '<span style="color:#d1d5db">—</span>';
+    return `<tr><td class="num-col">${i+1}</td><td class="name-col">${p.name}</td><td>${p.total_actions || (p.enters+p.leaves)}</td><td>${p.duration_display}</td><td>${p.avg_min > 0 ? Math.min(100, Math.round(p.avg_min / 60 * 100)) + "%" : "—"}</td><td><span class="risk-dot ${riskClass}"></span>${riskBadge}</td><td><span class="status-dot ${p.is_online ? 'status-on' : 'status-off'}"></span></td><td style="font-family:monospace;color:#94a3b8;font-size:11px">${(p.last_active||"").slice(11,19)}</td></tr>`;
+  }).join("");
+}
+
+async function load() {
   try {
     const r = await fetch("/api/v2/live"); const d = await r.json();
     if (!d.ok) return;
 
-    // 状态总览
-    document.getElementById("hParticipants").textContent = d.unique_participants;
-    document.getElementById("hOnline").textContent = d.total_online;
-    document.getElementById("hAnomalies").textContent = d.anomalies?.length || 0;
-
-    // 健康度
-    const badge = document.getElementById("healthBadge");
-    const level = d.health_level || "green";
-    badge.className = "health-badge health-" + level;
-    badge.textContent = level === "green" ? "🟢 正常" : level === "yellow" ? "🟡 注意" : "🔴 异常";
+    // KPI
+    const anomCount = d.anomalies?.length || 0;
+    const healthScore = Math.max(0, 100 - anomCount * 10);
+    document.getElementById("kpiHealth").textContent = healthScore + "/100";
+    document.getElementById("kpiParticipants").textContent = d.unique_participants;
+    document.getElementById("kpiOnline").textContent = d.total_online;
+    document.getElementById("kpiAnomalies").textContent = anomCount;
+    document.getElementById("kpiEvents").textContent = d.total_events;
 
     // 异常 Top 3
-    const ac = document.getElementById("anomalyCards");
-    document.getElementById("anomalyTotal").textContent = (d.anomalies?.length || 0) + " 人";
-    if (d.anomalies?.length) {
-      const top3 = d.anomalies.slice(0, 3);
-      ac.innerHTML = top3.map(a => {
-        const lvl = a.flags.includes("高频进出") ? "high" : "med";
-        return `<div class="anomaly-card ${lvl}"><div class="name">${a.name}</div><div class="detail">${a.flags.map(f => `<span class="tag tag-red">${f}</span>`).join("")} ${a.actions} 次</div></div>`;
+    document.getElementById("anomalyTotal").textContent = anomCount + " 人";
+    const al = document.getElementById("anomalyList");
+    if (anomCount) {
+      al.innerHTML = d.anomalies.slice(0, 3).map((a, i) => {
+        const rankClass = i === 0 ? "rank-1" : i === 1 ? "rank-2" : "rank-3";
+        const flags = a.flags?.join("、") || "异常";
+        return `<div class="rank-card"><span class="rank-num ${rankClass}">${i+1}</span><div style="flex:1"><div class="rank-name">${a.name}</div><div class="rank-detail">${flags}</div></div><div class="rank-count">${a.actions} 次</div></div>`;
       }).join("");
-    } else {
-      ac.innerHTML = '<div class="text-xs text-gray-500 text-center py-6">✅ 今日无异常成员</div>';
-    }
+    } else { al.innerHTML = '<div class="text-xs text-gray-400 text-center py-6">✅ 今日无异常</div>'; }
 
-    // AI 结论
-    const ai = document.getElementById("aiConclusion");
-    if (d.ai_summary) {
-      ai.innerHTML = d.ai_summary.split("。").filter(Boolean).map(s => `<div>• ${s}。</div>`).join("");
-    }
+    // AI
+    const ai = document.getElementById("aiBlock");
+    const parts = (d.ai_summary || "暂无数据").split("。").filter(Boolean);
+    ai.innerHTML = parts.map(s => `<div class="ai-line">${s.replace(/^(.+?)(：|:)/, '<strong>$1</strong>$2')}。</div>`).join("") +
+      '<div class="ai-suggest"><span style="font-size:11px;color:#94a3b8">💡 建议：检查异常成员网络状态</span></div>';
 
-    // 当前在线
-    const om = document.getElementById("onlineMembers");
+    // 在线列表
+    document.getElementById("onlineCount").textContent = d.total_online + " 人";
+    const ol = document.getElementById("onlineList");
     if (d.online.length) {
-      om.innerHTML = d.online.map(p =>
-        `<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span>${p.name}</span><span class="text-gray-500">${p.online_display || p.online_minutes + '分钟'}</span></div>`
+      ol.innerHTML = d.online.map((p, i) =>
+        `<div class="online-item"><span class="online-dot"></span><span style="flex:1;font-size:13px;font-weight:500;color:#0f172a">${p.name}</span><span style="font-size:12px;color:#64748b">${p.online_display || p.online_minutes + '分钟'}</span></div>`
       ).join("");
-    } else { om.innerHTML = '<div class="text-gray-500">暂无</div>'; }
+    } else { ol.innerHTML = '<div class="text-xs text-gray-400 text-center py-6">暂无在线</div>'; }
 
-    // 参与者汇总（简化为：成员 | 风险 | 在线 | 状态）
-    const sb = document.getElementById("summaryBody");
-    const ps = d.participants_summary || [];
-    document.getElementById("summaryCount").textContent = ps.length + " 人";
-    if (ps.length) {
-      sb.innerHTML = ps.slice(0, 20).map(p => {
-        const risk = p.flags?.length ? p.flags.map(f => `<span class="tag tag-red">${f}</span>`).join("") : '<span class="text-gray-600">—</span>';
-        return `<tr class="hover-row"><td class="font-medium">${p.name}</td><td>${risk}</td><td>${p.duration_display}</td><td>${p.is_online ? '<span class="badge-green">🟢</span>' : '<span class="badge-gray">🔴</span>'}</td></tr>`;
-      }).join("");
-    } else { sb.innerHTML = '<tr><td colspan="4" class="text-center py-6 text-gray-600">暂无</td></tr>'; }
+    // 参与者概览
+    summaryFull = d.participants_summary || [];
+    document.getElementById("summaryCount").textContent = summaryFull.length + " 人";
+    expanded = false;
+    renderSummary(summaryFull.slice(0, 8));
 
-    // 最近事件（最新 10 条）
-    const eb = document.getElementById("eventBody");
+    // 近期事件
+    const evts = summaryFull.filter(p => p.last_active).sort((a,b) => (b.last_active||"").localeCompare(a.last_active||"")).slice(0, 10);
     document.getElementById("eventCount").textContent = (d.total_events || 0) + " 条";
-    // 用 participants_summary 的 last_active 按时间排序取前 10
-    const events = ps.filter(p => p.last_active).sort((a,b) => (b.last_active||"").localeCompare(a.last_active||"")).slice(0, 10);
-    if (events.length) {
-      eb.innerHTML = events.map(p => `<tr class="hover-row"><td>${p.name}</td><td>${p.is_online ? '<span class="badge-green">🟢 ONLINE</span>' : '<span class="badge-gray">🔴 OFFLINE</span>'}</td><td style="color:#64748b;font-family:monospace">${(p.last_active||"").slice(11,19)}</td></tr>`).join("");
-    } else { eb.innerHTML = '<tr><td colspan="3" class="text-center py-6 text-gray-600">暂无</td></tr>'; }
-  } catch(e) { console.log(e); }
+    const eb = document.getElementById("eventBody");
+    if (evts.length) {
+      eb.innerHTML = evts.map((p, i) => `<tr><td class="num-col">${i+1}</td><td class="name-col">${p.name}</td><td><span class="status-dot ${p.is_online ? 'status-on' : 'status-off'}"></span></td><td style="font-family:monospace;color:#94a3b8;font-size:11px">${(p.last_active||"").slice(11,19)}</td></tr>`).join("");
+    } else { eb.innerHTML = '<tr><td colspan="4" class="text-center py-6" style="color:#94a3b8">暂无</td></tr>'; }
+  } catch(e) {}
 }
 
-loadMgt();
-setInterval(loadMgt, 15000);
+load();
+setInterval(load, 15000);
 </script>
 {% endblock %}
