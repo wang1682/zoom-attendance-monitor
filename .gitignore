@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+data/
+backup/
+backups/
+dist/
+*.db
+*.sqlite
+.env
+.DS_Store

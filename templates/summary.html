@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}汇总分析 - {{ brand.app_name_zh }}{% endblock %}
+
+{% block content %}
+<div class="p-6">
+  <h1 class="text-xl font-bold mb-6">📊 参会汇总分析</h1>
+
+  <!-- Stat 卡片 -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6" id="summaryStats">
+    <div class="card p-4 text-center">
+      <div class="stat-label">👥 参与人数</div>
+      <div class="stat-value" id="statTotal">—</div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="stat-label">📝 记录数</div>
+      <div class="stat-value" id="statRecords">—</div>
+    </div>
+    <div class="card p-4 text-center">
+      <div class="stat-label">⏱ 平均时长</div>
+      <div class="stat-value" id="statAvg">—</div>
+    </div>
+    <div class="card p-4 text-center" style="border-color: #f59e0b40">
+      <div class="stat-label">⚠️ 迟到</div>
+      <div class="stat-value text-amber-400" id="statLate">—</div>
+    </div>
+    <div class="card p-4 text-center" style="border-color: #ef444440">
+      <div class="stat-label">🚪 早退</div>
+      <div class="stat-value text-red-400" id="statEarly">—</div>
+    </div>
+  </div>
+
+  <!-- 参会明细表 -->
+  <div class="card mb-6">
+    <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">👤 参会明细</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th class="table-header">姓名</th>
+            <th class="table-header">会议室</th>
+            <th class="table-header">进入时间</th>
+            <th class="table-header">离开时间</th>
+            <th class="table-header">时长</th>
+            <th class="table-header">状态</th>
+          </tr>
+        </thead>
+        <tbody id="memberTable">
+          <tr><td colspan="6" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无数据</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 会议室统计 -->
+  <div class="card mb-6">
+    <div class="px-4 py-3 border-b" style="border-color: {{ brand.border_color }};">
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🏢 会议室统计</h2>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th class="table-header">会议 ID</th>
+            <th class="table-header">参与人数</th>
+            <th class="table-header">唯一人数</th>
+            <th class="table-header">最早进入</th>
+            <th class="table-header">最晚离开</th>
+          </tr>
+        </thead>
+        <tbody id="meetingTable">
+          <tr><td colspan="5" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无数据</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- AI 分析 -->
+  <div class="card">
+    <div class="px-4 py-3 border-b flex justify-between items-center" style="border-color: {{ brand.border_color }};">
+      <h2 class="text-sm font-semibold" style="color: {{ brand.text_secondary }};">🤖 AI 出勤分析</h2>
+      <button onclick="runAIAnalysis()" class="px-3 py-1 text-xs rounded bg-primary-600 text-white hover:bg-primary-700" id="aiBtn">生成报告</button>
+    </div>
+    <div class="p-4" id="aiReport" style="color: {{ brand.text_muted }}; font-size: 13px; line-height: 1.6;">
+      点击「生成报告」按钮，AI 会自动分析今天的参会数据
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadSummary() {
+  const r = await fetch("/api/v2/summary");
+  const d = await r.json();
+  if (!d.ok) return;
+
+  const s = d.stats;
+  document.getElementById("statTotal").textContent = s.total_participants;
+  document.getElementById("statRecords").textContent = s.total_records;
+  document.getElementById("statAvg").textContent = s.avg_duration_min + "分";
+  document.getElementById("statLate").textContent = s.late_count;
+  document.getElementById("statEarly").textContent = s.early_leave_count;
+
+  // 参会明细
+  const tbody = document.getElementById("memberTable");
+  if (d.members.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无数据</td></tr>';
+  } else {
+    tbody.innerHTML = d.members.map(m => {
+      let badge = '<span class="badge-green">正常</span>';
+      if (m.is_late && m.is_early_leave) badge = '<span class="badge-red">迟到+早退</span>';
+      else if (m.is_late) badge = '<span class="badge-yellow">⚠️ 迟到</span>';
+      else if (m.is_early_leave) badge = '<span class="badge-yellow">🚪 早退</span>';
+      return `<tr class="hover-row"><td class="table-cell font-medium">${m.name}</td><td class="table-cell">${m.meeting_id}</td><td class="table-cell font-mono text-xs">${m.enter_time.slice(11,19) || '—'}</td><td class="table-cell font-mono text-xs">${m.leave_time.slice(11,19) || '—'}</td><td class="table-cell">${m.duration_min}分钟</td><td class="table-cell">${badge}</td></tr>`;
+    }).join("");
+  }
+
+  // 会议室
+  const mtbody = document.getElementById("meetingTable");
+  if (d.meetings.length === 0) {
+    mtbody.innerHTML = '<tr><td colspan="5" class="text-center py-10" style="color: {{ brand.text_muted }};">暂无数据</td></tr>';
+  } else {
+    mtbody.innerHTML = d.meetings.map(m =>
+      `<tr class="hover-row"><td class="table-cell font-mono">${m.meeting_id}</td><td class="table-cell">${m.count}</td><td class="table-cell">${m.unique_people}</td><td class="table-cell font-mono text-xs">${m.first_enter.slice(11,19) || '—'}</td><td class="table-cell font-mono text-xs">${m.last_leave.slice(11,19) || '—'}</td></tr>`
+    ).join("");
+  }
+}
+
+async function runAIAnalysis() {
+  const btn = document.getElementById("aiBtn");
+  const el = document.getElementById("aiReport");
+  btn.disabled = true;
+  btn.textContent = "⏳ 分析中...";
+  el.textContent = "AI 正在分析数据，请稍候...";
+
+  const r = await fetch("/api/v2/ai-analysis");
+  const d = await r.json();
+  if (d.ok && d.report) {
+    el.innerHTML = d.report.replace(/\n/g, "<br>");
+  } else {
+    el.textContent = "❌ " + (d.error || "分析失败");
+  }
+  btn.disabled = false;
+  btn.textContent = "🔄 重新生成";
+}
+
+loadSummary();
+</script>
+{% endblock %}

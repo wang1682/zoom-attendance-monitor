@@ -1,0 +1,43 @@
+Zoom Monitor Lite 发布 — 请上传 tarball 到 GitHub Release 页面。
+
+步骤：
+1. 浏览器打开 https://github.com/wang1682/zoom-attendance-monitor/releases
+2. 点 "Draft a new release"
+3. Tag: v1.1.0-lite
+4. Title: Zoom Monitor Lite v1.1.0 — Demo Mode 🎭
+5. 正文（复制粘贴下面👇）
+6. 上传 tarball：`/tmp/zoom-monitor-v1.1.0-lite.tar.gz`
+7. Publish release
+
+---
+
+### 发布正文：
+
+## v1.1.0-lite — Demo Mode 🎭
+
+**让零配置体验成为可能。不需要 Zoom 账号、不需要 Telegram Token、不填 .env，10 秒看完整 UI。**
+
+### 新增
+- `DEMO_MODE=true` — 启用即可脱离所有外部依赖运行
+- `/demo` 路由 — mock 数据驱动的全功能看板
+- Mock 数据集 — 56 人参会 / 15 条告警 / 8 条事件 / 3 份 AI 报告 / 行为分析图表
+- `install.sh --demo` — 一键部署 Demo 模式
+- 独立 `demo.db` — 与生产数据完全隔离，重启即重置
+- Quick Demo 章节（README）
+
+### 变更
+- app.py 单体化重构 — api/webhook/monitor/command 统一入口
+- dashboard.html — 集成 stats 对象，DEMO MODE 标识
+- demo.html — 补全 reports / analytics / events 标签
+- 新增 reports.html 模板
+- config.py validate_required() DEMO_MODE 跳过凭据检查
+
+### 文件变更
+
+11 files changed, 804 insertions(+), 323 deletions(-)
+
+### 价值
+用户不填 .env、不用真实凭据，从 clone 到打开浏览器只要 10 秒。**体验门槛降到零。**
+
+### SHA256
+`1a6d14cc4ae8616fe8c0a31b39a8aa31cf0c9dee45b9ee74b8ff67812f17855b`

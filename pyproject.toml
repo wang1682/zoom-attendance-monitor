@@ -1,0 +1,35 @@
+[project]
+name = "zoom-attend-platform"
+version = "0.1.0"
+description = "Zoom Attendance Intelligence Platform — 会议行为监控 SaaS"
+requires-python = ">=3.11"
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "httpx>=0.27",
+    "apscheduler>=3.10",
+    "python-dotenv>=1.0",
+    "cryptography>=42.0",
+    "aiosqlite>=0.20",
+]
+
+[project.optional-dependencies]
+prod = [
+    "asyncpg>=0.29",
+    "redis>=5.0",
+    "celery>=5.3",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx",
+]
+
+[tool.alembic]
+script_location = "migrations"
+sqlalchemy.url = "sqlite+aiosqlite:///data/tracking.db"

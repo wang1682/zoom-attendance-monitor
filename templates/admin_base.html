@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% if active == "admin" %}客户管理{% else %}Zoom 考勤平台{% endif %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f0f1a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+        .card { background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 12px; padding: 1.5rem; }
+        .badge { padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+        .badge-active { background: #065f46; color: #6ee7b7; }
+        .badge-inactive { background: #7f1d1d; color: #fca5a5; }
+        .badge-owner { background: #5b21b6; color: #c4b5fd; }
+        .badge-admin { background: #1e40af; color: #93c5fd; }
+        .badge-viewer { background: #374151; color: #9ca3af; }
+        .btn { padding: 6px 16px; border-radius: 8px; font-weight: 500; font-size: 0.875rem; transition: all 0.15s; cursor: pointer; }
+        .btn-primary { background: #6366f1; color: white; border: none; }
+        .btn-primary:hover { background: #4f46e5; }
+        .btn-danger { background: #dc2626; color: white; border: none; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-ghost { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+        .btn-ghost:hover { background: #1e293b; }
+        input, select { background: #0f0f1a; border: 1px solid #334155; border-radius: 8px; padding: 8px 12px; color: #e2e8f0; width: 100%; }
+        input:focus, select:focus { outline: 2px solid #6366f1; outline-offset: -1px; }
+        input::placeholder { color: #475569; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 10px 12px; font-size: 0.8rem; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #2d2d4a; }
+        td { padding: 10px 12px; border-bottom: 1px solid #1e293b; font-size: 0.9rem; }
+        tr:hover td { background: rgba(99,102,241,0.04); }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 50; }
+        .modal-content { background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 12px; padding: 2rem; max-width: 500px; margin: 10vh auto; }
+        .modal-overlay.active { display: block; }
+        a { color: #818cf8; text-decoration: none; }
+        a:hover { color: #a5b4fc; }
+        .nav-link { color: #94a3b8; padding: 8px 16px; border-radius: 8px; font-size: 0.875rem; transition: all 0.15s; }
+        .nav-link:hover { background: #1e293b; color: #e2e8f0; }
+        .nav-link.active { background: #312e81; color: #a5b4fc; }
+        .topbar { background: #1a1a2e; border-bottom: 1px solid #2d2d4a; padding: 0.75rem 1.5rem; }
+        .tenant-switcher { background: #0f0f1a; border: 1px solid #334155; border-radius: 8px; padding: 4px 12px; font-size: 0.8rem; color: #94a3b8; }
+    </style>
+</head>
+<body>
+    {% set nav_items = {
+        'dashboard': '/dashboard',
+        'events': '/dashboard/events',
+        'participants': '/dashboard/participants',
+        'alerts': '/dashboard/alerts',
+        'settings': '/dashboard/settings',
+        'admin': '/dashboard/admin/tenants',
+    } %}
+
+    <!-- Topbar -->
+    <div class="topbar flex items-center justify-between">
+        <div class="flex items-center gap-4">
+            <span style="color:#818cf8; font-weight:700;">Zoom Monitor</span>
+            {% for key, url in nav_items.items() %}
+            <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">{{ {'dashboard':'首页','events':'事件','participants':'参会','alerts':'告警','settings':'设置','admin':'管理'}[key] }}</a>
+            {% endfor %}
+        </div>
+        <form method="post" action="/logout" style="display:inline">
+            <button type="submit" class="btn btn-ghost" style="padding:4px 12px; font-size:0.8rem;">退出</button>
+        </form>
+    </div>
+
+    <!-- Main content -->
+    <div class="max-w-7xl mx-auto px-6 py-8">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Footer -->
+    <div style="text-align:center; padding:2rem; color:#475569; font-size:0.75rem;">
+        Zoom Attendance Intelligence Platform v0.1.0
+    </div>
+</body>
+</html>

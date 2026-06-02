@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}报表分析 - {{ brand.app_name_zh }}{% endblock %}
+{% block head %}
+<style>
+.bar-wrap { display: flex; align-items: end; gap: 6px; height: 120px; padding: 0 4px; }
+.bar { flex: 1; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; transition: height 0.3s; cursor: pointer; }
+.bar:hover { opacity: 0.8; }
+.bar .v { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: 10px; color: #64748b; margin-bottom: 4px; white-space: nowrap; }
+.bar .lbl { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-size: 9px; color: #475569; margin-top: 4px; white-space: nowrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="max-w-[1400px] mx-auto">
+  <div class="flex items-center justify-between mb-5">
+    <div><h1 class="text-lg font-semibold text-white">📈 报表分析</h1><p class="text-xs text-gray-500 mt-0.5">趋势与排行</p></div>
+    <div class="flex gap-2">
+      <button class="text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white" onclick="loadReport(7)" id="btn7d">7天</button>
+      <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700" onclick="loadReport(30)" id="btn30d">30天</button>
+      <button class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700" onclick="exportCSV()">📥 CSV</button>
+    </div>
+  </div>
+
+  <!-- 趋势图 -->
+  <div class="card p-5 mb-5">
+    <h2 class="text-sm font-semibold text-gray-300 mb-4">📊 参会趋势</h2>
+    <div class="bar-wrap" id="chartArea"><div class="text-xs text-gray-600 w-full text-center py-10">加载中...</div></div>
+  </div>
+
+  <!-- 统计 + 排行 -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    <div class="card p-5 lg:col-span-1">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3">📊 总计</h2>
+      <div id="statsSummary"><div class="text-sm text-gray-500">加载中...</div></div>
+    </div>
+    <div class="card overflow-hidden lg:col-span-2">
+      <div class="px-5 py-3 border-b border-surface-700"><h2 class="text-sm font-semibold text-gray-300">🏆 参会排行</h2></div>
+      <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="table-header">#</th><th class="table-header">姓名</th><th class="table-header">次数</th></tr></thead><tbody id="topTable"></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentData = null;
+async function loadReport(days) {
+  document.getElementById("btn7d").className = "text-xs px-3 py-1.5 rounded-lg " + (days===7?"bg-primary-600 text-white":"bg-surface-800 text-gray-400 border border-surface-700");
+  document.getElementById("btn30d").className = "text-xs px-3 py-1.5 rounded-lg " + (days===30?"bg-primary-600 text-white":"bg-surface-800 text-gray-400 border border-surface-700");
+  document.getElementById("chartArea").innerHTML = '<div class="text-xs text-gray-600 w-full text-center py-10">加载中...</div>';
+  try {
+    const r = await fetch("/api/report-data?days=" + days); const d = await r.json();
+    if (!d.ok) throw "error";
+    currentData = d;
+    renderChart(d.trend);
+    renderTop(d.top);
+    const total = d.trend.reduce((s, t) => s + t.count, 0);
+    const uniq = d.trend[d.trend.length-1]?.unique || 0;
+    document.getElementById("statsSummary").innerHTML =
+      `<div class="space-y-2"><div class="flex justify-between py-1.5 border-b border-surface-700"><span class="text-sm text-gray-400">总次数</span><span class="text-sm text-gray-200">${total}</span></div>` +
+      `<div class="flex justify-between py-1.5 border-b border-surface-700"><span class="text-sm text-gray-400">今日人数</span><span class="text-sm text-gray-200">${uniq}</span></div>` +
+      `<div class="flex justify-between py-1.5 border-b border-surface-700"><span class="text-sm text-gray-400">天数</span><span class="text-sm text-gray-200">${d.trend.filter(t=>t.count>0).length} / ${days}</span></div></div>`;
+  } catch(e) {
+    document.getElementById("chartArea").innerHTML = '<div class="text-xs text-red-400 w-full text-center py-10">数据加载失败</div>';
+  }
+}
+
+function renderChart(trend) {
+  const max = Math.max(...trend.map(t => t.count), 1);
+  const el = document.getElementById("chartArea");
+  el.innerHTML = trend.map(t => {
+    const h = Math.max((t.count / max) * 100, t.count > 0 ? 8 : 2);
+    const color = t.count > 0 ? 'background:linear-gradient(180deg,#818cf8,#6366f1)' : 'background:#1e293b';
+    return `<div class="bar" style="${color};height:${h}px" title="${t.date}: ${t.count}次"><div class="v">${t.count || ''}</div><div class="lbl">${t.date.slice(5)}</div></div>`;
+  }).join('');
+}
+
+function renderTop(top) {
+  const el = document.getElementById("topTable");
+  if (!top.length) { el.innerHTML = '<tr><td colspan="3" class="text-center py-10 text-gray-600">暂无</td></tr>'; return; }
+  el.innerHTML = top.map((p,i) => `<tr class="hover-row"><td class="table-cell text-xs text-gray-500">${i+1}</td><td class="table-cell font-medium">${p.name}</td><td class="table-cell">${p.count} 次</td></tr>`).join('');
+}
+
+function exportCSV() {
+  if (!currentData) return;
+  let csv = "日期,次数,人数\n";
+  currentData.trend.forEach(t => csv += `${t.date},${t.count},${t.unique}\n`);
+  csv += "\n排行\n姓名,次数\n";
+  currentData.top.forEach(p => csv += `${p.name},${p.count}\n`);
+  const blob = new Blob(["\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = `zoom-report-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+loadReport(7);
+</script>
+{% endblock %}

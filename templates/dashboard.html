@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.app_name_zh }}{% endblock %}
+{% block head %}
+<style>
+.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.dash-stat { @apply card p-4; position: relative; overflow: hidden; }
+.dash-stat .top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dash-stat .icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
+.dash-stat .value { font-size: 24px; font-weight: 700; color: #f1f5f9; }
+.dash-stat .label { font-size: 11px; color: #64748b; }
+.dash-table-wrap { @apply card; overflow: hidden; }
+.dash-table-wrap .hdr { @apply px-5 py-3 border-b border-surface-700; display: flex; align-items: center; justify-content: space-between; }
+.dash-table-wrap .hdr h2 { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+.dash-table-wrap .hdr .cnt { font-size: 11px; color: #64748b; background: #1e293b; padding: 2px 8px; border-radius: 10px; }
+.empty-state { text-align: center; padding: 40px 20px; }
+.empty-state .icon { font-size: 36px; margin-bottom: 12px; }
+.empty-state .title { font-size: 14px; font-weight: 600; color: #94a3b8; margin-bottom: 6px; }
+.empty-state .desc { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+.empty-state .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="max-w-[1400px] mx-auto">
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-lg font-semibold text-white">仪表盘</h1>
+      <p class="text-xs text-gray-500 mt-0.5">{{ today }} · <span id="updateTime">—</span></p>
+    </div>
+    <button onclick="location.reload()" class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white hover:bg-surface-700 transition-colors border border-surface-700">↻ 刷新</button>
+  </div>
+
+  {% if stats.participant_count == 0 and stats.alert_count == 0 %}
+  <!-- Empty State -->
+  <div class="card empty-state mb-6">
+    <div class="icon">📡</div>
+    <div class="title">等待数据接入</div>
+    <div class="desc">目前没有参会数据，请确认 Zoom 会议已开始且 Webhook 已连接</div>
+    <div class="actions">
+      <a href="/settings/zoom" class="text-xs px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors">检查 Zoom 配置</a>
+      <a href="/settings/telegram" class="text-xs px-4 py-2 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700 transition-colors">检查 Telegram</a>
+      <a href="/api/v2/health" target="_blank" class="text-xs px-4 py-2 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700 transition-colors">健康检查</a>
+    </div>
+  </div>
+  {% else %}
+  <!-- 统计卡片 -->
+  <div class="dash-grid mb-5">
+    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(59,130,246,0.12);color:#60a5fa">📅</div><div class="value">{{ stats.participant_count }}</div></div><div class="label">今日参会</div></div>
+    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(16,185,129,0.12);color:#34d399">🟢</div><div class="value" id="onlineCount">—</div></div><div class="label">当前在线</div></div>
+    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(245,158,11,0.12);color:#fbbf24">👤</div><div class="value">{{ stats.new_face_count }}</div></div><div class="label">新面孔</div></div>
+    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(239,68,68,0.12);color:#f87171">🔔</div><div class="value">{{ stats.alert_count }}</div></div><div class="label">告警</div></div>
+  </div>
+  {% endif %}
+
+  <!-- 最新参会 + AI 摘要 -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-5">
+    <div class="lg:col-span-2 dash-table-wrap">
+      <div class="hdr"><h2>📋 最新参会</h2><span class="cnt">{{ stats.participant_count }} 条</span></div>
+      {% if participants %}
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead><tr><th class="table-header">姓名</th><th class="table-header hidden sm:table-cell">邮箱</th><th class="table-header">动作</th><th class="table-header">时间</th><th class="table-header hidden md:table-cell">来源</th></tr></thead>
+          <tbody>
+            {% for p in participants[:15] %}
+            <tr class="hover-row">
+              <td class="table-cell font-medium">{{ p.name }}</td>
+              <td class="table-cell hidden sm:table-cell" style="color:#64748b">{{ p.email or '-' }}</td>
+              <td class="table-cell">{% if p.action == 'enter' %}<span class="badge-green">进入</span>{% else %}<span class="badge-red">离开</span>{% endif %}</td>
+              <td class="table-cell font-mono text-xs" style="color:#94a3b8">{{ to_myt(p.action_time) }}</td>
+              <td class="table-cell hidden md:table-cell" style="color:#64748b">{{ p.source }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="text-center py-12 text-gray-600 text-sm">暂无数据 · 等待 Zoom 参会事件</div>
+      {% endif %}
+    </div>
+
+    <!-- AI 摘要 -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-300 flex items-center gap-1.5"><span>🤖</span> AI 摘要</h2>
+        <button onclick="loadAISummary()" class="text-xs px-2.5 py-1 rounded-lg bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 transition-colors" id="aiBtn">生成</button>
+      </div>
+      <div class="text-sm leading-relaxed text-gray-500" id="aiSummary">
+        {% if stats.participant_count > 0 %}
+        今日已有 <span style="color:#e2e8f0">{{ stats.participant_count }}</span> 条参会记录，<span style="color:#e2e8f0">{{ stats.alert_count }}</span> 条告警。
+        {% else %}
+        暂无会议数据。确认 Zoom 会议开始后，数据将自动出现。
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- 告警 -->
+  <div class="dash-table-wrap">
+    <div class="hdr"><h2>🔔 近期告警</h2><span class="cnt">{{ stats.alert_count }} 条</span></div>
+    {% if alerts %}
+    <ul class="divide-y divide-surface-800">
+      {% for a in alerts[:8] %}
+      <li class="px-5 py-3 hover-row flex items-start gap-3">
+        <span>{% if a.severity == 'error' %}🔴{% elif a.severity == 'warning' %}🟡{% else %}🔵{% endif %}</span>
+        <div class="flex-1 min-w-0"><p class="text-sm text-gray-200 truncate">{{ a.title }}</p><p class="text-xs text-gray-500 truncate">{{ a.message[:80] }}</p></div>
+        <span class="text-xs text-gray-500 whitespace-nowrap">{{ to_myt(a.created_at) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="text-center py-10 text-gray-600 text-sm">暂无告警</div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+document.getElementById("updateTime").textContent = new Date().toLocaleTimeString("zh-CN", {hour:'2-digit',minute:'2-digit', hour12:false});
+fetch("/api/v2/live").then(r=>r.json()).then(d=>{if(d.ok) document.getElementById("onlineCount").textContent=d.total_online}).catch(()=>{});
+
+async function loadAISummary() {
+  const btn = document.getElementById("aiBtn"); const el = document.getElementById("aiSummary");
+  btn.disabled = true; btn.textContent = "⏳..."; el.innerHTML = "AI 分析中...";
+  try {
+    const r = await fetch("/api/v2/ai-analysis"); const d = await r.json();
+    el.innerHTML = d.ok && d.report ? d.report.replace(/\n/g, "<br>") : 'AI 不可用，请检查 <a href="/settings/zoom" style="color:#818cf8">sub2api 配置</a>';
+  } catch(e) { el.innerHTML = '<span style="color:#f87171">请求失败</span>'; }
+  btn.disabled = false; btn.textContent = "↻ 重新生成";
+}
+</script>
+{% endblock %}

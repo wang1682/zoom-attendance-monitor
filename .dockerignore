@@ -1,0 +1,14 @@
+# ── Docker 构建忽略 ──
+.env
+tracking.db
+*.db
+*.db-*
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+old/
+.git/
+.gitignore
+*.md
+*.log

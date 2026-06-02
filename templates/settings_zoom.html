@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Zoom 配置 - {{ brand.app_name_zh }}{% endblock %}
+{% block content %}
+<div class="max-w-[1400px] mx-auto">
+  <div class="mb-6">
+    <h1 class="text-lg font-semibold text-white">🎥 Zoom 配置</h1>
+    <p class="text-xs text-gray-500 mt-0.5">监控系统配置状态</p>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- API 配置 -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-4">🔑 API 凭证</h2>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">会议主持人</span>
+          <span class="text-sm text-gray-200">{{ host_email or '未配置' }}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">PMI 会议室</span>
+          <span class="text-sm font-mono text-gray-200">{{ pmi_id or '未配置' }}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">额外会议 ID</span>
+          <span class="text-sm font-mono text-gray-200">{{ extra_ids or '无' }}</span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">轮询间隔</span>
+          <span class="text-sm text-gray-200">{{ monitor_interval }} 秒</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Webhook 状态 -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-4">🔗 Webhook 状态</h2>
+      <div class="space-y-3">
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">状态</span>
+          <span class="text-sm {% if webhook_status == '运行中' %}text-emerald-400{% else %}text-red-400{% endif %}">
+            {% if webhook_status == '运行中' %}🟢{% else %}🔴{% endif %} {{ webhook_status }}
+          </span>
+        </div>
+        <div class="flex justify-between items-center py-2 border-b border-surface-700">
+          <span class="text-sm text-gray-400">端点</span>
+          <span class="text-sm font-mono text-gray-400 text-xs">zoom-webhook.dhbwang.xyz/webhook</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- OAuth 授权 -->
+    <div class="card p-5 lg:col-span-2">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-semibold text-gray-300">🔗 已授权 Zoom 账号</h2>
+        <a href="#" onclick="connectZoom();return false" class="text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors">＋ 添加账号</a>
+      </div>
+      {% if oauth_accounts %}
+      <div class="space-y-2">
+        {% for a in oauth_accounts %}
+        <div class="flex items-center justify-between py-2 px-3 rounded-lg bg-surface-850">
+          <div class="flex items-center gap-3">
+            <span class="text-emerald-400">✅</span>
+            <span class="text-sm text-gray-200">{{ a.email }}</span>
+          </div>
+          <span class="text-xs text-gray-500">{{ a.scope[:30] }}…</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="text-center py-8 text-gray-600 text-sm">暂无授权账号，点击上方按钮添加</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

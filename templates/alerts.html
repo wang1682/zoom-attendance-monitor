@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}告警日志 - {{ brand.app_name_zh }}{% endblock %}
+{% block content %}
+<div class="max-w-[1400px] mx-auto">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-lg font-semibold text-white">🔔 告警日志</h1>
+      <p class="text-xs text-gray-500 mt-0.5">监控告警记录</p>
+    </div>
+  </div>
+  <div class="card overflow-hidden">
+    {% if alerts %}
+    <ul class="divide-y divide-surface-800">
+      {% for a in alerts %}
+      <li class="px-5 py-3.5 hover-row flex items-start gap-3">
+        <span>{% if a.severity == 'error' %}🔴{% elif a.severity == 'warning' %}🟡{% else %}🔵{% endif %}</span>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-200 truncate">{{ a.title }}</p>
+          <p class="text-xs text-gray-500 truncate">{{ a.message[:120] }}</p>
+        </div>
+        <span class="text-xs text-gray-500 whitespace-nowrap">{{ to_myt(a.created_at) }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="text-center py-16 text-gray-600 text-sm">暂无告警</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+app_name: Zoom Attendance Monitor
+app_name_zh: Zoom 参会监控
+logo: null
+slogan: 自动记录 · 准时提醒 · 一目了然
+slogan_en: Auto-track · On-time alerts · At a glance
+colors:
+  primary: '#0D6EFD'
+  secondary: '#6C757D'
+  accent: '#FFC107'
+  bg_dark: '#0B0E14'
+  bg_card: '#1A1D24'
+  text_primary: '#FFFFFF'
+  text_secondary: '#9CA3AF'
+  text_muted: '#6B7280'
+  border: '#2D3140'
+header_emoji: 📊
+footer_text: Zoom Monitor v2 · 内部工具
+telegram_templates:
+  participant_enter: 👤 <b>{name}</b> 进入了自习室
+  participant_leave: 👤 <b>{name}</b> 离开了自习室
+  stranger_alert: '⚠️ 陌生人进入自习室
+
+    👤 {name}
+
+    📧 {email}
+
+    ⏰ {time}'
+  daily_summary: '📊 <b>今日自习室汇总</b>
+
+    📅 {date}
+
+
+    👥 总人数: {total}
+
+    🆕 新人: {new_count}
+
+    ⏱ 最早: {first_enter}
+
+    ⏱ 最晚: {last_leave}'
+  overtime_alert: '⏰ <b>超时提醒</b>
+
+    自习室仍在进行中
+
+    当前时间: {time}
+
+    已持续: {duration}'
+  meeting_start: '🔔 自习室已开启
+
+    ⏰ {time}'
+  meeting_end: '🔔 自习室已结束
+
+    ⏰ {time}
+
+    👥 今日总人数: {total}'
+  signin_reminder: '⏰ <b>签到提醒</b>
+
+    请于 {deadline} 前完成签到
+
+    当前签名人数: {count}'
+  command_ack: ✅ {action} 成功
+  command_error: '❌ {action} 失败: {reason}'
+  status_report: '{header_emoji} <b>系统状态</b>
+
+
+    📱 推送: {push_status}
+
+    🔇 静音: {quiet_status}
+
+    🔄 轮询: {poll_status}
+
+    📊 今日记录: {today_count} 条'
+  stranger_header: '👤 陌生来访预警
+
+    发现 {count} 个新面孔
+
+    '
+  participant_enter_header: '📋 参会汇总
+
+    新增 {count} 人
+
+    '
+  participant_leave_header: '🚪 离开提醒
+
+    离开 {count} 人
+
+    '

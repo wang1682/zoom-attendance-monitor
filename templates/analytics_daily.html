@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}每日聚合 - Zoom Monitor{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">📈 每日聚合</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">当日签到情况 · 时段活跃 · 个人维度统计</p>
+    </div>
+
+    <!-- 日期选择器 -->
+    <div class="card p-4">
+        <div class="flex flex-wrap gap-2">
+            {% for d in days %}
+            <a href="/dashboard/analytics/daily?date={{ d.date }}"
+               class="px-3 py-1.5 text-sm rounded-lg transition-colors
+                      {% if d.date == selected_date %}bg-primary-500 text-white
+                      {% else %}bg-gray-100 dark:bg-surface-850 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-surface-800{% endif %}">
+                {{ d.date }} <span class="opacity-60">({{ d.total_persons }})</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    {% set day = days|selectattr('date', 'equalto', selected_date)|first %}
+
+    <!-- 当日概览卡片 -->
+    {% if day %}
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="card p-5">
+            <div class="stat-label">签到人数</div>
+            <div class="stat-value">{{ day.total_persons }}</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">总时长</div>
+            <div class="stat-value">{{ (day.total_duration_minutes / 60)|round(1) }}h</div>
+            <div class="stat-label mt-1">{{ day.total_duration_minutes|round }} 分钟</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">独立邮箱</div>
+            <div class="stat-value">{{ day.unique_emails }}</div>
+        </div>
+        <div class="card p-5">
+            <div class="stat-label">最早/最晚入场</div>
+            <div class="text-sm font-semibold text-gray-900 dark:text-white">{{ day.earliest_entry|string|truncate(5,True,'') }} · {{ day.latest_entry|string|truncate(5,True,'') }}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 时段活跃度 -->
+    <div class="card p-5">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">🕐 时段活跃分布</h2>
+        <div class="flex items-end gap-1 h-32">
+            {% for h in range(24) %}
+            {% set hc = hours|selectattr('hour', 'equalto', h)|first %}
+            {% set max_count = hours|map(attribute='person_count')|max|default(1) %}
+            <div class="flex-1 flex flex-col items-center">
+                <div class="w-full rounded-t bg-primary-500/60 dark:bg-primary-400/60 transition-all hover:bg-primary-500 dark:hover:bg-primary-400"
+                     style="height: {{ ((hc.person_count if hc else 0) / max_count * 100)|round }}%"></div>
+                <span class="text-xs text-gray-400 mt-1">{{ h }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="text-xs text-gray-400 mt-2 text-center">横轴为小时 (0-23)，高度为同时在线人数</div>
+    </div>
+
+    <!-- 个人统计 -->
+    <div class="card p-5">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">👤 参会人员统计</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full">
+                <thead>
+                    <tr class="border-b border-gray-100 dark:border-surface-700">
+                        <th class="table-header">姓名</th>
+                        <th class="table-header">邮箱</th>
+                        <th class="table-header">停留(分)</th>
+                        <th class="table-header">签到次数</th>
+                        <th class="table-header">入场</th>
+                        <th class="table-header">离开</th>
+                        <th class="table-header">标签</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in participants %}
+                    <tr class="hover-row border-b border-gray-50 dark:border-surface-850/50">
+                        <td class="table-cell font-medium">{{ p.name }}</td>
+                        <td class="table-cell text-xs">{{ p.email|default('', true) }}</td>
+                        <td class="table-cell">{{ p.total_duration_minutes|round }}</td>
+                        <td class="table-cell">{{ p.enter_count }}</td>
+                        <td class="table-cell">{{ p.first_entry|string|truncate(8,True,'') if p.first_entry else '-' }}</td>
+                        <td class="table-cell">{{ p.last_leave|string|truncate(8,True,'') if p.last_leave else '-' }}</td>
+                        <td class="table-cell">
+                            <div class="flex gap-1 flex-wrap">
+                                {% if p.late_entry %}<span class="badge-red text-xs">迟到</span>{% endif %}
+                                {% if p.short_stay %}<span class="badge-yellow text-xs">短停</span>{% endif %}
+                                {% if p.night_entry %}<span class="badge-blue text-xs">深夜</span>{% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if not participants %}
+                    <tr><td colspan="7" class="table-cell text-center text-gray-400 py-8">当日无签到记录</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

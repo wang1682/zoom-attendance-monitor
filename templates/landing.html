@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ brand.app_name_zh }} — {{ brand.slogan }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' },
+                        brand: { DEFAULT: '{{ brand.primary_color }}', dark: '{{ brand.bg_dark }}', card: '{{ brand.bg_card }}' }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif; }
+        .hero-glow { box-shadow: 0 0 80px rgba(99,102,241,0.15); }
+        .feature-card { transition: all 0.3s ease; }
+        .feature-card:hover { transform: translateY(-4px); box-shadow: 0 20px 40px rgba(0,0,0,0.2); }
+        .gradient-text { background: linear-gradient(135deg, #818cf8, #6366f1); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .float-anim { animation: float 6s ease-in-out infinite; }
+        @keyframes float { 0%, 100% { transform: translateY(0px); } 50% { transform: translateY(-10px); } }
+        .code-block { background: #0d1117; border: 1px solid #30363d; border-radius: 12px; }
+        .code-block pre { margin: 0; padding: 20px; overflow-x: auto; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 3px; }
+        .demo-stat { @apply bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10; }
+        .demo-row { @apply flex items-center gap-3 py-3 px-4 rounded-xl hover:bg-white/5 transition-colors; }
+    </style>
+</head>
+<body class="bg-[{{ brand.bg_dark }}] text-white min-h-screen">
+
+    <!-- ─── Nav ─── -->
+    <nav class="fixed top-0 w-full z-50 bg-[{{ brand.bg_dark }}]/80 backdrop-blur-xl border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <span class="text-2xl">{{ brand.header_emoji }}</span>
+                <span class="text-lg font-semibold">{{ brand.app_name_zh }}</span>
+            </div>
+            <div class="flex items-center gap-6 text-sm text-gray-400">
+                <a href="#features" class="hover:text-white transition-colors">功能</a>
+                <a href="#demo" class="hover:text-white transition-colors">演示</a>
+                <a href="#deploy" class="hover:text-white transition-colors">部署</a>
+                <a href="#pricing" class="hover:text-white transition-colors">定价</a>
+                <a href="/demo"
+                   class="ml-4 px-5 py-2 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-full font-medium hover:from-primary-400 hover:to-primary-500 transition-all text-sm shadow-lg shadow-primary-500/25">
+                    <i class="fas fa-play mr-1.5"></i>在线演示
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ─── Hero ─── -->
+    <section class="relative pt-32 pb-24 overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-b from-primary-500/5 to-transparent"></div>
+        <div class="max-w-6xl mx-auto px-6 text-center relative">
+            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary-500/10 border border-primary-500/20 text-primary-300 text-sm mb-8">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+                v1.0.0-lite · 已开源
+            </div>
+            <h1 class="text-5xl md:text-7xl font-bold leading-tight mb-6">
+                {% if brand.app_name_zh %}
+                <span class="gradient-text">{{ brand.app_name_zh }}</span><br>
+                {% endif %}
+                <span class="text-gray-300">让参会管理</span><br>
+                <span class="text-white">像喝水一样简单</span>
+            </h1>
+            <p class="text-xl text-gray-400 max-w-3xl mx-auto mb-10 leading-relaxed">
+                {{ brand.slogan }}<br>
+                自动记录参会 · Telegram 实时推送 · AI 出勤分析 · 三分钟部署
+            </p>
+            <div class="flex items-center justify-center gap-4 flex-wrap">
+                <a href="#deploy"
+                   class="px-8 py-3.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-full font-semibold text-lg hover:from-primary-400 hover:to-primary-500 transition-all shadow-xl shadow-primary-500/30">
+                    <i class="fas fa-rocket mr-2"></i>一键部署
+                </a>
+                <a href="/demo"
+                   class="px-8 py-3.5 bg-white/5 border border-white/10 text-white rounded-full font-semibold text-lg hover:bg-white/10 transition-all">
+                    <i class="fas fa-eye mr-2"></i>查看演示
+                </a>
+            </div>
+
+            <!-- Demo Preview Card -->
+            <div class="mt-16 max-w-4xl mx-auto hero-glow rounded-2xl overflow-hidden border border-white/10 bg-[{{ brand.bg_card }}]/50 backdrop-blur">
+                <div class="p-6 border-b border-white/5 flex items-center justify-between text-sm text-gray-400">
+                    <div class="flex items-center gap-2">
+                        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-500"></span>
+                    </div>
+                    <span><i class="fas fa-video mr-2"></i>自习室 · 实时监控中</span>
+                    <span class="text-emerald-400"><i class="fas fa-circle text-xs mr-1.5"></i>直播中</span>
+                </div>
+                <div class="p-6 text-left">
+                    <div class="grid grid-cols-4 gap-4 mb-6">
+                        <div class="demo-stat text-center">
+                            <div class="text-3xl font-bold text-primary-400">{{ demo_data.participant_count }}</div>
+                            <div class="text-xs text-gray-500 mt-1">今日参会</div>
+                        </div>
+                        <div class="demo-stat text-center">
+                            <div class="text-3xl font-bold text-amber-400">{{ demo_data.new_face_count }}</div>
+                            <div class="text-xs text-gray-500 mt-1">新面孔</div>
+                        </div>
+                        <div class="demo-stat text-center">
+                            <div class="text-3xl font-bold text-emerald-400">{{ demo_data.checkin_rate }}%</div>
+                            <div class="text-xs text-gray-500 mt-1">签到率</div>
+                        </div>
+                        <div class="demo-stat text-center">
+                            <div class="text-3xl font-bold text-rose-400">{{ demo_data.alert_count }}</div>
+                            <div class="text-xs text-gray-500 mt-1">告警</div>
+                        </div>
+                    </div>
+                    <div class="space-y-0.5">
+                        {% for p in demo_participants %}
+                        <div class="demo-row">
+                            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center text-xs font-bold text-white shrink-0">{{ p.name[0] }}</div>
+                            <div class="flex-1 min-w-0">
+                                <div class="text-sm font-medium truncate">{{ p.name }}</div>
+                                <div class="text-xs text-gray-500 truncate">{{ p.email }}</div>
+                            </div>
+                            <div class="text-xs text-gray-500">{{ p.action_time[:5] if 'action_time' in p and p.action_time is string else p.action_time }}</div>
+                            {% if p.is_new %}
+                            <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/20 text-amber-300 font-medium">新</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="mt-4 text-center text-xs text-gray-500">
+                        <i class="fas fa-arrow-down mr-1"></i>实时更新，每25秒自动刷新
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── Features ─── -->
+    <section id="features" class="py-24 border-t border-white/5">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold mb-4">为什么选择 {{ brand.app_name_zh }}？</h2>
+                <p class="text-gray-400 text-lg">不折腾，直接解决问题</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">📹</div>
+                    <h3 class="text-xl font-semibold mb-3">实时 Zoom 监控</h3>
+                    <p class="text-gray-400 leading-relaxed">自动拉取 Zoom API 参会列表，支持轮询 + Webhook 双通道。谁进谁出，一目了然。无需手动点名。</p>
+                </div>
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">🤖</div>
+                    <h3 class="text-xl font-semibold mb-3">Telegram 智能预警</h3>
+                    <p class="text-gray-400 leading-relaxed">陌生人闯入实时告警，迟到自动标记，签到超时提醒。支持 /status /quiet 指令控制。不开 App 也知道谁在。</p>
+                </div>
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">📊</div>
+                    <h3 class="text-xl font-semibold mb-3">AI 出勤分析</h3>
+                    <p class="text-gray-400 leading-relaxed">自动生成每日 / 每周出勤报告。谁经常迟到、谁从不缺席、谁在"挂机"。数据驱动团队管理。</p>
+                </div>
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">🚀</div>
+                    <h3 class="text-xl font-semibold mb-3">一分钟部署</h3>
+                    <p class="text-gray-400 leading-relaxed">一行命令完成安装。Docker / systemd / 裸跑三模式。不需要专业运维知识。</p>
+                </div>
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">🔒</div>
+                    <h3 class="text-xl font-semibold mb-3">100% 私有化</h3>
+                    <p class="text-gray-400 leading-relaxed">数据存你自己的服务器。不经过第三方云端。Zoom Token 不离开你的机器。安全可控。</p>
+                </div>
+                <div class="feature-card bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <div class="w-14 h-14 rounded-xl bg-primary-500/10 flex items-center justify-center text-2xl mb-6">🎨</div>
+                    <h3 class="text-xl font-semibold mb-3">品牌可自定义</h3>
+                    <p class="text-gray-400 leading-relaxed">Web 看板配色、Telegram 推送文案、Logo 全部可配。改 brand.json 就行，不改代码。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── Demo ─── -->
+    <section id="demo" class="py-24 border-t border-white/5">
+        <div class="max-w-6xl mx-auto px-6 text-center">
+            <h2 class="text-4xl font-bold mb-4">免配置，即刻体验</h2>
+            <p class="text-gray-400 text-lg mb-12">无需 Zoom 账号，点开即用</p>
+
+            <div class="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto mb-12">
+                <a href="/demo" class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5 hover:border-primary-500/30 transition-all text-left">
+                    <div class="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center text-xl mb-4"><i class="fas fa-chart-line text-primary-400"></i></div>
+                    <h3 class="text-lg font-semibold mb-2">实时看板</h3>
+                    <p class="text-gray-400 text-sm">今日参会、新面孔、签到率、告警统计</p>
+                    <div class="mt-4 text-primary-400 text-sm"><i class="fas fa-arrow-right mr-1"></i>打开演示</div>
+                </a>
+                <a href="/demo?tab=participants" class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5 hover:border-primary-500/30 transition-all text-left">
+                    <div class="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center text-xl mb-4"><i class="fas fa-users text-emerald-400"></i></div>
+                    <h3 class="text-lg font-semibold mb-2">参会明细</h3>
+                    <p class="text-gray-400 text-sm">查看每个人进出时间、在线时长、迟到标记</p>
+                    <div class="mt-4 text-primary-400 text-sm"><i class="fas fa-arrow-right mr-1"></i>打开演示</div>
+                </a>
+                <a href="/demo?tab=alerts" class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5 hover:border-primary-500/30 transition-all text-left">
+                    <div class="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center text-xl mb-4"><i class="fas fa-bell text-amber-400"></i></div>
+                    <h3 class="text-lg font-semibold mb-2">告警日志</h3>
+                    <p class="text-gray-400 text-sm">陌生人预警、迟到记录、超时提醒历史</p>
+                    <div class="mt-4 text-primary-400 text-sm"><i class="fas fa-arrow-right mr-1"></i>打开演示</div>
+                </a>
+                <a href="/demo?tab=telegram" class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5 hover:border-primary-500/30 transition-all text-left">
+                    <div class="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center text-xl mb-4"><i class="fab fa-telegram text-sky-400"></i></div>
+                    <h3 class="text-lg font-semibold mb-2">Telegram 效果</h3>
+                    <p class="text-gray-400 text-sm">看看推送消息长什么样</p>
+                    <div class="mt-4 text-primary-400 text-sm"><i class="fas fa-arrow-right mr-1"></i>打开演示</div>
+                </a>
+            </div>
+
+            <div class="inline-flex flex-wrap items-center justify-center gap-3 text-sm text-gray-500">
+                <span class="px-3 py-1 bg-white/5 rounded-full">📅 内置 7 天历史数据</span>
+                <span class="px-3 py-1 bg-white/5 rounded-full">👤 20+ 虚拟人物</span>
+                <span class="px-3 py-1 bg-white/5 rounded-full">⚠️ 预设告警场景</span>
+                <span class="px-3 py-1 bg-white/5 rounded-full">📱 Telegram 示例截图</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── Deploy ─── -->
+    <section id="deploy" class="py-24 border-t border-white/5">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold mb-4">一键部署</h2>
+                <p class="text-gray-400 text-lg">三分钟从零到监控</p>
+            </div>
+
+            <div class="max-w-3xl mx-auto">
+                <div class="code-block mb-4">
+                    <div class="px-5 py-3 border-b border-gray-700/50 flex items-center justify-between text-xs text-gray-500">
+                        <span><i class="fas fa-terminal mr-2"></i>Terminal</span>
+                        <span>Ubuntu / Debian</span>
+                    </div>
+                    <pre class="text-sm text-gray-300"><span class="text-gray-500"># 一行命令安装</span>
+<span class="text-green-400">$</span> curl -fsSL https://raw.githubusercontent.com/your-org/zoom-attendance-monitor/v1.0.0-lite/install.sh | bash
+
+<span class="text-gray-500"># 30 秒后：</span>
+<span class="text-green-400">$</span> open http://localhost:8000
+                    </pre>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-4 mt-8">
+                    <div class="bg-[{{ brand.bg_card }}] rounded-xl p-6 border border-white/5">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="text-xl"><i class="fab fa-docker text-sky-400"></i></span>
+                            <span class="font-semibold">Docker 部署</span>
+                        </div>
+                        <div class="text-xs text-gray-500 mb-3 code-block p-3">
+                            docker compose up -d
+                        </div>
+                        <ul class="text-sm text-gray-400 space-y-1">
+                            <li>✓ 环境隔离</li>
+                            <li>✓ 一键升级</li>
+                            <li>✓ 跨平台兼容</li>
+                        </ul>
+                    </div>
+                    <div class="bg-[{{ brand.bg_card }}] rounded-xl p-6 border border-white/5">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="text-xl"><i class="fas fa-server text-emerald-400"></i></span>
+                            <span class="font-semibold">systemd 部署</span>
+                        </div>
+                        <div class="text-xs text-gray-500 mb-3 code-block p-3">
+                            systemctl enable --now zoom-*
+                        </div>
+                        <ul class="text-sm text-gray-400 space-y-1">
+                            <li>✓ 生产性能</li>
+                            <li>✓ 自动重启</li>
+                            <li>✓ 日志集成</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="mt-12 bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <h3 class="text-xl font-semibold mb-4">你需要准备的：</h3>
+                    <div class="grid md:grid-cols-3 gap-6 text-sm">
+                        <div class="flex items-start gap-3">
+                            <span class="text-primary-400 mt-0.5">1.</span>
+                            <div>
+                                <div class="font-medium mb-1">Zoom App</div>
+                                <div class="text-gray-500">创建 Server-to-Server OAuth App，添加 meeting scopes</div>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <span class="text-primary-400 mt-0.5">2.</span>
+                            <div>
+                                <div class="font-medium mb-1">Telegram Bot</div>
+                                <div class="text-gray-500">找 @BotFather 创建 Bot，获取 Token 和 Chat ID</div>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <span class="text-primary-400 mt-0.5">3.</span>
+                            <div>
+                                <div class="font-medium mb-1">一台服务器</div>
+                                <div class="text-gray-500">任何 Linux 虚拟机/VPS，512MB RAM 就够了</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── Pricing ─── -->
+    <section id="pricing" class="py-24 border-t border-white/5">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="text-4xl font-bold mb-4">简单定价</h2>
+                <p class="text-gray-400 text-lg">开源免费，企业版按需定制</p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+                <div class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <h3 class="text-xl font-semibold mb-2">Lite</h3>
+                    <div class="text-4xl font-bold mb-1">免费</div>
+                    <div class="text-gray-500 text-sm mb-6">开源 · 自部署</div>
+                    <ul class="space-y-3 text-sm text-gray-400 mb-8">
+                        <li>✓ 自动参会记录</li>
+                        <li>✓ Telegram 推送</li>
+                        <li>✓ 陌生人检测</li>
+                        <li>✓ 签到提醒</li>
+                        <li>✓ 1 个会议室</li>
+                        <li>✓ 自托管私有化</li>
+                    </ul>
+                </div>
+                <div class="bg-gradient-to-b from-primary-500/10 to-[{{ brand.bg_card }}] rounded-2xl p-8 border border-primary-500/30 relative">
+                    <div class="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-primary-500 text-xs font-semibold rounded-full">推荐</div>
+                    <h3 class="text-xl font-semibold mb-2">Pro</h3>
+                    <div class="text-4xl font-bold mb-1">待定</div>
+                    <div class="text-gray-500 text-sm mb-6">按会议室/月</div>
+                    <ul class="space-y-3 text-sm text-gray-400 mb-8">
+                        <li>✓ Lite 全部功能</li>
+                        <li>✓ AI 出勤报告</li>
+                        <li>✓ 多会议室支持</li>
+                        <li>✓ 品牌白标</li>
+                        <li>✓ 多租户</li>
+                        <li>✓ 优先级支持</li>
+                    </ul>
+                </div>
+                <div class="bg-[{{ brand.bg_card }}] rounded-2xl p-8 border border-white/5">
+                    <h3 class="text-xl font-semibold mb-2">Enterprise</h3>
+                    <div class="text-4xl font-bold mb-1">定制</div>
+                    <div class="text-gray-500 text-sm mb-6">按需报价</div>
+                    <ul class="space-y-3 text-sm text-gray-400 mb-8">
+                        <li>✓ Pro 全部功能</li>
+                        <li>✓ 私有部署支持</li>
+                        <li>✓ 自定义集成</li>
+                        <li>✓ SLA 保障</li>
+                        <li>✓ 专属客服</li>
+                        <li>✓ 培训/实施</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="mt-12 text-center">
+                <p class="text-gray-500 text-sm mb-4">所有版本均支持私有化部署</p>
+                <a href="/demo" class="px-6 py-3 bg-primary-500/10 border border-primary-500/30 text-primary-300 rounded-full font-medium hover:bg-primary-500/20 transition-all text-sm">
+                    <i class="fas fa-eye mr-1.5"></i>先看演示再决定
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- ─── Footer ─── -->
+    <footer class="py-12 border-t border-white/5 text-center text-sm text-gray-500">
+        <p class="mb-2">{{ brand.header_emoji }} {{ brand.app_name_zh }}</p>
+        <p>{{ brand.footer_text }}</p>
+        <div class="flex items-center justify-center gap-4 mt-4 text-xs">
+            <a href="https://github.com/your-org/zoom-attendance-monitor" class="hover:text-gray-300"><i class="fab fa-github mr-1"></i>GitHub</a>
+            <span>·</span>
+            <a href="/demo" class="hover:text-gray-300">在线演示</a>
+            <span>·</span>
+            <span>v1.0.0-lite</span>
+        </div>
+    </footer>
+
+</body>
+</html>

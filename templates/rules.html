@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}预警规则 — Zoom Monitor{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">预警规则</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">管理各场景下的预警通知开关，所有更改会写入审计日志</p>
+    </div>
+
+    <div class="card p-6">
+        <div class="space-y-2">
+            {% for rule in rules %}
+            <div class="flex items-center justify-between p-4 rounded-lg border border-gray-100 dark:border-surface-700 hover:bg-gray-50 dark:hover:bg-surface-850/50 transition-colors">
+                <div class="flex items-center gap-3">
+                    <div>
+                        <div class="text-sm font-medium text-gray-900 dark:text-white">{{ rule.name }}</div>
+                        <div class="text-xs text-gray-400 dark:text-gray-500">
+                            类型: {{ rule.event_type }}
+                            ·
+                            <span class="{% if rule.severity == 'critical' %}text-red-500{% elif rule.severity == 'warning' %}text-amber-500{% else %}text-blue-500{% endif %}">
+                                {{ rule.severity }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="status-{{ rule.id }}" class="text-xs font-medium {% if rule.enabled %}text-emerald-600 dark:text-emerald-400{% else %}text-gray-400{% endif %}">
+                        {% if rule.enabled %}已开启{% else %}已关闭{% endif %}
+                    </span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox"
+                               class="sr-only peer"
+                               data-rule-id="{{ rule.id }}"
+                               onchange="toggleRule('{{ rule.id }}', '{{ rule.name }}')"
+                               {% if rule.enabled %}checked{% endif %}>
+                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                    </label>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleRule(ruleId, ruleName) {
+    const checkbox = document.querySelector(`[data-rule-id="${ruleId}"]`);
+    const enabled = checkbox.checked;
+
+    fetch(`/api/v2/config/rules/${ruleId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled}),
+    })
+    .then(r => r.json())
+    .then(d => {
+        const statusEl = document.getElementById('status-' + ruleId);
+        if (d.status === 'ok') {
+            statusEl.textContent = enabled ? '已开启' : '已关闭';
+            statusEl.className = 'text-xs font-medium ' + (enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400');
+        }
+    })
+    .catch(e => {
+        // 回退
+        checkbox.checked = !enabled;
+        alert('操作失败: ' + e);
+    });
+}
+</script>
+{% endblock %}

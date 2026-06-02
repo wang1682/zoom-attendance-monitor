@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ status_code }} - {{ title or '错误' }}{% endblock %}
+{% block content %}
+<div class="max-w-md mx-auto mt-16 text-center">
+    <div class="text-6xl font-bold text-gray-300 dark:text-gray-600 mb-4">{{ status_code }}</div>
+    <div class="text-xl font-semibold text-gray-700 dark:text-gray-300 mb-2">{{ title or '访问被拒绝' }}</div>
+    <p class="text-gray-500 dark:text-gray-400 mb-8">{{ message or '您没有权限访问此页面。' }}</p>
+    <a href="/dashboard"
+       class="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        返回首页
+    </a>
+</div>
+{% endblock %}

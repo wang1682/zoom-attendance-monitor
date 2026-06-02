@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}系统设置 - {{ brand.app_name_zh }}{% endblock %}
+{% block content %}
+<div class="max-w-[1400px] mx-auto">
+  <div class="mb-5"><h1 class="text-lg font-semibold text-white">🎛️ 系统设置</h1><p class="text-xs text-gray-500 mt-0.5">系统状态 v0.2.2</p></div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+    <!-- 健康检查 -->
+    <div class="card p-5 lg:col-span-2">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-300">🏥 健康检查</h2>
+        <button onclick="runHealthCheck()" class="text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-colors" id="healthBtn">刷新</button>
+      </div>
+      <div id="healthResults" class="space-y-2">
+        <div class="text-sm text-gray-500 text-center py-4">点击刷新获取最新状态</div>
+      </div>
+    </div>
+
+    <!-- 容器状态 -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3">🐳 容器</h2>
+      <div class="space-y-1.5">
+        {% for name, status in docker_status.items() %}
+        <div class="flex justify-between items-center py-2 px-3 rounded-lg bg-surface-850">
+          <span class="text-sm text-gray-300">{{ name }}</span>
+          <span class="text-xs px-2 py-0.5 rounded {% if status == 'running' %}bg-emerald-900/40 text-emerald-300{% else %}bg-red-900/40 text-red-300{% endif %}">{{ status }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- 快捷 -->
+    <div class="card p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-3">⚡ 快捷</h2>
+      <div class="flex flex-wrap gap-2">
+        <a href="/api/v2/health" target="_blank" class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700 transition-colors">API 健康</a>
+        <a href="/api/v2/auth/status" target="_blank" class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700 transition-colors">OAuth 状态</a>
+        <button onclick="location.reload()" class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700 transition-colors">↻ 刷新</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function runHealthCheck() {
+  const btn = document.getElementById("healthBtn"); const el = document.getElementById("healthResults");
+  btn.disabled = true; btn.textContent = "⏳..."; el.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">检查中...</div>';
+  try {
+    const r = await fetch("/api/health-check"); const d = await r.json();
+    if (!d.ok) throw "error";
+    const items = [
+      {label: "Zoom API", key: "zoom_api"},
+      {label: "Webhook", key: "webhook"},
+      {label: "Telegram Bot", key: "telegram"},
+      {label: "sub2api (AI)", key: "sub2api"},
+      {label: "数据库", key: "database"},
+    ];
+    el.innerHTML = items.map(i => {
+      const v = d[i.key] || "unknown";
+      const ok = v === "ok" || v.startsWith("ok");
+      return `<div class="flex justify-between items-center py-2 px-3 rounded-lg bg-surface-850">
+        <span class="text-sm text-gray-300">${i.label}</span>
+        <span class="text-xs px-2 py-0.5 rounded ${ok ? 'bg-emerald-900/40 text-emerald-300' : 'bg-red-900/40 text-red-300'}">${ok ? '✅' : '❌'} ${v}</span>
+      </div>`;
+    }).join("");
+  } catch(e) {
+    el.innerHTML = '<div class="text-sm text-red-400 text-center py-4">检查失败</div>';
+  }
+  btn.disabled = false; btn.textContent = "↻ 刷新";
+}
+</script>
+{% endblock %}

@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}通知渠道 — Zoom Monitor{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">通知渠道</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">管理 Telegram 推送通道的启用/禁用和测试</p>
+    </div>
+
+    <div class="card p-6">
+        <div class="space-y-3">
+            {% for ch in channels %}
+            <div class="flex items-center justify-between p-4 rounded-lg border border-gray-100 dark:border-surface-700 hover:bg-gray-50 dark:hover:bg-surface-850/50 transition-colors">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full flex items-center justify-center
+                        {% if ch.is_group %}
+                            bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400
+                        {% else %}
+                            bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400
+                        {% endif %}">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {% if ch.is_group %}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0"/>
+                            {% else %}
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                            {% endif %}
+                        </svg>
+                    </div>
+                    <div>
+                        <div class="text-sm font-medium text-gray-900 dark:text-white">
+                            {{ ch.label }}
+                            {% if ch.is_group %}
+                            <span class="text-xs text-purple-500 dark:text-purple-400">群组</span>
+                            {% else %}
+                            <span class="text-xs text-blue-500 dark:text-blue-400">私聊</span>
+                            {% endif %}
+                        </div>
+                        <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                            Chat ID: <code class="font-mono bg-gray-100 dark:bg-surface-850 px-1 rounded">{{ ch.chat_id }}</code>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="testChannel('{{ ch.id }}')"
+                            class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-surface-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-surface-850 transition-colors">
+                        测试
+                    </button>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox"
+                               class="sr-only peer"
+                               data-channel-id="{{ ch.id }}"
+                               onchange="toggleChannel('{{ ch.id }}')"
+                               {% if ch.enabled %}checked{% endif %}>
+                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                    </label>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 测试结果 -->
+    <div id="test-result" class="hidden"></div>
+</div>
+
+<script>
+function toggleChannel(channelId) {
+    const checkbox = document.querySelector(`[data-channel-id="${channelId}"]`);
+    const enabled = checkbox.checked;
+
+    fetch(`/api/v2/config/channels/${channelId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({enabled}),
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status !== 'ok') {
+            checkbox.checked = !enabled;
+            alert('操作失败');
+        }
+    })
+    .catch(e => {
+        checkbox.checked = !enabled;
+        alert('操作失败: ' + e);
+    });
+}
+
+function testChannel(channelId) {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '发送中...';
+
+    fetch('/api/v2/config/channels/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({channel_id: channelId}),
+    })
+    .then(r => r.json())
+    .then(d => {
+        const result = document.getElementById('test-result');
+        result.className = 'card p-4 ' + (d.status === 'ok' ? 'border-emerald-500' : 'border-red-500');
+        result.innerHTML = d.status === 'ok'
+            ? '<span class="text-emerald-600 dark:text-emerald-400 font-medium">✅ 测试消息已发送！请检查你的 Telegram Bot 是否收到消息。</span>'
+            : '<span class="text-red-600 dark:text-red-400 font-medium">❌ 发送失败: ' + (d.detail || '未知错误') + '</span>';
+        result.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = '测试';
+    })
+    .catch(e => {
+        const result = document.getElementById('test-result');
+        result.className = 'card p-4 border-red-500';
+        result.innerHTML = '<span class="text-red-600 dark:text-red-400 font-medium">❌ 请求失败: ' + e + '</span>';
+        result.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = '测试';
+    });
+}
+</script>
+{% endblock %}

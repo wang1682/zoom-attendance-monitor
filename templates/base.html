@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Zoom Monitor{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' },
+                        surface: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 800: '#1e293b', 850: '#1a2332', 900: '#0f172a', 950: '#020617' },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', Roboto, 'Helvetica Neue', sans-serif; -webkit-font-smoothing: antialiased; }
+        .card { @apply bg-surface-800 rounded-xl border border-surface-700/50; }
+        .table-header { @apply px-5 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider; }
+        .table-cell { @apply px-5 py-3 text-sm text-gray-300; }
+        tr.hover-row:hover { @apply bg-surface-850/60; }
+        .badge-green { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-900/40 text-emerald-300 border border-emerald-800/30; }
+        .badge-red { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-red-900/40 text-red-300 border border-red-800/30; }
+        .badge-yellow { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-amber-900/40 text-amber-300 border border-amber-800/30; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        /* 侧边栏企业级样式 */
+        .sidebar { width: 220px; background: #0f172a; border-right: 1px solid #1e293b; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+        .sidebar-logo { padding: 16px 16px 12px; border-bottom: 1px solid #1e293b; }
+        .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px; }
+        .nav-group { margin-bottom: 2px; }
+        .nav-group-header { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; transition: color 0.15s; user-select: none; }
+        .nav-group-header:hover { color: #94a3b8; }
+        .nav-group-header .chevron { width: 14px; height: 14px; transition: transform 0.2s; }
+        .nav-group-header .chevron.open { transform: rotate(90deg); }
+        .nav-sub { overflow: hidden; transition: max-height 0.2s ease; }
+        .nav-sub.closed { max-height: 0 !important; }
+        .nav-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px 7px 30px; border-radius: 6px; font-size: 13px; color: #94a3b8; transition: all 0.15s; cursor: pointer; text-decoration: none; }
+        .nav-item:hover { color: #e2e8f0; background: #1e293b; }
+        .nav-item.active { color: #a5b4fc; background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2); }
+        .nav-item .icon { width: 16px; height: 16px; flex-shrink: 0; }
+        .nav-item .label { flex: 1; }
+
+        /* 移动端 */
+        .mobile-overlay { display: none; }
+        .sidebar-toggle { display: none; }
+        @media (max-width: 768px) {
+            .sidebar { position: fixed; left: -240px; top: 0; bottom: 0; z-index: 50; transition: left 0.25s; }
+            .sidebar.open { left: 0; }
+            .mobile-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 40; }
+            .mobile-overlay.show { display: block; }
+            .sidebar-toggle { display: flex; }
+        }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body class="bg-surface-950 text-gray-100 antialiased">
+    <!-- 顶栏 -->
+    <header class="h-12 border-b border-surface-800 bg-surface-900/80 backdrop-blur-md sticky top-0 z-30 flex items-center px-4 gap-3">
+        <button class="sidebar-toggle text-gray-400 hover:text-white p-1" onclick="toggleSidebar()">
+            <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
+        <div class="flex items-center gap-2.5">
+            <a href="/dashboard" class="w-7 h-7 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center text-white font-bold text-xs hover:from-primary-400 hover:to-primary-500 transition-all">ZM</a>
+            <a href="/dashboard" class="text-sm font-semibold text-white hover:text-primary-400 transition-colors">Zoom Monitor</a>
+            <span class="text-[10px] text-gray-600">v0.2.0</span>
+        </div>
+        <div class="flex-1"></div>
+        <div class="flex items-center gap-1.5">
+            <a href="#" onclick="connectZoom();return false" class="text-xs px-2.5 py-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-surface-800 transition-colors border border-transparent hover:border-surface-700">🔗 连接 Zoom</a>
+            <a href="about:blank" class="text-xs px-2.5 py-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-surface-800 transition-colors">退出</a>
+        </div>
+    </header>
+
+    <div id="mobileOverlay" class="mobile-overlay" onclick="toggleSidebar()"></div>
+
+    <div class="flex" style="height: calc(100vh - 48px);">
+        <!-- 侧边栏 -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-scroll">
+                <!-- 监控 -->
+                <div class="nav-group">
+                    <div class="nav-group-header" onclick="toggleNav('grp-monitor', this)">
+                        <i data-lucide="monitor" class="w-3.5 h-3.5"></i>
+                        <span class="flex-1">监控</span>
+                        <i data-lucide="chevron-right" class="chevron open"></i>
+                    </div>
+                    <div class="nav-sub" id="grp-monitor">
+                        <a href="/dashboard" class="nav-item {% if request.url.path == '/dashboard' %}active{% endif %}"><i data-lucide="layout-dashboard" class="icon"></i><span class="label">仪表盘</span></a>
+                        <a href="/live" class="nav-item {% if request.url.path == '/live' %}active{% endif %}"><i data-lucide="radio" class="icon"></i><span class="label">实时在线</span></a>
+                        <a href="/participants" class="nav-item {% if request.url.path == '/participants' %}active{% endif %}"><i data-lucide="users" class="icon"></i><span class="label">参会明细</span></a>
+                        <a href="/alerts" class="nav-item {% if request.url.path == '/alerts' %}active{% endif %}"><i data-lucide="bell" class="icon"></i><span class="label">告警日志</span></a>
+                    </div>
+                </div>
+
+                <!-- 分析 -->
+                <div class="nav-group">
+                    <div class="nav-group-header" onclick="toggleNav('grp-analysis', this)">
+                        <i data-lucide="bar-chart-3" class="w-3.5 h-3.5"></i>
+                        <span class="flex-1">分析</span>
+                        <i data-lucide="chevron-right" class="chevron open"></i>
+                    </div>
+                    <div class="nav-sub" id="grp-analysis">
+                        <a href="/summary" class="nav-item {% if request.url.path == '/summary' %}active{% endif %}"><i data-lucide="file-text" class="icon"></i><span class="label">汇总分析</span></a>
+                        <a href="/attendance" class="nav-item {% if request.url.path == '/attendance' %}active{% endif %}"><i data-lucide="calendar-check" class="icon"></i><span class="label">出勤统计</span></a>
+                        <a href="/events" class="nav-item {% if request.url.path == '/events' %}active{% endif %}"><i data-lucide="list" class="icon"></i><span class="label">事件记录</span></a>
+                        <a href="/reports" class="nav-item {% if request.url.path == '/reports' %}active{% endif %}"><i data-lucide="line-chart" class="icon"></i><span class="label">报表分析</span></a>
+                    </div>
+                </div>
+
+                <!-- AI 报告 -->
+                <div class="nav-group">
+                    <div class="nav-group-header" onclick="toggleNav('grp-ai', this)">
+                        <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+                        <span class="flex-1">AI 报告</span>
+                        <i data-lucide="chevron-right" class="chevron open"></i>
+                    </div>
+                    <div class="nav-sub" id="grp-ai">
+                        <a href="/ai/daily" class="nav-item {% if request.url.path == '/ai/daily' %}active{% endif %}"><i data-lucide="sun" class="icon"></i><span class="label">AI 日报</span></a>
+                        <a href="/ai/weekly" class="nav-item {% if request.url.path == '/ai/weekly' %}active{% endif %}"><i data-lucide="calendar" class="icon"></i><span class="label">AI 周报</span></a>
+                        <a href="/ai/monthly" class="nav-item {% if request.url.path == '/ai/monthly' %}active{% endif %}"><i data-lucide="calendar-range" class="icon"></i><span class="label">AI 月报</span></a>
+                    </div>
+                </div>
+
+                <!-- 设置 -->
+                <div class="nav-group">
+                    <div class="nav-group-header" onclick="toggleNav('grp-settings', this)">
+                        <i data-lucide="settings" class="w-3.5 h-3.5"></i>
+                        <span class="flex-1">设置</span>
+                        <i data-lucide="chevron-right" class="chevron"></i>
+                    </div>
+                    <div class="nav-sub closed" id="grp-settings">
+                        <a href="/settings/zoom" class="nav-item {% if request.url.path == '/settings/zoom' %}active{% endif %}"><i data-lucide="video" class="icon"></i><span class="label">Zoom 配置</span></a>
+                        <a href="/settings/telegram" class="nav-item {% if request.url.path == '/settings/telegram' %}active{% endif %}"><i data-lucide="send" class="icon"></i><span class="label">Telegram 配置</span></a>
+                        <a href="/settings/system" class="nav-item {% if request.url.path == '/settings/system' %}active{% endif %}"><i data-lucide="sliders" class="icon"></i><span class="label">系统设置</span></a>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容 -->
+        <main class="flex-1 overflow-y-auto p-6 lg:p-8">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script>
+    lucide.createIcons();
+
+    function toggleNav(id, el) {
+        const sub = document.getElementById(id);
+        if (!sub) return;
+        sub.classList.toggle('closed');
+        const chevron = el.querySelector('.chevron');
+        if (chevron) chevron.classList.toggle('open');
+    }
+
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('open');
+        document.getElementById('mobileOverlay').classList.toggle('show');
+    }
+
+    function to_myt(dt_str) {
+        if (!dt_str || dt_str === '—') return '—';
+        try {
+            const s = dt_str.replace('Z', '+00:00');
+            const d = new Date(s);
+            if (isNaN(d.getTime())) return dt_str.slice(11, 16);
+            return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kuala_Lumpur' });
+        } catch(e) { return dt_str.slice(11, 16); }
+    }
+
+    async function connectZoom() {
+        const r = await fetch("/api/v2/auth/login");
+        const d = await r.json();
+        if (d.ok && d.auth_url) {
+            if (d.is_mobile) {
+                const t = setTimeout(() => window.location.href = d.fallback_url, 3000);
+                window.location.href = d.auth_url;
+                document.addEventListener("visibilitychange", () => { if (document.hidden) clearTimeout(t); });
+            } else {
+                window.location.href = d.auth_url;
+            }
+        }
+    }
+    </script>
+</body>
+</html>
