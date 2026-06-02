@@ -1,230 +1,65 @@
 {% extends "base.html" %}
 {% block title %}管理看板{% endblock %}
-{% block head %}
-<style>
-/* ── 全局 ── */
-body { background: #f1f5f9 !important; }
-.max-w-app { max-width: 1320px; margin: 0 auto; }
-.card-w { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
-.kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
-.kpi .top { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
-.kpi .num { font-size: 26px; font-weight: 700; color: #0f172a; line-height: 1; }
-.kpi .lbl { font-size: 11px; color: #64748b; margin-top: 2px; }
-.kpi .ico { width: 30px; height: 30px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
-.icon-blue { background: #eff6ff; color: #3b82f6; }
-.icon-green { background: #f0fdf4; color: #22c55e; }
-.icon-red { background: #fef2f2; color: #ef4444; }
-.icon-yellow { background: #fefce8; color: #f59e0b; }
-.icon-purple { background: #f5f3ff; color: #8b5cf6; }
-.hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
-.hdr h2 { font-size: 13px; font-weight: 600; color: #0f172a; }
-.hdr .cnt { font-size: 11px; color: #94a3b8; background: #f1f5f9; padding: 2px 8px; border-radius: 10px; }
-/* 健康度 */
-.health-score { font-size: 32px; font-weight: 800; }
-.health-score.good { color: #22c55e; }
-.health-score.fair { color: #f59e0b; }
-.health-score.poor { color: #ef4444; }
-/* 异常卡片 */
-.rank-card { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
-.rank-card:last-child { border-bottom: none; }
-.rank-num { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; }
-.rank-1 { background: #fef2f2; color: #ef4444; }
-.rank-2 { background: #fefce8; color: #f59e0b; }
-.rank-3 { background: #eff6ff; color: #3b82f6; }
-.rank-name { font-size: 14px; font-weight: 600; color: #0f172a; flex: 1; }
-.rank-detail { font-size: 11px; color: #64748b; }
-.rank-count { font-size: 14px; font-weight: 600; color: #64748b; }
-.tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; }
-.tag-danger { background: #fef2f2; color: #ef4444; }
-.tag-warn { background: #fefce8; color: #f59e0b; }
-.tag-info { background: #eff6ff; color: #3b82f6; }
-/* 在线列表 */
-.online-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
-.online-item:last-child { border-bottom: none; }
-.online-dot { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; flex-shrink: 0; }
-/* 表格 */
-.tbl { font-size: 12px; width: 100%; border-collapse: collapse; }
-.tbl th { padding: 8px 10px; text-align: left; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e5e7eb; }
-.tbl td { padding: 8px 10px; color: #334155; border-bottom: 1px solid #f1f5f9; }
-.tbl tr:last-child td { border-bottom: none; }
-.tbl .num-col { font-weight: 600; color: #64748b; font-size: 11px; }
-.tbl .name-col { font-weight: 500; color: #0f172a; }
-.risk-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-.risk-high { background: #ef4444; }
-.risk-med { background: #f59e0b; }
-.risk-low { background: #3b82f6; }
-.risk-none { background: #d1d5db; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-.status-on { background: #22c55e; }
-.status-off { background: #d1d5db; }
-.btn-sm { padding: 4px 12px; border-radius: 6px; font-size: 11px; border: 1px solid #e5e7eb; color: #64748b; background: #fff; cursor: pointer; }
-.btn-sm:hover { background: #f8fafc; border-color: #cbd5e1; }
-/* AI 行 */
-.ai-line { padding: 3px 0; font-size: 13px; color: #334155; line-height: 1.6; }
-.ai-line strong { color: #0f172a; font-weight: 600; }
-.ai-suggest { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
-</style>
-{% endblock %}
-
 {% block content %}
-<div class="max-w-app" style="padding: 20px 16px;">
-
-  <!-- ═══ 顶部 ═══ -->
-  <div class="flex items-center justify-between mb-4">
-    <div class="flex items-center gap-3">
-      <h1 class="text-lg font-bold" style="color:#0f172a">管理看板</h1>
-      <span class="text-xs" style="color:#94a3b8">实时监控</span>
-      <span class="text-xs" style="color:#94a3b8">{{ today }}</span>
-    </div>
-    <button onclick="location.reload()" class="btn-sm">↻ 刷新</button>
-  </div>
-
-  <!-- ═══ KPI 行 ═══ -->
-  <div class="kpi-grid mb-5">
-    <div class="kpi"><div class="top"><div class="ico icon-purple">📊</div><div class="num" id="kpiHealth">—</div></div><div class="lbl">健康分数</div></div>
-    <div class="kpi"><div class="top"><div class="ico icon-blue">👥</div><div class="num" id="kpiParticipants">—</div></div><div class="lbl">参与者</div></div>
-    <div class="kpi"><div class="top"><div class="ico icon-green">🟢</div><div class="num" id="kpiOnline">—</div></div><div class="lbl">当前在线</div></div>
-    <div class="kpi"><div class="top"><div class="ico icon-red">🚨</div><div class="num" id="kpiAnomalies">—</div></div><div class="lbl">异常成员</div></div>
-    <div class="kpi"><div class="top"><div class="ico icon-yellow">🔔</div><div class="num" id="kpiAlerts">{{ stats.alert_count }}</div></div><div class="lbl">告警</div></div>
-    <div class="kpi"><div class="top"><div class="ico icon-blue">📋</div><div class="num" id="kpiEvents">—</div></div><div class="lbl">今日事件</div></div>
-  </div>
-
-  <!-- ═══ 第二层：三栏 ═══ -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
-
-    <!-- 左：异常 Top 3 -->
-    <div class="card-w p-4">
-      <div class="hdr"><h2>🚨 TOP 异常成员</h2><span class="cnt" id="anomalyTotal">—</span></div>
-      <div id="anomalyList"><div class="text-xs  text-center py-6">加载中...</div></div>
-    </div>
-
-    <!-- 中：AI 总结 -->
-    <div class="card-w p-4">
-      <div class="hdr"><h2>🤖 AI 总结</h2></div>
-      <div id="aiBlock">
-        <div class="text-xs ">加载中...</div>
-      </div>
-    </div>
-
-    <!-- 右：当前在线 -->
-    <div class="card-w p-4">
-      <div class="hdr"><h2>🟢 当前在线</h2><span class="cnt" id="onlineCount">—</span></div>
-      <div id="onlineList"><div class="text-xs  text-center py-6">暂无在线</div></div>
+<div class="page-container">
+  <div class="page-header" style="margin-bottom:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+      <div><h1>管理看板</h1><p>实时监控 · {{ today }}</p></div>
+      <button class="bt bt-s" onclick="location.reload()">↻ 刷新</button>
     </div>
   </div>
-
-  <!-- ═══ 第三层：参与者概览 ═══ -->
-  <div class="card-w mb-4">
-    <div class="px-4 py-3 flex items-center justify-between" style="border-bottom:1px solid #e5e7eb">
-      <h2 class="text-sm font-semibold" style="color:#0f172a">👥 参与者概览</h2>
-      <span class="text-xs" style="color:#94a3b8" id="summaryCount">—</span>
-    </div>
-    <div style="overflow-x:auto;padding:0">
-      <table class="tbl">
-        <thead><tr>
-          <th style="width:32px">#</th><th>成员</th><th>事件</th><th>在线时长</th><th>在线率</th><th>风险</th><th>状态</th><th>最后</th>
-        </tr></thead>
-        <tbody id="summaryBody"></tbody>
-      </table>
-    </div>
-    <div class="text-center py-3">
-      <button class="btn-sm" id="expandBtn" onclick="toggleExpand()">展开更多</button>
-    </div>
+  <div class="kpi-grid" id="kpiArea">
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--in-b);color:var(--in)">📊</div><div class="n" id="kpiHealth">—</div></div><div class="l">健康分数</div></div>
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--in-b);color:var(--in)">👥</div><div class="n" id="kpiParticipants">—</div></div><div class="l">参与者</div></div>
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--sc-b);color:var(--sc)">🟢</div><div class="n" id="kpiOnline">—</div></div><div class="l">在线</div></div>
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--da-b);color:var(--da)">🚨</div><div class="n" id="kpiAnomalies">—</div></div><div class="l">异常</div></div>
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--wa-b);color:var(--wa)">🔔</div><div class="n" id="kpiAlerts">0</div></div><div class="l">告警</div></div>
+    <div class="kpi"><div class="t"><div class="ic" style="background:var(--in-b);color:var(--in)">📋</div><div class="n" id="kpiEvents">—</div></div><div class="l">事件</div></div>
   </div>
-
-  <!-- ═══ 第四层：近期事件 ═══ -->
-  <div class="card-w">
-    <div class="px-4 py-3 flex items-center justify-between" style="border-bottom:1px solid #e5e7eb">
-      <h2 class="text-sm font-semibold" style="color:#0f172a">📋 近期事件</h2>
-      <span class="text-xs" style="color:#94a3b8" id="eventCount">—</span>
-    </div>
-    <div style="overflow-x:auto;padding:0">
-      <table class="tbl">
-        <thead><tr><th style="width:32px">#</th><th>成员</th><th>状态</th><th>时间</th></tr></thead>
-        <tbody id="eventBody"></tbody>
-      </table>
-    </div>
+  <div class="three-col">
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin:0 0 12px 0">🚨 异常成员</h2><span id="anomalyTotal" style="font-size:11px;color:var(--tm);background:var(--tb);padding:2px 10px;border-radius:10px;float:right;margin-top:-32px">—</span><div id="anomalyList" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div></div>
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin:0 0 12px 0">🤖 AI 总结</h2><div id="aiBlock" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div></div>
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin:0 0 12px 0">🟢 当前在线</h2><span id="onlineCount" style="font-size:11px;color:var(--tm);background:var(--tb);padding:2px 10px;border-radius:10px;float:right;margin-top:-32px">—</span><div id="onlineList" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">暂无</div></div>
+  </div>
+  <div class="card" style="margin-top:20px">
+    <div class="sh"><h2>👥 参与者概览</h2><span class="c" id="summaryCount">—</span></div>
+    <table class="data-table"><thead><tr><th>#</th><th>成员</th><th>事件</th><th>时长</th><th>风险</th><th>状态</th><th>最后</th></tr></thead><tbody id="summaryBody"></tbody></table>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="sh"><h2>📋 近期事件</h2><span class="c" id="eventCount">—</span></div>
+    <table class="data-table"><thead><tr><th>#</th><th>成员</th><th>状态</th><th>时间</th></tr></thead><tbody id="eventBody"></tbody></table>
   </div>
 </div>
-
+<style>
+.three-col{display:grid;grid-template-columns:1fr 1.2fr 1fr;gap:16px;margin-bottom:0}
+@media(max-width:900px){.three-col{grid-template-columns:1fr}}
+</style>
 <script>
-let summaryFull = [];
-let expanded = false;
-
-function toggleExpand() {
-  expanded = !expanded;
-  document.getElementById("expandBtn").textContent = expanded ? "收起" : "展开更多";
-  renderSummary(expanded ? summaryFull : summaryFull.slice(0, 8));
-}
-
-function renderSummary(data) {
-  const body = document.getElementById("summaryBody");
-  if (!data.length) { body.innerHTML = '<tr><td colspan="8" class="text-center py-8" style="color:#94a3b8">暂无</td></tr>'; return; }
-  body.innerHTML = data.map((p, i) => {
-    const riskClass = p.flags?.length ? (p.flags.includes("高频进出") ? "risk-high" : "risk-med") : "risk-none";
-    const riskBadge = p.flags?.length ? p.flags.map(f => `<span class="tag tag-danger">${f}</span>`).join(" ") : '<span style="color:#d1d5db">—</span>';
-    return `<tr><td class="num-col">${i+1}</td><td class="name-col">${p.name}</td><td>${p.total_actions || (p.enters+p.leaves)}</td><td>${p.duration_display}</td><td>${p.avg_min > 0 ? Math.min(100, Math.round(p.avg_min / 60 * 100)) + "%" : "—"}</td><td><span class="risk-dot ${riskClass}"></span>${riskBadge}</td><td><span class="status-dot ${p.is_online ? 'status-on' : 'status-off'}"></span></td><td style="font-family:monospace;color:#94a3b8;font-size:11px">${(p.last_active||"").slice(11,19)}</td></tr>`;
-  }).join("");
-}
-
-async function load() {
-  try {
-    const r = await fetch("/api/v2/live"); const d = await r.json();
-    if (!d.ok) return;
-
-    // KPI
-    const anomCount = d.anomalies?.length || 0;
-    const healthScore = Math.max(0, 100 - anomCount * 10);
-    document.getElementById("kpiHealth").textContent = healthScore + "/100";
-    document.getElementById("kpiParticipants").textContent = d.unique_participants;
-    document.getElementById("kpiOnline").textContent = d.total_online;
-    document.getElementById("kpiAnomalies").textContent = anomCount;
-    document.getElementById("kpiEvents").textContent = d.total_events;
-
-    // 异常 Top 3
-    document.getElementById("anomalyTotal").textContent = anomCount + " 人";
-    const al = document.getElementById("anomalyList");
-    if (anomCount) {
-      al.innerHTML = d.anomalies.slice(0, 3).map((a, i) => {
-        const rankClass = i === 0 ? "rank-1" : i === 1 ? "rank-2" : "rank-3";
-        const flags = a.flags?.join("、") || "异常";
-        return `<div class="rank-card"><span class="rank-num ${rankClass}">${i+1}</span><div style="flex:1"><div class="rank-name">${a.name}</div><div class="rank-detail">${flags}</div></div><div class="rank-count">${a.actions} 次</div></div>`;
-      }).join("");
-    } else { al.innerHTML = '<div class="text-xs  text-center py-6">✅ 今日无异常</div>'; }
-
-    // AI
-    const ai = document.getElementById("aiBlock");
-    const parts = (d.ai_summary || "暂无数据").split("。").filter(Boolean);
-    ai.innerHTML = parts.map(s => `<div class="ai-line">${s.replace(/^(.+?)(：|:)/, '<strong>$1</strong>$2')}。</div>`).join("") +
-      '<div class="ai-suggest"><span style="font-size:11px;color:#94a3b8">💡 建议：检查异常成员网络状态</span></div>';
-
-    // 在线列表
-    document.getElementById("onlineCount").textContent = d.total_online + " 人";
-    const ol = document.getElementById("onlineList");
-    if (d.online.length) {
-      ol.innerHTML = d.online.map((p, i) =>
-        `<div class="online-item"><span class="online-dot"></span><span style="flex:1;font-size:13px;font-weight:500;color:#0f172a">${p.name}</span><span style="font-size:12px;color:#64748b">${p.online_display || p.online_minutes + '分钟'}</span></div>`
-      ).join("");
-    } else { ol.innerHTML = '<div class="text-xs  text-center py-6">暂无在线</div>'; }
-
-    // 参与者概览
-    summaryFull = d.participants_summary || [];
-    document.getElementById("summaryCount").textContent = summaryFull.length + " 人";
-    expanded = false;
-    renderSummary(summaryFull.slice(0, 8));
-
-    // 近期事件
-    const evts = summaryFull.filter(p => p.last_active).sort((a,b) => (b.last_active||"").localeCompare(a.last_active||"")).slice(0, 10);
-    document.getElementById("eventCount").textContent = (d.total_events || 0) + " 条";
-    const eb = document.getElementById("eventBody");
-    if (evts.length) {
-      eb.innerHTML = evts.map((p, i) => `<tr><td class="num-col">${i+1}</td><td class="name-col">${p.name}</td><td><span class="status-dot ${p.is_online ? 'status-on' : 'status-off'}"></span></td><td style="font-family:monospace;color:#94a3b8;font-size:11px">${(p.last_active||"").slice(11,19)}</td></tr>`).join("");
-    } else { eb.innerHTML = '<tr><td colspan="4" class="text-center py-6" style="color:#94a3b8">暂无</td></tr>'; }
-  } catch(e) {}
-}
-
-load();
-setInterval(load, 15000);
+async function loadDash(){try{
+const r=await fetch("/api/v2/live");const d=await r.json();if(!d.ok)return;
+const ac=d.anomalies?.length||0;const hs=Math.max(0,100-ac*10);
+document.getElementById("kpiHealth").textContent=hs+"/100";
+document.getElementById("kpiParticipants").textContent=d.unique_participants;
+document.getElementById("kpiOnline").textContent=d.total_online;
+document.getElementById("kpiAnomalies").textContent=ac;
+document.getElementById("kpiEvents").textContent=d.total_events;
+document.getElementById("anomalyTotal").textContent=ac+"人";
+const al=document.getElementById("anomalyList");
+if(ac){al.innerHTML=d.anomalies.slice(0,3).map((a,i)=>'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--div)"><span style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;background:'+(i===0?'var(--da-b);color:var(--da)':i===1?'var(--wa-b);color:var(--wa)':'var(--in-b);color:var(--in)')+'">'+(i+1)+'</span><div style="flex:1"><div style="font-size:13px;font-weight:600">'+a.name+'</div><div style="font-size:11px;color:var(--ts)">'+a.flags.join("、")+'</div></div><div style="font-size:14px;font-weight:600;color:var(--ts)">'+a.actions+'次</div></div>').join("")}else{al.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">✅ 今日无异常</div>'}
+const ai=document.getElementById("aiBlock");
+const ps=(d.ai_summary||"").split("。").filter(Boolean);ai.innerHTML=ps.map(s=>'<div style="padding:3px 0;font-size:13px;line-height:1.6">'+s+"。</div>").join("")+'<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--div)"><span style="font-size:11px;color:var(--tm)">💡 建议：检查异常成员网络状态</span></div>';
+document.getElementById("onlineCount").textContent=d.total_online+"人";
+const ol=document.getElementById("onlineList");
+if(d.online.length){ol.innerHTML=d.online.map(p=>'<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--div)"><span class="dt dt-on"></span><span style="flex:1;font-size:13px;font-weight:500">'+p.name+'</span><span style="font-size:12px;color:var(--ts)">'+(p.online_display||p.online_minutes+"分钟")+'</span></div>').join("")}else{ol.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">暂无在线</div>'}
+const sd=d.participants_summary||[];
+document.getElementById("summaryCount").textContent=sd.length+"人";
+const sb=document.getElementById("summaryBody");
+if(sd.length){sb.innerHTML=sd.slice(0,8).map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td>'+(p.total_actions||(p.enters+p.leaves))+'</td><td>'+p.duration_display+'</td><td>'+(p.flags?.length?p.flags.map(f=>'<span class="tg tg-d">'+f+'</span>').join(""):'<span style="color:var(--tm)">—</span>')+'</td><td><span class="dt '+(p.is_online?"dt-on":"dt-off")+'"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("")}else{sb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>'}
+const evt=sd.filter(p=>p.last_active).sort((a,b)=>(b.last_active||"").localeCompare(a.last_active||"")).slice(0,10);
+document.getElementById("eventCount").textContent=(d.total_events||0)+"条";
+const eb=document.getElementById("eventBody");
+if(evt.length){eb.innerHTML=evt.map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td><span class="dt '+(p.is_online?"dt-on":"dt-off")+'"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("")}else{eb.innerHTML='<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>'}
+}catch(e){}}
+loadDash();setInterval(loadDash,15000);
 </script>
 {% endblock %}

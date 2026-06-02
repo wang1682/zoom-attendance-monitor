@@ -1,95 +1,23 @@
 {% extends "base.html" %}
-{% block title %}报表分析 - {{ brand.app_name_zh }}{% endblock %}
-{% block head %}
-<style>
-.bar-wrap { display: flex; align-items: end; gap: 6px; height: 120px; padding: 0 4px; }
-.bar { flex: 1; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; transition: height 0.3s; cursor: pointer; }
-.bar:hover { opacity: 0.8; }
-.bar .v { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: 10px; color: #64748b; margin-bottom: 4px; white-space: nowrap; }
-.bar .lbl { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); font-size: 9px; color: #475569; margin-top: 4px; white-space: nowrap; }
-</style>
-{% endblock %}
+{% block title %}报表分析{% endblock %}
+{% block head %}<style>.bar-wrap{display:flex;align-items:end;gap:4px;height:100px;padding:0 4px}.bar{flex:1;border-radius:2px 2px 0 0;min-height:2px;position:relative;transition:height .3s;cursor:pointer;background:linear-gradient(180deg,var(--in),var(--pr))}.bar .v{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:9px;color:var(--tm);margin-bottom:2px;white-space:nowrap}.bar .l{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:8px;color:var(--tm);margin-top:2px;white-space:nowrap}</style>{% endblock %}
 {% block content %}
-<div class="max-w-[1400px] mx-auto">
-  <div class="flex items-center justify-between mb-5">
-    <div><h1 class="text-lg font-semibold ">📈 报表分析</h1><p class="text-xs  mt-0.5">趋势与排行</p></div>
-    <div class="flex gap-2">
-      <button class="text-xs px-3 py-1.5 rounded-lg btn-primary " onclick="loadReport(7)" id="btn7d">7天</button>
-      <button class="text-xs px-3 py-1.5 rounded-lg   hover: border " onclick="loadReport(30)" id="btn30d">30天</button>
-      <button class="text-xs px-3 py-1.5 rounded-lg   hover: border " onclick="exportCSV()">📥 CSV</button>
-    </div>
+<div class="page-container">
+  <div class="page-header"><h1>📈 报表分析</h1><p>趋势与排行</p>
+    <div style="display:flex;gap:8px"><button class="bt bt-p bt-s" onclick="loadRep(7)" id="r7">7天</button><button class="bt bt-s" onclick="loadRep(30)" id="r30">30天</button><button class="bt bt-s" onclick="expCSV()">📥 CSV</button></div>
   </div>
-
-  <!-- 趋势图 -->
-  <div class="card card-p mb-5">
-    <h2 class="text-sm font-semibold  mb-4">📊 参会趋势</h2>
-    <div class="bar-wrap" id="chartArea"><div class="text-xs  w-full text-center py-10">加载中...</div></div>
-  </div>
-
-  <!-- 统计 + 排行 -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-    <div class="card card-p lg:col-span-1">
-      <h2 class="text-sm font-semibold  mb-3">📊 总计</h2>
-      <div id="statsSummary"><div class="text-sm ">加载中...</div></div>
-    </div>
-    <div class="card lg:col-span-2">
-      <div class="px-5 py-3 border-b "><h2 class="text-sm font-semibold ">🏆 参会排行</h2></div>
-      <div class="overflow-x-auto"><table class="w-full"><thead><tr><th class="dtable th">#</th><th class="dtable th">姓名</th><th class="dtable th">次数</th></tr></thead><tbody id="topTable"></tbody></table></div>
-    </div>
-  </div>
+  <div class="card cp" style="margin-bottom:16px"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">📊 趋势</h2><div class="bar-wrap" id="chartArea"><div style="text-align:center;padding:32px;width:100%;color:var(--tm)">加载中...</div></div></div>
+  <div class="card"><table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>次数</th></tr></thead><tbody id="topTable"></tbody></table></div>
 </div>
-
 <script>
-let currentData = null;
-async function loadReport(days) {
-  document.getElementById("btn7d").className = "text-xs px-3 py-1.5 rounded-lg " + (days===7?"btn-primary ":"  border ");
-  document.getElementById("btn30d").className = "text-xs px-3 py-1.5 rounded-lg " + (days===30?"btn-primary ":"  border ");
-  document.getElementById("chartArea").innerHTML = '<div class="text-xs  w-full text-center py-10">加载中...</div>';
-  try {
-    const r = await fetch("/api/report-data?days=" + days); const d = await r.json();
-    if (!d.ok) throw "error";
-    currentData = d;
-    renderChart(d.trend);
-    renderTop(d.top);
-    const total = d.trend.reduce((s, t) => s + t.count, 0);
-    const uniq = d.trend[d.trend.length-1]?.unique || 0;
-    document.getElementById("statsSummary").innerHTML =
-      `<div class="space-y-2"><div class="flex justify-between py-1.5 border-b "><span class="text-sm ">总次数</span><span class="text-sm ">${total}</span></div>` +
-      `<div class="flex justify-between py-1.5 border-b "><span class="text-sm ">今日人数</span><span class="text-sm ">${uniq}</span></div>` +
-      `<div class="flex justify-between py-1.5 border-b "><span class="text-sm ">天数</span><span class="text-sm ">${d.trend.filter(t=>t.count>0).length} / ${days}</span></div></div>`;
-  } catch(e) {
-    document.getElementById("chartArea").innerHTML = '<div class="text-xs text-red-400 w-full text-center py-10">数据加载失败</div>';
-  }
-}
-
-function renderChart(trend) {
-  const max = Math.max(...trend.map(t => t.count), 1);
-  const el = document.getElementById("chartArea");
-  el.innerHTML = trend.map(t => {
-    const h = Math.max((t.count / max) * 100, t.count > 0 ? 8 : 2);
-    const color = t.count > 0 ? 'background:linear-gradient(180deg,#818cf8,#6366f1)' : 'background:#1e293b';
-    return `<div class="bar" style="${color};height:${h}px" title="${t.date}: ${t.count}次"><div class="v">${t.count || ''}</div><div class="lbl">${t.date.slice(5)}</div></div>`;
-  }).join('');
-}
-
-function renderTop(top) {
-  const el = document.getElementById("topTable");
-  if (!top.length) { el.innerHTML = '<tr><td colspan="3" class="text-center py-10 ">暂无</td></tr>'; return; }
-  el.innerHTML = top.map((p,i) => `<tr class="hover-row"><td class="dtable td text-xs ">${i+1}</td><td class="dtable td font-medium">${p.name}</td><td class="dtable td">${p.count} 次</td></tr>`).join('');
-}
-
-function exportCSV() {
-  if (!currentData) return;
-  let csv = "日期,次数,人数\n";
-  currentData.trend.forEach(t => csv += `${t.date},${t.count},${t.unique}\n`);
-  csv += "\n排行\n姓名,次数\n";
-  currentData.top.forEach(p => csv += `${p.name},${p.count}\n`);
-  const blob = new Blob(["\uFEFF" + csv], {type:"text/csv;charset=utf-8"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = `zoom-report-${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-}
-
-loadReport(7);
+let cd=null;
+async function loadRep(d){document.getElementById("r7").className="bt bt-s"+(d===7?' bt-p':'');document.getElementById("r30").className="bt bt-s"+(d===30?' bt-p':'');
+document.getElementById("chartArea").innerHTML='<div style="text-align:center;padding:32px;color:var(--tm)">加载中...</div>';
+const r=await fetch("/api/report-data?days="+d);const j=await r.json();if(!j.ok)return;cd=j;
+const mx=Math.max(...j.trend.map(t=>t.count),1);
+document.getElementById("chartArea").innerHTML=j.trend.map(t=>{const h=Math.max((t.count/mx)*100,t.count>0?6:2);return`<div class="bar" style="height:${h}px" title="${t.date}:${t.count}次"><div class="v">${t.count||""}</div><div class="l">${t.date.slice(5)}</div></div>`}).join("");
+document.getElementById("topTable").innerHTML=j.top.length?j.top.map((p,i)=>`<tr><td class="i">${i+1}</td><td class="nm">${p.name}</td><td>${p.count}次</td></tr>`).join(""):'<tr><td colspan="3" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';}
+function expCSV(){if(!cd)return;let c="\uFEFF日期,次数,人数\n";cd.trend.forEach(t=>c+=t.date+","+t.count+","+t.unique+"\n");c+="\n排行\n姓名,次数\n";cd.top.forEach(p=>c+=p.name+","+p.count+"\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([c],{type:"text/csv;charset=utf-8"}));a.download="zoom-report-"+new Date().toISOString().slice(0,10)+".csv";a.click()}
+loadRep(7);
 </script>
 {% endblock %}

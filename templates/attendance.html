@@ -1,41 +1,22 @@
 {% extends "base.html" %}
-{% block title %}出勤统计 - {{ brand.app_name_zh }}{% endblock %}
+{% block title %}出勤统计{% endblock %}
 {% block content %}
-<div class="p-6">
-  <div class="flex items-center justify-between mb-6">
-    <h1 class="text-xl font-bold">📊 出勤统计</h1>
-    <div class="flex gap-2">
-      <button onclick="loadAttendance('week')" class="px-3 py-1 text-xs rounded btn-primary  hover:bg-primary-700" id="btnWeek">本周</button>
-      <button onclick="loadAttendance('month')" class="px-3 py-1 text-xs rounded   hover:" id="btnMonth">本月</button>
-    </div>
+<div class="page-container">
+  <div class="page-header"><h1>📅 出勤统计</h1><p>周/月维度出勤报表</p>
+    <div style="display:flex;gap:8px"><button class="bt bt-p bt-s" onclick="loadAtt('week')" id="bw">本周</button><button class="bt bt-s" onclick="loadAtt('month')" id="bm">本月</button></div>
   </div>
-
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-    <div class="card card-p"><div class="stat-label">👥 总人数</div><div class="stat-value" id="attTotal">—</div></div>
-    <div class="card card-p"><div class="stat-label">⏱ 总时长</div><div class="stat-value" id="attMinutes">—</div></div>
-    <div class="card card-p"><div class="stat-label">📅 周期</div><div class="stat-value text-lg" id="attPeriod">本周</div></div>
+  <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="kpi"><div class="t"><div class="n" id="aTotal">—</div></div><div class="l">总人数</div></div>
+    <div class="kpi"><div class="t"><div class="n" id="aMin">—</div></div><div class="l">总时长</div></div>
+    <div class="kpi"><div class="t"><div class="n" style="font-size:20px" id="aPeriod">本周</div></div><div class="l">周期</div></div>
   </div>
-
-  <div class="card">
-    <div class="px-4 py-3 border-b" style="border-color:{{brand.border_color}}"><h2 class="text-sm font-semibold" style="color:{{brand.text_secondary}};">👤 出勤排行</h2></div>
-    <div class="overflow-x-auto"><table class="w-full"><thead><tr>
-      <th class="dtable th">#</th><th class="dtable th">姓名</th><th class="dtable th">出勤天数</th><th class="dtable th">参会次数</th><th class="dtable th">总时长</th><th class="dtable th">平均时长</th><th class="dtable th">会议室数</th>
-    </tr></thead><tbody id="attTable"></tbody></table></div>
-  </div>
+  <div class="card"><table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>天数</th><th>次数</th><th>总时长</th><th>平均</th></tr></thead><tbody id="attTable"></tbody></table></div>
 </div>
 <script>
-async function loadAttendance(p) {
-  document.getElementById("btnWeek").className = "px-3 py-1 text-xs rounded   " + (p==='week'?'btn-primary ':'');
-  document.getElementById("btnMonth").className = "px-3 py-1 text-xs rounded   " + (p==='month'?'btn-primary ':'');
-  document.getElementById("attPeriod").textContent = p==='week'?'本周':'本月';
-  const r = await fetch(`/api/v2/attendance?period=${p}`); const d = await r.json();
-  if (!d.ok) return;
-  document.getElementById("attTotal").textContent = d.total_people;
-  document.getElementById("attMinutes").textContent = d.total_minutes + "分钟";
-  const t = document.getElementById("attTable");
-  if (!d.members.length) { t.innerHTML = '<tr><td colspan="7" class="text-center py-10" style="color:{{brand.text_muted}}">暂无</td></tr>'; }
-  else { t.innerHTML = d.members.map((m,i) => `<tr class="hover-row"><td class="dtable td text-xs ">${i+1}</td><td class="dtable td font-medium">${m.name}</td><td class="dtable td">${m.total_days}天</td><td class="dtable td">${m.total_entries}次</td><td class="dtable td">${m.total_duration_min}分钟</td><td class="dtable td">${m.avg_duration_min}分钟</td><td class="dtable td">${m.meeting_count}</td></tr>`).join(""); }
-}
-loadAttendance('week');
+async function loadAtt(p){document.getElementById("bw").className="bt bt-s"+(p==='week'?' bt-p':'');document.getElementById("bm").className="bt bt-s"+(p==='month'?' bt-p':'');document.getElementById("aPeriod").textContent=p==='week'?'本周':'本月';
+const r=await fetch("/api/v2/attendance?period="+p);const d=await r.json();if(!d.ok)return;
+document.getElementById("aTotal").textContent=d.total_people;document.getElementById("aMin").textContent=d.total_minutes+"分钟";
+const t=document.getElementById("attTable");if(d.members.length){t.innerHTML=d.members.map((m,i)=>`<tr><td class="i">${i+1}</td><td class="nm">${m.name}</td><td>${m.total_days}天</td><td>${m.total_entries}次</td><td>${m.total_duration_min}分钟</td><td>${m.avg_duration_min}分钟</td></tr>`).join("")}else{t.innerHTML='<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>'}}
+loadAtt('week');
 </script>
 {% endblock %}

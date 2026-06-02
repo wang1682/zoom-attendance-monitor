@@ -1,74 +1,22 @@
 {% extends "base.html" %}
-{% block title %}Zoom 配置 - {{ brand.app_name_zh }}{% endblock %}
+{% block title %}Zoom 配置{% endblock %}
 {% block content %}
-<div class="max-w-[1400px] mx-auto">
-  <div class="mb-6">
-    <h1 class="text-lg font-semibold ">🎥 Zoom 配置</h1>
-    <p class="text-xs  mt-0.5">监控系统配置状态</p>
-  </div>
-
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    <!-- API 配置 -->
-    <div class="card card-p">
-      <h2 class="text-sm font-semibold  mb-4">🔑 API 凭证</h2>
-      <div class="space-y-3">
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">会议主持人</span>
-          <span class="text-sm ">{{ host_email or '未配置' }}</span>
-        </div>
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">PMI 会议室</span>
-          <span class="text-sm font-mono ">{{ pmi_id or '未配置' }}</span>
-        </div>
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">额外会议 ID</span>
-          <span class="text-sm font-mono ">{{ extra_ids or '无' }}</span>
-        </div>
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">轮询间隔</span>
-          <span class="text-sm ">{{ monitor_interval }} 秒</span>
-        </div>
-      </div>
+<div class="page-container">
+  <div class="page-header"><h1>🎥 Zoom 配置</h1><p>监控系统配置状态</p></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔑 API 凭证</h2>
+      <table class="data-table"><tbody>
+        <tr><td style="color:var(--ts)">主持人</td><td>{{ host_email or "未配置" }}</td></tr>
+        <tr><td style="color:var(--ts)">PMI</td><td class="mono">{{ pmi_id or "未配置" }}</td></tr>
+        <tr><td style="color:var(--ts)">轮询间隔</td><td>{{ monitor_interval }}秒</td></tr>
+        <tr><td style="color:var(--ts)">Webhook</td><td><span class="bg {{ 'bg-g' if webhook_status=='运行中' else 'bg-r' }}">{{ webhook_status }}</span></td></tr>
+      </tbody></table>
     </div>
-
-    <!-- Webhook 状态 -->
-    <div class="card card-p">
-      <h2 class="text-sm font-semibold  mb-4">🔗 Webhook 状态</h2>
-      <div class="space-y-3">
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">状态</span>
-          <span class="text-sm {% if webhook_status == '运行中' %}text-emerald-400{% else %}text-red-400{% endif %}">
-            {% if webhook_status == '运行中' %}🟢{% else %}🔴{% endif %} {{ webhook_status }}
-          </span>
-        </div>
-        <div class="flex justify-between items-center py-2 border-b ">
-          <span class="text-sm ">端点</span>
-          <span class="text-sm font-mono  text-xs">zoom-webhook.dhbwang.xyz/webhook</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- OAuth 授权 -->
-    <div class="card card-p lg:col-span-2">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-sm font-semibold ">🔗 已授权 Zoom 账号</h2>
-        <a href="#" onclick="connectZoom();return false" class="text-xs px-3 py-1.5 rounded-lg btn-primary  hover:bg-primary-500 transition-colors">＋ 添加账号</a>
-      </div>
-      {% if oauth_accounts %}
-      <div class="space-y-2">
-        {% for a in oauth_accounts %}
-        <div class="flex items-center justify-between py-2 px-3 rounded-lg ">
-          <div class="flex items-center gap-3">
-            <span class="text-emerald-400">✅</span>
-            <span class="text-sm ">{{ a.email }}</span>
-          </div>
-          <span class="text-xs ">{{ a.scope[:30] }}…</span>
-        </div>
-        {% endfor %}
-      </div>
-      {% else %}
-      <div class="text-center py-8  text-sm">暂无授权账号，点击上方按钮添加</div>
-      {% endif %}
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔗 已授权账号</h2>
+      {% if oauth_accounts %}<table class="data-table"><tbody>{% for a in oauth_accounts %}
+        <tr><td>✅</td><td>{{ a.email }}</td></tr>{% endfor %}</tbody></table>
+      {% else %}<div style="text-align:center;padding:32px;color:var(--tm)">暂无</div>{% endif %}
+      <a href="#" onclick="conZ();return false" class="bt bt-s" style="margin-top:12px;display:inline-block">＋ 添加账号</a>
     </div>
   </div>
 </div>

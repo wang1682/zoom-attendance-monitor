@@ -1,49 +1,16 @@
 {% extends "base.html" %}
-{% block title %}参会明细 - {{ brand.app_name_zh }}{% endblock %}
-
+{% block title %}参会明细{% endblock %}
 {% block content %}
-<div class="max-w-[1400px] mx-auto">
-  <div class="flex items-center justify-between mb-6">
-    <div>
-      <h1 class="text-lg font-semibold ">📋 参会明细</h1>
-      <p class="text-xs  mt-0.5">今日所有参会记录</p>
-    </div>
-  </div>
-
+<div class="page-container">
+  <div class="page-header"><h1>📋 参会明细</h1><p>今日所有参会记录</p></div>
   <div class="card">
-    <div class="overflow-x-auto">
-      <table class="w-full">
-        <thead>
-          <tr>
-            <th class="dtable th">姓名</th>
-            <th class="dtable th">邮箱</th>
-            <th class="dtable th">动作</th>
-            <th class="dtable th">时间</th>
-            <th class="dtable th">来源</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for p in participants %}
-          <tr class="hover-row">
-            <td class="dtable td font-medium">{{ p.name }}</td>
-            <td class="dtable td" style="color:#64748b">{{ p.email or '-' }}</td>
-            <td class="dtable td">
-              {% if p.action == 'enter' %}
-              <span class="badge-green">进入</span>
-              {% else %}
-              <span class="badge-red">离开</span>
-              {% endif %}
-            </td>
-            <td class="dtable td font-mono text-xs" style="color:#94a3b8">{{ to_myt(p.action_time) }}</td>
-            <td class="dtable td" style="color:#64748b">{{ p.source }}</td>
-          </tr>
-          {% endfor %}
-          {% if not participants %}
-          <tr><td colspan="5" class="text-center py-12" style="color:#475569">暂无参会记录</td></tr>
-          {% endif %}
-        </tbody>
-      </table>
-    </div>
+    <table class="data-table">
+      <thead><tr><th>姓名</th><th>动作</th><th>时间</th><th>来源</th></tr></thead>
+      <tbody>{% for p in participants %}
+        <tr><td class="nm">{{ p.name }}</td><td>{% if p.action == 'enter' %}<span class="bg bg-g">进入</span>{% else %}<span class="bg bg-r">离开</span>{% endif %}</td><td class="mono">{{ to_myt(p.action_time) }}</td><td>{{ p.source }}</td></tr>
+        {% else %}<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>{% endfor %}
+      </tbody>
+    </table>
   </div>
 </div>
 {% endblock %}

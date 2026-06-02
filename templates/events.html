@@ -1,30 +1,11 @@
 {% extends "base.html" %}
-{% block title %}事件记录 - {{ brand.app_name_zh }}{% endblock %}
+{% block title %}事件记录{% endblock %}
 {% block content %}
-<div class="max-w-[1400px] mx-auto">
-  <div class="flex items-center justify-between mb-6">
-    <div>
-      <h1 class="text-lg font-semibold ">📅 事件记录</h1>
-      <p class="text-xs  mt-0.5">系统事件流水</p>
-    </div>
-  </div>
-  <div class="card">
-    {% if events %}
-    <ul class="divide-y divide-surface-800">
-      {% for e in events %}
-      <li class="px-5 py-3.5 hover-row flex items-start gap-3">
-        <span>📌</span>
-        <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium  truncate">{{ e.event_type }}</p>
-          <p class="text-xs  truncate">{{ e.payload[:150] if e.payload else '' }}</p>
-        </div>
-        <span class="text-xs  whitespace-nowrap">{{ to_myt(e.created_at) }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <div class="text-center py-16  text-sm">暂无事件记录</div>
-    {% endif %}
-  </div>
+<div class="page-container">
+  <div class="page-header"><h1>📅 事件记录</h1><p>系统事件流水</p></div>
+  <div class="card"><table class="data-table"><thead><tr><th>类型</th><th>时间</th></tr></thead><tbody>
+    {% for e in events %}<tr><td class="nm">{{ e.event_type }}</td><td class="mono">{{ to_myt(e.created_at) }}</td></tr>
+    {% else %}<tr><td colspan="2" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>{% endfor %}
+  </tbody></table></div>
 </div>
 {% endblock %}
