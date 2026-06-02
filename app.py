@@ -507,13 +507,17 @@ def build_app() -> "FastAPI":
         sys.stdout.write(f"[WEBHOOK] {event_type}\n")
         sys.stdout.flush()
 
-        if event_type in ("meeting.participant_joined", "meeting.participant_left"):
+        if "participant_joined" in event_type or "participant_left" in event_type:
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
+            # breakout room 事件取父会议 ID
             meeting_id = str(obj.get("id", ""))
+            # 如果是 breakout_room 事件，用父会议 ID
+            if "breakout" in event_type:
+                meeting_id = str(payload.get("payload", {}).get("object", {}).get("id", ""))
             name = participant.get("user_name", "").strip()
             email = participant.get("email", "")
-            action = "enter" if event_type == "meeting.participant_joined" else "leave"
+            action = "enter" if "joined" in event_type else "leave"
             action_time = datetime.now(timezone.utc)
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
@@ -770,6 +774,7 @@ def build_app() -> "FastAPI":
         rows = conn.execute("""
             SELECT p1.* FROM zoom_participants p1
             WHERE p1.action_time >= ? AND p1.action = 'enter'
+            AND p1.action_time > datetime('now', '-30 minutes')
             AND NOT EXISTS (
                 SELECT 1 FROM zoom_participants p2
                 WHERE p2.name = p1.name AND p2.meeting_id = p1.meeting_id
