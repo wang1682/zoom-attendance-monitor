@@ -2,198 +2,196 @@
 {% block title %}{{ brand.app_name_zh }} — 管理看板{% endblock %}
 {% block head %}
 <style>
-.dash-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
-.dash-stat { @apply card p-3; position: relative; overflow: hidden; }
-.dash-stat .top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.dash-stat .icon { width: 30px; height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
-.dash-stat .value { font-size: 22px; font-weight: 700; color: #f1f5f9; line-height: 1; }
-.dash-stat .sub { font-size: 10px; color: #64748b; }
-.dash-table-wrap { @apply card; overflow: hidden; }
-.dash-table-wrap .hdr { @apply px-4 py-2.5 border-b border-surface-700; display: flex; align-items: center; justify-content: space-between; }
-.dash-table-wrap .hdr h2 { font-size: 12px; font-weight: 600; color: #e2e8f0; }
-.health-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-.health-badge.green { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
-.health-badge.yellow { background: rgba(234,179,8,0.15); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
-.health-badge.red { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+/* ── 全局 ── */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.stat-card { @apply card p-3; }
+.stat-card .row { display: flex; align-items: center; gap: 8px; }
+.stat-card .val { font-size: 24px; font-weight: 700; color: #f1f5f9; line-height: 1; }
+.stat-card .lbl { font-size: 10px; color: #64748b; margin-top: 2px; }
+.stat-card .ico { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+
+/* ── 健康度 ── */
+.health-badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+.health-green { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+.health-yellow { background: rgba(234,179,8,0.15); color: #facc15; border: 1px solid rgba(234,179,8,0.3); }
+.health-red { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+
+/* ── 异常卡片 ── */
 .anomaly-card { @apply card p-3; border-left: 3px solid; }
 .anomaly-card.high { border-color: #ef4444; }
-.anomaly-card.medium { border-color: #f59e0b; }
-.anomaly-card.low { border-color: #6366f1; }
-.summary-table { font-size: 11px; width: 100%; }
-.summary-table th { @apply px-2.5 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider sticky top-0 bg-surface-800; }
-.summary-table td { @apply px-2.5 py-2 text-gray-300 border-t border-surface-800; }
+.anomaly-card.med { border-color: #f59e0b; }
+.anomaly-card .name { font-size: 14px; font-weight: 600; color: #e2e8f0; }
+.anomaly-card .detail { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.anomaly-card .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; margin-right: 4px; }
+.tag-red { background: rgba(239,68,68,0.15); color: #f87171; }
+.tag-yellow { background: rgba(234,179,8,0.15); color: #facc15; }
+.tag-blue { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+
+/* ── 弱化区域 ── */
+.weak { opacity: 0.5; transition: opacity 0.2s; }
+.weak:hover { opacity: 1; }
+.weak-toggle { cursor: pointer; user-select: none; }
+
+/* ── 表格 ── */
+.data-table { font-size: 11px; width: 100%; }
+.data-table th { @apply px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider sticky top-0 bg-surface-800; }
+.data-table td { @apply px-3 py-2 text-gray-300 border-t border-surface-800; }
 </style>
 {% endblock %}
+
 {% block content %}
 <div class="max-w-[1400px] mx-auto">
-  <!-- 头部：健康度 -->
+
+  <!-- ═══════════ 第一层：状态总览 ═══════════ -->
   <div class="flex items-center justify-between mb-4">
     <div class="flex items-center gap-3">
-      <h1 class="text-lg font-semibold text-white">仪表盘</h1>
-      <span id="healthBadge" class="health-badge green">🟢 正常</span>
+      <h1 class="text-lg font-semibold text-white">管理看板</h1>
+      <span id="healthBadge" class="health-badge health-green">🟢 正常</span>
     </div>
-    <button onclick="location.reload()" class="text-xs px-3 py-1.5 rounded-lg bg-surface-800 text-gray-400 hover:text-white border border-surface-700">↻ 刷新</button>
+    <div class="text-xs text-gray-500">{{ today }}</div>
   </div>
 
-  <!-- 统计卡 -->
-  <div class="dash-grid mb-4">
-    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(59,130,246,0.12);color:#60a5fa">👥</div><div class="value" id="hUnique">—</div></div><div class="sub">参与者</div></div>
-    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(16,185,129,0.12);color:#34d399">🟢</div><div class="value" id="hOnline">—</div></div><div class="sub">当前在线</div></div>
-    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(239,68,68,0.12);color:#f87171">🚨</div><div class="value" id="hAnomalies">—</div></div><div class="sub">异常成员</div></div>
-    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(245,158,11,0.12);color:#fbbf24">🔔</div><div class="value">{{ stats.alert_count }}</div></div><div class="sub">告警</div></div>
-    <div class="dash-stat"><div class="top"><div class="icon" style="background:rgba(99,102,241,0.12);color:#a5b4fc">📋</div><div class="value" id="hEvents">—</div></div><div class="sub">今日事件</div></div>
+  <div class="stat-grid mb-5">
+    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(59,130,246,0.12);color:#60a5fa">👥</div><div class="val" id="hParticipants">—</div></div><div class="lbl">参与者</div></div>
+    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(16,185,129,0.12);color:#34d399">🟢</div><div class="val" id="hOnline">—</div></div><div class="lbl">在线</div></div>
+    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(239,68,68,0.12);color:#f87171">🚨</div><div class="val" id="hAnomalies">—</div></div><div class="lbl">异常</div></div>
+    <div class="stat-card"><div class="row"><div class="ico" style="background:rgba(245,158,11,0.12);color:#fbbf24">🔔</div><div class="val" id="hAlerts">{{ stats.alert_count }}</div></div><div class="lbl">告警</div></div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-    <!-- 左：异常成员卡片 -->
-    <div class="card p-3">
-      <div class="text-xs font-semibold text-gray-300 mb-3">🚨 异常成员</div>
+  <!-- ═══════════ 第二层：异常 + AI ═══════════ -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+    <!-- 左侧：异常成员 Top 3 -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-200">🚨 异常成员</h2>
+        <span class="text-xs text-gray-500" id="anomalyTotal">—</span>
+      </div>
       <div id="anomalyCards" class="space-y-2">
-        <div class="text-xs text-gray-600 text-center py-4">加载中...</div>
+        <div class="text-xs text-gray-600 text-center py-6">加载中...</div>
       </div>
     </div>
 
-    <!-- 中：AI 总结 + 在线成员 -->
-    <div class="card p-3">
-      <div class="text-xs font-semibold text-gray-300 mb-2">🤖 AI 总结</div>
-      <div id="aiSummary" class="text-xs leading-relaxed text-gray-400 space-y-1">加载中...</div>
-      <div class="mt-3 pt-3 border-t border-surface-700">
+    <!-- 右侧：AI 结论 -->
+    <div class="card p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-200">🤖 AI 结论</h2>
+      </div>
+      <div id="aiConclusion" class="text-sm leading-relaxed text-gray-400 space-y-2">
+        <div class="text-xs text-gray-600">加载中...</div>
+      </div>
+      <div class="mt-4 pt-3 border-t border-surface-700">
         <div class="text-xs text-gray-500 mb-2">🟢 当前在线</div>
-        <div id="onlineMembers" class="space-y-1.5">
-          <div class="text-xs text-gray-600">—</div>
+        <div id="onlineMembers" class="space-y-1 text-xs text-gray-400">
+          <div>—</div>
         </div>
       </div>
-      <div class="mt-2 pt-2 border-t border-surface-700">
-        <div class="text-xs text-gray-500 mb-1.5">🏆 在线时长 Top 5</div>
-        <div id="topOnlineList" class="space-y-0.5"><div class="text-xs text-gray-600">—</div></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 第三层：详细数据（默认弱化） ═══════════ -->
+  <div class="weak-toggle mb-2 text-xs text-gray-600 hover:text-gray-400" onclick="toggleDetails()">▼ 详细数据</div>
+
+  <div id="detailSection" class="weak">
+    <!-- 参与者汇总 -->
+    <div class="dash-table-wrap mb-3">
+      <div class="hdr"><h2>参与者</h2><span class="cnt text-xs text-gray-500" id="summaryCount">—</span></div>
+      <div style="max-height:300px;overflow-y:auto">
+        <table class="data-table w-full">
+          <thead><tr><th>成员</th><th>风险</th><th>在线</th><th>状态</th></tr></thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
       </div>
     </div>
 
-    <!-- 右：最新事件 -->
-    <div class="dash-table-wrap">
-      <div class="hdr"><h2>📋 最新事件</h2><span class="cnt text-xs text-gray-500" id="hEventsCount">—</span></div>
-      <div style="max-height:350px;overflow-y:auto">
-        <table class="w-full">
-          <thead><tr><th class="table-header">姓名</th><th class="table-header">状态</th><th class="table-header">时间</th></tr></thead>
+    <!-- 最近事件 -->
+    <div class="dash-table-wrap mb-3">
+      <div class="hdr"><h2>最近事件</h2><span class="cnt text-xs text-gray-500" id="eventCount">—</span></div>
+      <div style="max-height:250px;overflow-y:auto">
+        <table class="data-table w-full">
+          <thead><tr><th>成员</th><th>状态</th><th>时间</th></tr></thead>
           <tbody id="eventBody"></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- 参与者汇总 -->
-  <div class="dash-table-wrap mb-4">
-    <div class="hdr"><h2>👥 参与者汇总</h2><span class="cnt text-xs text-gray-500" id="summaryCount">—</span></div>
-    <div style="max-height:400px;overflow-y:auto">
-      <table class="summary-table w-full">
-        <thead><tr>
-          <th class="cursor-pointer" onclick="sortSummary('name')">姓名</th>
-          <th class="cursor-pointer" onclick="sortSummary('actions')">事件</th>
-          <th class="cursor-pointer" onclick="sortSummary('duration')">在线时长</th>
-          <th class="cursor-pointer" onclick="sortSummary('rate')">在线率</th>
-          <th class="cursor-pointer" onclick="sortSummary('flags')">异常</th>
-          <th>状态</th>
-          <th>最后活动</th>
-        </tr></thead>
-        <tbody id="summaryBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- 告警 -->
-  <div class="dash-table-wrap">
-    <div class="hdr"><h2>🔔 告警</h2><span class="cnt text-xs text-gray-500">{{ stats.alert_count }} 条</span></div>
-    {% if alerts %}<ul class="divide-y divide-surface-800">{% for a in alerts[:5] %}
-      <li class="px-4 py-2.5 hover-row flex items-start gap-2 text-xs">
-        <span>{% if a.severity == 'error' %}🔴{% elif a.severity == 'warning' %}🟡{% else %}🔵{% endif %}</span>
-        <div class="flex-1 min-w-0"><p class="text-gray-200 truncate">{{ a.title }}</p></div>
-        <span class="text-gray-500 whitespace-nowrap">{{ to_myt(a.created_at) }}</span></li>{% endfor %}</ul>
-    {% else %}<div class="text-center py-8 text-gray-600 text-xs">暂无告警</div>{% endif %}
-  </div>
 </div>
 
 <script>
-let summaryData = [];
+let detailsVisible = false;
 
-async function loadMgtData() {
+function toggleDetails() {
+  detailsVisible = !detailsVisible;
+  const el = document.getElementById("detailSection");
+  el.style.opacity = detailsVisible ? "1" : "0.5";
+}
+
+async function loadMgt() {
   try {
     const r = await fetch("/api/v2/live"); const d = await r.json();
     if (!d.ok) return;
-    document.getElementById("hUnique").textContent = d.unique_participants;
+
+    // 状态总览
+    document.getElementById("hParticipants").textContent = d.unique_participants;
     document.getElementById("hOnline").textContent = d.total_online;
     document.getElementById("hAnomalies").textContent = d.anomalies?.length || 0;
-    document.getElementById("hEvents").textContent = d.total_events;
-    document.getElementById("hEventsCount").textContent = d.total_events + " 条";
 
     // 健康度
     const badge = document.getElementById("healthBadge");
-    if (d.health_level === "green") { badge.className = "health-badge green"; badge.textContent = "🟢 正常"; }
-    else if (d.health_level === "yellow") { badge.className = "health-badge yellow"; badge.textContent = "🟡 注意"; }
-    else { badge.className = "health-badge red"; badge.textContent = "🔴 异常"; }
+    const level = d.health_level || "green";
+    badge.className = "health-badge health-" + level;
+    badge.textContent = level === "green" ? "🟢 正常" : level === "yellow" ? "🟡 注意" : "🔴 异常";
 
-    // 异常卡片
+    // 异常 Top 3
     const ac = document.getElementById("anomalyCards");
+    document.getElementById("anomalyTotal").textContent = (d.anomalies?.length || 0) + " 人";
     if (d.anomalies?.length) {
-      ac.innerHTML = d.anomalies.map(a => {
-        const level = a.flags.includes("高频进出") ? "high" : "medium";
-        return `<div class="anomaly-card ${level}"><div class="flex items-center justify-between"><span class="text-sm font-medium text-gray-200">${a.name}</span><span class="text-xs text-gray-500">${a.actions} 次</span></div><div class="text-xs text-gray-400 mt-1">${a.flags.join("、")}</div></div>`;
+      const top3 = d.anomalies.slice(0, 3);
+      ac.innerHTML = top3.map(a => {
+        const lvl = a.flags.includes("高频进出") ? "high" : "med";
+        return `<div class="anomaly-card ${lvl}"><div class="name">${a.name}</div><div class="detail">${a.flags.map(f => `<span class="tag tag-red">${f}</span>`).join("")} ${a.actions} 次</div></div>`;
       }).join("");
     } else {
-      ac.innerHTML = '<div class="text-xs text-gray-600 text-center py-4">✅ 今日无异常成员</div>';
+      ac.innerHTML = '<div class="text-xs text-gray-500 text-center py-6">✅ 今日无异常成员</div>';
     }
 
-    // AI 总结
-    document.getElementById("aiSummary").textContent = d.ai_summary || "暂无数据";
+    // AI 结论
+    const ai = document.getElementById("aiConclusion");
+    if (d.ai_summary) {
+      ai.innerHTML = d.ai_summary.split("。").filter(Boolean).map(s => `<div>• ${s}。</div>`).join("");
+    }
 
-    // 在线成员
+    // 当前在线
     const om = document.getElementById("onlineMembers");
     if (d.online.length) {
       om.innerHTML = d.online.map(p =>
-        `<div class="flex items-center gap-2 text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span class="text-gray-200">${p.name}</span><span class="text-gray-500">${p.online_display || p.online_minutes + '分钟'}</span></div>`
+        `<div class="flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span>${p.name}</span><span class="text-gray-500">${p.online_display || p.online_minutes + '分钟'}</span></div>`
       ).join("");
-    } else { om.innerHTML = '<div class="text-xs text-gray-600">暂无在线</div>'; }
+    } else { om.innerHTML = '<div class="text-gray-500">暂无</div>'; }
 
-    // Top 5
-    const tl = document.getElementById("topOnlineList");
-    if (d.top_online?.length) {
-      tl.innerHTML = d.top_online.map((p,i) => `<div class="flex justify-between text-xs py-0.5"><span class="text-gray-400">${i+1}. ${p.name}</span><span class="text-gray-500">${p.duration_display}</span></div>`).join("");
-    }
+    // 参与者汇总（简化为：成员 | 风险 | 在线 | 状态）
+    const sb = document.getElementById("summaryBody");
+    const ps = d.participants_summary || [];
+    document.getElementById("summaryCount").textContent = ps.length + " 人";
+    if (ps.length) {
+      sb.innerHTML = ps.slice(0, 20).map(p => {
+        const risk = p.flags?.length ? p.flags.map(f => `<span class="tag tag-red">${f}</span>`).join("") : '<span class="text-gray-600">—</span>';
+        return `<tr class="hover-row"><td class="font-medium">${p.name}</td><td>${risk}</td><td>${p.duration_display}</td><td>${p.is_online ? '<span class="badge-green">🟢</span>' : '<span class="badge-gray">🔴</span>'}</td></tr>`;
+      }).join("");
+    } else { sb.innerHTML = '<tr><td colspan="4" class="text-center py-6 text-gray-600">暂无</td></tr>'; }
 
-    // 事件流
+    // 最近事件（最新 10 条）
     const eb = document.getElementById("eventBody");
-    if (d.online?.length || d.total_online >= 0) {
-      // 没有独立的事件流字段，用 participants_summary 的最新活动替代
-      eb.innerHTML = '<tr><td colspan="3" class="text-center py-4 text-gray-600">加载完成</td></tr>';
-    }
-
-    // 参与者汇总
-    summaryData = d.participants_summary || [];
-    document.getElementById("summaryCount").textContent = summaryData.length + " 人";
-    renderSummary(summaryData);
-  } catch(e) {}
+    document.getElementById("eventCount").textContent = (d.total_events || 0) + " 条";
+    // 用 participants_summary 的 last_active 按时间排序取前 10
+    const events = ps.filter(p => p.last_active).sort((a,b) => (b.last_active||"").localeCompare(a.last_active||"")).slice(0, 10);
+    if (events.length) {
+      eb.innerHTML = events.map(p => `<tr class="hover-row"><td>${p.name}</td><td>${p.is_online ? '<span class="badge-green">🟢 ONLINE</span>' : '<span class="badge-gray">🔴 OFFLINE</span>'}</td><td style="color:#64748b;font-family:monospace">${(p.last_active||"").slice(11,19)}</td></tr>`).join("");
+    } else { eb.innerHTML = '<tr><td colspan="3" class="text-center py-6 text-gray-600">暂无</td></tr>'; }
+  } catch(e) { console.log(e); }
 }
 
-function renderSummary(data) {
-  const body = document.getElementById("summaryBody");
-  if (!data.length) { body.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-600">暂无</td></tr>'; return; }
-  body.innerHTML = data.map(p => {
-    const flagsHtml = p.flags?.length ? p.flags.map(f => `<span class="text-xs px-1 rounded bg-red-900/30 text-red-400">${f}</span>`).join(" ") : '<span class="text-gray-600">—</span>';
-    const rate = p.avg_min > 0 ? Math.min(100, Math.round(p.avg_min / 60 * 100)) + "%" : "—";
-    return `<tr class="hover-row"><td class="font-medium">${p.name}</td><td>${p.total_actions || (p.enters + p.leaves)}</td><td>${p.duration_display}</td><td>${rate}</td><td>${flagsHtml}</td><td>${p.is_online ? '<span class="badge-green">🟢</span>' : '<span class="badge-gray">🔴</span>'}</td><td style="color:#64748b;font-family:monospace">${(p.last_active||"").slice(11,16)}</td></tr>`;
-  }).join("");
-}
-
-function sortSummary(by) {
-  const data = [...summaryData];
-  if (by === "name") data.sort((a,b) => a.name.localeCompare(b.name));
-  else if (by === "actions") data.sort((a,b) => (b.total_actions||0) - (a.total_actions||0));
-  else if (by === "duration") data.sort((a,b) => b.total_duration_min - a.total_duration_min);
-  else if (by === "rate") data.sort((a,b) => (b.avg_min||0) - (a.avg_min||0));
-  else if (by === "flags") data.sort((a,b) => (b.flags?.length||0) - (a.flags?.length||0));
-  renderSummary(data);
-}
-
-loadMgtData();
-setInterval(loadMgtData, 15000);
+loadMgt();
+setInterval(loadMgt, 15000);
 </script>
 {% endblock %}
