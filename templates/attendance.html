@@ -2,21 +2,20 @@
 {% block title %}出勤统计{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1>📅 出勤统计</h1><p>周/月维度出勤报表</p>
-    <div style="display:flex;gap:8px"><button class="bt bt-p bt-s" onclick="loadAtt('week')" id="bw">本周</button><button class="bt bt-s" onclick="loadAtt('month')" id="bm">本月</button></div>
-  </div>
-  <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
-    <div class="kpi"><div class="t"><div class="n" id="aTotal">—</div></div><div class="l">总人数</div></div>
-    <div class="kpi"><div class="t"><div class="n" id="aMin">—</div></div><div class="l">总时长</div></div>
-    <div class="kpi"><div class="t"><div class="n" style="font-size:20px" id="aPeriod">本周</div></div><div class="l">周期</div></div>
-  </div>
-  <div class="card"><table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>天数</th><th>次数</th><th>总时长</th><th>平均</th></tr></thead><tbody id="attTable"></tbody></table></div>
+  <div class="page-header"><h1 class="page-title">出勤统计_TEXT</h1><p class="page-subtitle">SUB出勤统计</p></div>
+  <div class="page-header-actions"><button class="btn btn-primary btn-sm" onclick="loadAtt('week')" id="bw">本周</button><button class="btn btn-sm" onclick="loadAtt('month')" id="bm">本月</button></div>
+<div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="aTotal">—</span></div><div class="kpi-label">总人数</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="aMin">—</span></div><div class="kpi-label">总时长</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" style="font-size:20px" id="aPeriod">本周</span></div><div class="kpi-label">周期</div></div>
 </div>
+<div class="card"><table class="data-table"><thead><tr><th>#</th><th>姓名</th><th>天数</th><th>次数</th><th>总时长</th><th>平均</th></tr></thead><tbody id="attTable"></tbody></table></div>
 <script>
-async function loadAtt(p){document.getElementById("bw").className="bt bt-s"+(p==='week'?' bt-p':'');document.getElementById("bm").className="bt bt-s"+(p==='month'?' bt-p':'');document.getElementById("aPeriod").textContent=p==='week'?'本周':'本月';
+async function loadAtt(p){document.getElementById("bw").className="btn btn-sm"+(p==='week'?' btn-primary':'');document.getElementById("bm").className="btn btn-sm"+(p==='month'?' btn-primary':'');document.getElementById("aPeriod").textContent=p==='week'?'本周':'本月';
 const r=await fetch("/api/v2/attendance?period="+p);const d=await r.json();if(!d.ok)return;
 document.getElementById("aTotal").textContent=d.total_people;document.getElementById("aMin").textContent=d.total_minutes+"分钟";
-const t=document.getElementById("attTable");if(d.members.length){t.innerHTML=d.members.map((m,i)=>`<tr><td class="i">${i+1}</td><td class="nm">${m.name}</td><td>${m.total_days}天</td><td>${m.total_entries}次</td><td>${m.total_duration_min}分钟</td><td>${m.avg_duration_min}分钟</td></tr>`).join("")}else{t.innerHTML='<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>'}}
+const t=document.getElementById("attTable");if(d.members.length){t.innerHTML=d.members.map((m,i)=>'<tr><td class="td-num">'+(i+1)+'</td><td class="td-name">'+m.name+'</td><td>'+m.total_days+'天</td><td>'+m.total_entries+'次</td><td>'+m.total_duration_min+'分钟</td><td>'+m.avg_duration_min+'分钟</td></tr>').join("")}else{t.innerHTML='<tr><td colspan="6" class="td-empty">暂无</td></tr>'}}
 loadAtt('week');
 </script>
+</div>
 {% endblock %}

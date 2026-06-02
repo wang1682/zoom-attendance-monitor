@@ -119,3 +119,35 @@ async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.js
 </script>
 </body>
 </html>
+.page-container{max-width:1340px;margin:0 auto;padding:32px;width:100%}
+@media(max-width:1024px){.page-container{padding:20px 16px}}
+.page-header{margin-bottom:24px}
+.page-title{font-size:28px;font-weight:700;line-height:1.2;margin:0;color:var(--text)}
+.page-subtitle{font-size:13px;color:var(--tm);margin:4px 0 0}
+.page-header-actions{display:flex;gap:8px;margin-bottom:16px}
+.card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--cb)}
+.card-header h2{font-size:14px;font-weight:600;margin:0;color:var(--text)}
+.kpi-grid{display:grid;gap:12px;margin-bottom:20px}
+.kpi-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;min-height:88px}
+.kpi-top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.kpi-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:15px}
+.kpi-value{font-size:28px;font-weight:700;line-height:1;color:var(--text)}
+.kpi-label{font-size:11px;color:var(--ts);margin-top:3px}
+.data-table{font-size:13px;width:100%;border-collapse:collapse}
+.data-table th{padding:12px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--tm);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--cb);background:var(--card)}
+.data-table td{padding:12px 16px;border-bottom:1px solid var(--div);color:var(--text);vertical-align:middle}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:var(--rh)}
+.td-name{font-weight:500;color:var(--text)}
+.td-mono{font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:var(--ts)}
+.td-num{font-weight:600;color:var(--tm);font-size:12px;width:32px}
+.td-empty{text-align:center;padding:32px;color:var(--tm)}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:500;border:1px solid}
+.badge-green{background:var(--sc-b);color:var(--sc);border-color:rgba(34,197,94,.3)}
+.badge-red{background:var(--da-b);color:var(--da);border-color:rgba(239,68,68,.3)}
+.badge-yellow{background:var(--wa-b);color:var(--wa);border-color:rgba(245,158,11,.3)}
+.btn{padding:6px 16px;border-radius:6px;font-size:12px;border:1px solid var(--cb);cursor:pointer;transition:all .12s;background:var(--card);color:var(--text)}
+.btn:hover{background:var(--rh)}
+.btn-primary{background:var(--pr);color:#fff;border-color:var(--pr)}
+.btn-primary:hover{opacity:.9}
+.btn-sm{padding:5px 12px;font-size:11px}

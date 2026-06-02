@@ -2,32 +2,29 @@
 {% block title %}汇总分析{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1>📊 汇总分析</h1><p>参会数据汇总与 AI 出勤分析</p></div>
-  <div class="kpi-grid" id="sumStats" style="grid-template-columns:repeat(5,1fr)">
-    <div class="kpi"><div class="t"><div class="n" id="sTotal">—</div></div><div class="l">参与人数</div></div>
-    <div class="kpi"><div class="t"><div class="n" id="sRecords">—</div></div><div class="l">记录数</div></div>
-    <div class="kpi"><div class="t"><div class="n" id="sAvg">—</div></div><div class="l">平均时长</div></div>
-    <div class="kpi"><div class="t"><div class="n" id="sLate" style="color:var(--wa)">—</div></div><div class="l">迟到</div></div>
-    <div class="kpi"><div class="t"><div class="n" id="sEarly" style="color:var(--da)">—</div></div><div class="l">早退</div></div>
-  </div>
-  <div class="card" style="margin-bottom:16px"><table class="data-table"><thead><tr><th>姓名</th><th>会议室</th><th>进入</th><th>离开</th><th>时长</th><th>状态</th></tr></thead><tbody id="memberTable"></tbody></table></div>
-  <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🤖 AI 出勤分析</h2>
-    <button class="bt bt-p bt-s" onclick="runAI()" id="aiBtn">生成报告</button>
-    <div id="aiReport" style="margin-top:12px;font-size:13px;line-height:1.7;color:var(--ts)">点击生成</div>
-  </div>
+  <div class="page-header"><h1 class="page-title">汇总分析_TEXT</h1><p class="page-subtitle">SUB汇总分析</p></div>
+  <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:20px" id="sumStats">
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="sTotal">—</span></div><div class="kpi-label">参与人数</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="sRecords">—</span></div><div class="kpi-label">记录数</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="sAvg">—</span></div><div class="kpi-label">平均时长</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="sLate" style="color:var(--wa)">—</span></div><div class="kpi-label">迟到</div></div>
+  <div class="kpi-card"><div class="kpi-top"><span class="kpi-value" id="sEarly" style="color:var(--da)">—</span></div><div class="kpi-label">早退</div></div>
+</div>
+<div class="card" style="margin-bottom:16px"><table class="data-table"><thead><tr><th>姓名</th><th>会议室</th><th>进入</th><th>离开</th><th>时长</th><th>状态</th></tr></thead><tbody id="memberTable"></tbody></table></div>
+<div class="card"><div class="card-header"><h2>🤖 AI 出勤分析</h2></div>
+  <button class="btn btn-primary btn-sm" onclick="runAI()" id="aiBtn" style="margin:16px 18px">生成报告</button>
+  <div id="aiReport" style="padding:0 18px 18px;font-size:13px;line-height:1.7;color:var(--ts)"></div>
 </div>
 <script>
 async function loadSum(){const r=await fetch("/api/v2/summary");const d=await r.json();if(!d.ok)return;
-document.getElementById("sTotal").textContent=d.stats.total_participants;
-document.getElementById("sRecords").textContent=d.stats.total_records;
-document.getElementById("sAvg").textContent=d.stats.avg_duration_min+"分";
-document.getElementById("sLate").textContent=d.stats.late_count;
-document.getElementById("sEarly").textContent=d.stats.early_leave_count;
+document.getElementById("sTotal").textContent=d.stats.total_participants;document.getElementById("sRecords").textContent=d.stats.total_records;
+document.getElementById("sAvg").textContent=d.stats.avg_duration_min+"分";document.getElementById("sLate").textContent=d.stats.late_count;document.getElementById("sEarly").textContent=d.stats.early_leave_count;
 const t=document.getElementById("memberTable");
-if(d.members.length){t.innerHTML=d.members.map(m=>{let b=m.is_late?'<span class="bg bg-y">迟到</span>':m.is_early_leave?'<span class="bg bg-y">早退</span>':'<span class="bg bg-g">正常</span>';return`<tr><td class="nm">${m.name}</td><td>${m.meeting_id}</td><td class="mono">${m.enter_time.slice(11,19)||"—"}</td><td class="mono">${m.leave_time.slice(11,19)||"—"}</td><td>${m.duration_min}分钟</td><td>${b}</td></tr>`}).join("")}else{t.innerHTML='<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>'}}
-async function runAI(){const b=document.getElementById("aiBtn");const e=document.getElementById("aiReport");b.disabled=true;b.textContent="⏳";e.textContent="分析中...";
+if(d.members.length){t.innerHTML=d.members.map(m=>{let b=m.is_late?'<span class="badge badge-yellow">迟到</span>':m.is_early_leave?'<span class="badge badge-yellow">早退</span>':'<span class="badge badge-green">正常</span>';return`<tr><td class="td-name">${m.name}</td><td>${m.meeting_id}</td><td class="td-mono">${(m.enter_time||"").slice(11,19)||"—"}</td><td class="td-mono">${(m.leave_time||"").slice(11,19)||"—"}</td><td>${m.duration_min}分钟</td><td>${b}</td></tr>`}).join("")}else{t.innerHTML='<tr><td colspan="6" class="td-empty">暂无</td></tr>'}}
+async function runAI(){const b=document.getElementById("aiBtn");const e=document.getElementById("aiReport");b.disabled=true;b.textContent="⏳";e.textContent="分析中..."
 const r=await fetch("/api/v2/ai-analysis");const d=await r.json();e.innerHTML=d.ok&&d.report?d.report.replace(/
 /g,"<br>"):"AI 不可用";b.disabled=false;b.textContent="↻ 重新生成"}
 loadSum();
 </script>
+</div>
 {% endblock %}
