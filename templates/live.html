@@ -58,7 +58,7 @@ async function loadLive(){
     if(!d.total_online&&d.total_online!==0) throw new Error("API returned no data");
 
     // Get online list
-    var parts=[];(d.meetings||[]).forEach(function(m){(m.participants||[]).forEach(function(p){parts.push(p)});});const online=(d.online_list||d.online||[]).length?d.online_list||d.online||[]:parts;
+    const online = d.online_list || []; if(!online.length && d.meetings && d.meetings.length) { var fl=[]; d.meetings.forEach(function(m){(m.participants||[]).forEach(function(p){fl.push(p)});}); fl.forEach(function(p){if(p.is_online!==false)online.push(p);}); }
     const meetings=d.meetings||[];
     const totalOnline=d.total_online||online.length;
 

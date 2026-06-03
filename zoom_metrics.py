@@ -157,6 +157,29 @@ class ZoomMetrics:
                 if p.get("status") == "in_meeting":
                     online_list.append(p)
         result["online_list"] = online_list
+        # Build participants_summary from meetings participants (dedup by display_name)
+        ps_map = {}
+        for m in result.get("meetings", []):
+            for p in m.get("participants", []):
+                raw = p.get("name", "").strip()
+                dn = _db.resolve_display_name(raw)["display_name"]
+                key = dn.lower().replace(" ", "")
+                if key not in ps_map:
+                    ps_map[key] = {
+                        "name": dn,
+                        "is_online": p.get("status") == "in_meeting",
+                        "last_active": p.get("join_time", ""),
+                        "last_active_display": p.get("join_time_display", ""),
+                        "total_actions": 1,
+                        "duration_display": p.get("online_display", ""),
+                        "flags": [],
+                        "email": p.get("email", ""),
+                        "meeting_id": p.get("meeting_id", ""),
+                        "is_sharing": False,
+                    }
+                else:
+                    ps_map[key]["total_actions"] += 1
+        result["participants_summary"] = list(ps_map.values())
         _cache["live"] = {"data": result, "ts": now}
         return result
 
