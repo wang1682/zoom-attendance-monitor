@@ -18,8 +18,8 @@
 .aih .aih-dot{width:6px;height:6px;border-radius:50%;margin-top:7px;flex-shrink:0}
 .aih .aih-text{font-size:13px;line-height:1.6;color:var(--ts)}
 .aih .aih-highlight{font-weight:600;color:var(--text)}
-.dig{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-@media(max-width:768px){.dig{grid-template-columns:1fr}}
+.dig{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:900px){.dig{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block content %}
@@ -72,6 +72,13 @@
       <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="oc">—</span>
     </div>
     <div id="ol" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
+  </div>
+  <div class="card cp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="font-size:14px;font-weight:600;margin:0">🖥 当前共享</h2>
+      <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="sc">—</span>
+    </div>
+    <div id="sl" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
   </div>
 </div>
 
@@ -138,6 +145,23 @@ async function ld(){
       ol.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">暂无在线</div>';
     }
 
+    // Sharing
+    try{
+      const sr=await fetch("/api/v3/sharing-live");
+      const sd=await sr.json();
+      if(sd.ok){
+        document.getElementById("sc").textContent=sd.current+"人";
+        const sl=document.getElementById("sl");
+        if(sd.current>0 && sd.active && sd.active.length){
+          sl.innerHTML=sd.active.map(s=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)"><span style="width:8px;height:8px;border-radius:50%;background:var(--in);flex-shrink:0"></span><span style="flex:1;font-size:13px;font-weight:500">${s.name}</span><span style="font-size:12px;color:var(--ts)">${s.duration_display}</span></div>`).join("");
+        } else if(sd.current>0){
+          sl.innerHTML='<div style="text-align:center;padding:20px;color:var(--wa)">已检测到 '+sd.current+' 人共享，但暂无明细</div>';
+        } else {
+          sl.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">当前无人共享</div>';
+        }
+      }
+    }catch(e){}
+
     // Anomaly (from v2)
     try{
       const a2=await fetch("/api/v2/live");
@@ -157,7 +181,7 @@ async function ld(){
         document.getElementById("sc").textContent=sd.length+"人";
         const sb=document.getElementById("sb");
         if(sd.length){
-          sb.innerHTML=sd.slice(0,8).map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td>'+(p.total_actions||(p.enters+p.leaves))+'</td><td>'+p.duration_display+'</td><td>'+(p.flags?.length?p.flags.map(f=>'<span class="tg tg-d">'+f+'</span>').join(""):'<span style="color:var(--tm)">—</span>')+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'\"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("");
+sb.innerHTML=sd.slice(0,8).map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td>'+(p.total_actions||(p.enters+p.leaves))+'</td><td>'+p.duration_display+'</td><td>'+(p.flags?.length?p.flags.map(f=>'<span class="tg tg-d">'+f+'</span>').join(""):'<span style="color:var(--tm)">—</span>')+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'"></span></td><td class="mono">'+(p.last_active_display||formatMYT(p.last_active)||"—")+'</td></tr>').join("");
         } else {
           sb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
         }
@@ -167,7 +191,7 @@ async function ld(){
         document.getElementById("ec").textContent=(ad2.total_events||0)+"条";
         const eb=document.getElementById("eb");
         if(ev.length){
-          eb.innerHTML=ev.map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'\"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("");
+eb.innerHTML=ev.map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'"></span></td><td class="mono">'+(p.last_active_display||formatMYT(p.last_active)||"—")+'</td></tr>').join("");
         } else {
           eb.innerHTML='<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
         }
