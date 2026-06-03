@@ -1,4 +1,4 @@
-<!-- TEMPLATE: live.html v081-final -->
+<!-- TEMPLATE: live.html v167 -->
 {% extends "base.html" %}
 {% block title %}实时在线{% endblock %}
 {% block content %}
@@ -52,26 +52,49 @@
 <script>
 async function loadLive(){
   try{
-    const r=await fetch("/api/v2/live");
-    const d=await r.json();
-    if(!d.ok) return;
-    document.getElementById("liveTotal").textContent=d.total_online;
-    document.getElementById("liveMeetings").textContent=Object.keys(d.meetings||{}).length;
+    const r=await fetch("/api/v3/live");
+    const j=await r.json();
+    const d=j.data||j||{};
+    if(!d.total_online&&d.total_online!==0) throw new Error("API returned no data");
+
+    // Get online list
+    const online=d.online_list||d.online||[];
+    const meetings=d.meetings||[];
+    const totalOnline=d.total_online||online.length;
+
+    document.getElementById("liveTotal").textContent=totalOnline;
+    document.getElementById("liveMeetings").textContent=meetings.length;
+
+    // Online table
     const lt=document.getElementById("liveTable");
-    if(d.online.length){
-      lt.innerHTML=d.online.map(m=>`<tr><td class="td-name">${m.name}</td><td class="td-mono">${m.meeting_id}</td><td>${to_myt(m.enter_time)}</td><td><span class="badge badge-green">${m.online_display||m.online_minutes+"分钟"}</span></td></tr>`).join("");
+    if(online.length){
+      lt.innerHTML=online.map(p=>{
+        const name=p.name||p.display_name||p.user_name||"—";
+        const room=p.room||p.meeting_topic||p.meeting_id||"—";
+        const jt=p.join_time_display||p.join_time||"—";
+        const dur=p.duration_display||p.duration_text||p.duration||p.online_duration||(p.online_display||"");
+        return `<tr><td class="td-name">${name}</td><td class="td-mono">${room}</td><td>${to_myt(jt)}</td><td><span class="badge badge-green">${dur}</span></td></tr>`;
+      }).join("");
     } else {
-      lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>';
+      lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无在线</td></tr>';
     }
+
+    // Meetings table
     const mt=document.getElementById("meetingLiveTable");
-    const ms=Object.values(d.meetings||{});
-    if(ms.length){
-      mt.innerHTML=ms.map(m=>`<tr><td class="td-mono">${Object.keys(d.meetings).find(k=>d.meetings[k]===m)}</td><td>${m.participant_count}</td><td>${m.elapsed_minutes}分钟</td><td>${to_myt(m.earliest_enter)}</td></tr>`).join("");
+    if(meetings.length){
+      mt.innerHTML=meetings.map(m=>{
+        const mid=m.meeting_id||m.id||"—";
+        const oc=m.online_count||m.raw_online_count||(m.participants?m.participants.length:0)||0;
+        const dur=m.elapsed_minutes?m.elapsed_minutes+"分钟":(m.duration||m.duration_text||"—");
+        const ej=m.earliest_join_display||m.earliest_join||m.start_time||"—";
+        return `<tr><td class="td-mono">${m.topic||mid}</td><td>${oc}</td><td>${dur}</td><td>${to_myt(ej)}</td></tr>`;
+      }).join("");
     } else {
-      mt.innerHTML='<tr><td colspan="4" class="td-empty">暂无</td></tr>';
+      mt.innerHTML='<tr><td colspan="4" class="td-empty">暂无活跃会议室</td></tr>';
     }
   } catch(e) {
-    document.getElementById("liveTable").innerHTML='<tr><td colspan="4" class="td-empty">失败</td></tr>';
+    document.getElementById("liveTable").innerHTML='<tr><td colspan="4" class="td-empty">加载失败: '+e.message+'</td></tr>';
+    document.getElementById("meetingLiveTable").innerHTML='<tr><td colspan="4" class="td-empty">加载失败: '+e.message+'</td></tr>';
   }
 }
 loadLive();
