@@ -88,7 +88,7 @@ async function ld(){
     const j=await r.json();
     if(!j.ok)return;
     const d=j.data;
-    const v3data=d;
+    window.v3data=d;
     const totalOnline=d.total_online||0;
     const meetings=d.meetings||[];
     const allParticipants=[];
@@ -169,7 +169,18 @@ async function ld(){
     }catch(e){}
     // Participants — independent from v2, ded try/catch
     try {
-      var v3ps2 = (typeof v3data !== "undefined" && v3data.participants_summary) || [];
+      var v3ps2 = (window.v3data && (window.v3data.participants_summary || (window.v3data.data && window.v3data.data.participants_summary) || [])) || [];
+      var tbody = document.querySelector("#sb");
+      if (tbody && v3ps2.length) {
+        tbody.innerHTML = v3ps2.map(function(p){
+          return "<tr>"
+            + "<td>" + (p.name || "-") + "</td>"
+            + "<td>" + (p.is_online ? "在线" : "离线") + "</td>"
+            + "<td>" + (p.duration_display || p.duration || "-") + "</td>"
+            + "<td>" + (p.last_active_display || p.last_active || "-") + "</td>"
+            + "</tr>";
+        }).join("");
+      }
       document.getElementById("sc").textContent = v3ps2.length + "人";
       var sb2 = document.getElementById("sb");
       if (sb2) {
@@ -193,3 +204,56 @@ ld();
 setInterval(ld,30000);
 </script>
 {% endblock %}
+
+<script>
+async function hardRenderDashboardV3(){
+  try{
+    const res = await fetch("/api/v3/live?_=" + Date.now(), {cache:"no-store"});
+    const j = await res.json();
+    const d = j.data || j || {};
+    const ps = d.participants_summary || d.online_list || [];
+
+    const sb = document.getElementById("sb");
+    const sc = document.getElementById("sc");
+
+    if(sc) sc.textContent = ps.length + "人";
+
+    if(sb){
+      sb.innerHTML = ps.length ? ps.map(function(p){
+        return "<tr>"
+          + "<td class='nm'>" + (p.name || "-") + "</td>"
+          + "<td>" + (p.is_online === false ? "⚫ 离线" : "🟢 在线") + "</td>"
+          + "<td>" + (p.duration_display || p.online_display || "") + "</td>"
+          + "<td class='mono'>" + (p.last_active_display || p.join_time_display || "") + "</td>"
+          + "</tr>";
+      }).join("") : "<tr><td colspan='4' style='text-align:center;padding:32px;color:var(--tm)'>暂无数据</td></tr>";
+    }
+
+    const al = document.getElementById("al");
+    if(al){
+      const anoms = ps.filter(function(p){ return (p.flags || []).length; });
+      al.innerHTML = anoms.length ? anoms.map(function(p){
+        return "<div style='padding:8px 0;border-bottom:1px solid var(--div)'><b>"
+          + (p.name || "-")
+          + "</b><div style='font-size:11px;color:var(--ts)'>"
+          + (p.flags || []).join("、")
+          + "</div></div>";
+      }).join("") : "<div style='text-align:center;padding:24px;color:var(--tm)'>✅ 今日无异常</div>";
+    }
+
+    const sl = document.getElementById("sl");
+    if(sl){
+      const sharing = ps.filter(function(p){ return p.is_sharing; });
+      sl.innerHTML = sharing.length ? sharing.map(function(p){
+        return "<div style='padding:8px 0;border-bottom:1px solid var(--div)'>🖥️ <b>"
+          + (p.name || "-")
+          + "</b></div>";
+      }).join("") : "<div style='text-align:center;padding:20px;color:var(--tm)'>当前无人共享</div>";
+    }
+  }catch(e){
+    console.error("hardRenderDashboardV3 error:", e);
+  }
+}
+window.addEventListener("load", hardRenderDashboardV3);
+setInterval(hardRenderDashboardV3, 15000);
+</script>
