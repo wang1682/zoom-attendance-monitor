@@ -150,6 +150,13 @@ class ZoomMetrics:
                         enabled_count += 1
 
         result["total_online"] = enabled_count
+        # Build online_list for frontend compatibility
+        online_list = []
+        for m in result.get("meetings", []):
+            for p in m.get("participants", []):
+                if p.get("status") == "in_meeting":
+                    online_list.append(p)
+        result["online_list"] = online_list
         _cache["live"] = {"data": result, "ts": now}
         return result
 

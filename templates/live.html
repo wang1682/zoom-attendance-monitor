@@ -58,7 +58,7 @@ async function loadLive(){
     if(!d.total_online&&d.total_online!==0) throw new Error("API returned no data");
 
     // Get online list
-    const online=d.online_list||d.online||[];
+    var parts=[];(d.meetings||[]).forEach(function(m){(m.participants||[]).forEach(function(p){parts.push(p)});});const online=(d.online_list||d.online||[]).length?d.online_list||d.online||[]:parts;
     const meetings=d.meetings||[];
     const totalOnline=d.total_online||online.length;
 
