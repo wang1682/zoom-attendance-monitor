@@ -1,4 +1,3 @@
-<!-- TEMPLATE: sharing.html -->
 {% extends "base.html" %}
 {% block title %}共享监控{% endblock %}
 {% block content %}
@@ -13,42 +12,52 @@
 
 <div class="card" style="margin-bottom:16px">
   <div class="card-header"><h2>当前共享</h2></div>
-  <tbody id="currentTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody>
+  <table class="data-table"><tbody id="currentTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table>
 </div>
 
 <div class="card" style="margin-bottom:16px">
   <div class="card-header"><h2>今日共享历史</h2></div>
-  <table class="data-table"><thead><tr><th>成员</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr></thead><tbody id="historyTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table>
+  <table class="data-table"><thead><tr><th>成员</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr></thead><tbody id="historyTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table></table>
 </div>
 </div>
 
 <script>
 async function loadShare(){
-  const r=await fetch("/api/v3/sharing-live");
-  const d=await r.json();
-  if(!d.ok)return;
-  
-  document.getElementById("sActive").textContent=d.current_sharing.length;
-  document.getElementById("sTotal").textContent=d.today_summary.sharing_count;
-  document.getElementById("sUsers").textContent=d.today_summary.unique_users;
-  
-  // Current sharing
-  const ct=document.getElementById("currentTable");
-  if(d.current_sharing.length){
-    ct.innerHTML=d.current_sharing.map(s=>`<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display}</td><td>—</td><td><span class="badge badge-green">${s.duration_display}</span></td></tr>`).join("");
-  } else {
-    ct.innerHTML='<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--tm)">当前无人共享</td></tr>';
-  }
-  
-  // History
-  const ht=document.getElementById("historyTable");
-  if(d.today_history.length){
-    ht.innerHTML=d.today_history.map(s=>`<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display}</td><td>${s.end_time_display||'进行中'}</td><td><span class="badge badge-green">${s.duration_display}</span></td></tr>`).join("");
-  } else {
-    ht.innerHTML='<tr><td colspan="5" class="td-empty">暂无记录</td></tr>';
+  try {
+    const r=await fetch("/api/v3/sharing-live");
+    const d=await r.json();
+    if(!d.ok) return;
+
+    // Fields: current (number), active (array), sources (object)
+    // No today_summary or today_history in current API
+    const active = d.active || [];
+    document.getElementById("sActive").textContent = d.current || 0;
+    document.getElementById("sTotal").textContent = active.length;
+    document.getElementById("sUsers").textContent = active.length;
+
+    // Current sharing table
+    const ct = document.getElementById("currentTable");
+    if (ct) {
+      if (active.length) {
+        ct.innerHTML = active.map(s => `<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display||'—'}</td><td>—</td><td><span class="badge badge-green">${s.duration_display||'0分钟'}</span></td></tr>`).join("");
+      } else {
+        ct.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--tm)">当前无人共享</td></tr>';
+      }
+    }
+
+    // History — from sharing_live DB via separate call or leave as is
+    // Current API doesn't have today_history, show message
+    const ht = document.getElementById("historyTable");
+    if (ht) {
+      ht.innerHTML = '<tr><td colspan="5" class="td-empty">历史记录暂不展示（需要额外数据源）</td></tr>';
+    }
+  } catch(e) {
+    console.error("sharing page error:", e);
+    const ct = document.getElementById("currentTable");
+    if (ct) ct.innerHTML = '<tr><td colspan="5" class="td-empty">加载失败</td></tr>';
   }
 }
 loadShare();
-setInterval(loadShare,15000);
+setInterval(loadShare, 15000);
 </script>
 {% endblock %}
