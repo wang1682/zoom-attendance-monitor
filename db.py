@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from config import settings
@@ -168,7 +168,23 @@ def init_db():
 
 
 
-    ]
+    
+        "CREATE TABLE IF NOT EXISTS participant_sessions ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  meeting_id TEXT NOT NULL DEFAULT '',"
+        "  user_key TEXT NOT NULL,"
+        "  user_name TEXT NOT NULL,"
+        "  join_time_utc TEXT NOT NULL,"
+        "  leave_time_utc TEXT,"
+        "  duration_seconds INTEGER DEFAULT 0,"
+        "  source TEXT DEFAULT 'webhook',"
+        "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_sessions_key   ON participant_sessions(user_key)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_join  ON participant_sessions(join_time_utc)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_active ON participant_sessions(leave_time_utc)",
+]
     for sql in statements:
         try:
             conn.execute(sql)
@@ -219,12 +235,84 @@ def save_participant(
     return cur.lastrowid
 
 
+def save_participant_session(meeting_id, user_key, user_name, join_time_utc, source="webhook"):
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT id FROM participant_sessions WHERE user_key=? AND meeting_id=? AND leave_time_utc IS NULL ORDER BY id DESC LIMIT 1",
+        (user_key, meeting_id)
+    ).fetchone()
+    if existing:
+        return existing[0]
+    cur = conn.execute(
+        "INSERT INTO participant_sessions (meeting_id, user_key, user_name, join_time_utc, source) VALUES (?, ?, ?, ?, ?)",
+        (meeting_id, user_key, user_name, join_time_utc, source)
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def close_participant_session(meeting_id, user_key, leave_time_utc):
+    conn = _get_conn()
+    session = conn.execute(
+        "SELECT id, join_time_utc FROM participant_sessions WHERE user_key=? AND meeting_id=? AND leave_time_utc IS NULL ORDER BY id DESC LIMIT 1",
+        (user_key, meeting_id)
+    ).fetchone()
+    if session:
+        from datetime import datetime
+        try:
+            join_dt = datetime.fromisoformat(session[1].replace("Z", "+00:00"))
+            leave_dt = datetime.fromisoformat(leave_time_utc.replace("Z", "+00:00"))
+            dur = int((leave_dt - join_dt).total_seconds())
+        except:
+            dur = 0
+        conn.execute(
+            "UPDATE participant_sessions SET leave_time_utc=?, duration_seconds=? WHERE id=?",
+            (leave_time_utc, dur, session[0])
+        )
+        conn.commit()
+        return True
+    return False
+
+
+def get_today_session_summary(start_utc, end_utc):
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT
+            user_key, user_name,
+            MIN(join_time_utc) as first_join,
+            MAX(join_time_utc) as last_join,
+            SUM(COALESCE(duration_seconds, 0)) as total_duration,
+            COUNT(*) as session_count,
+            SUM(CASE WHEN leave_time_utc IS NOT NULL THEN 1 ELSE 0 END) as closed_count,
+            MAX(COALESCE(leave_time_utc, join_time_utc)) as last_active
+        FROM participant_sessions
+        WHERE join_time_utc >= ? AND join_time_utc < ?
+        GROUP BY user_key
+        ORDER BY last_active DESC
+    """, (start_utc, end_utc)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_today_session_details(start_utc, end_utc):
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT ps.*, zp.action, zp.action_time
+        FROM participant_sessions ps
+        LEFT JOIN zoom_participants zp ON zp.name = ps.user_name
+            AND zp.action_time >= ? AND zp.action_time < ?
+        WHERE ps.join_time_utc >= ? AND ps.join_time_utc < ?
+        ORDER BY ps.join_time_utc DESC
+    """, (start_utc, end_utc, start_utc, end_utc)).fetchall()
+    return [dict(r) for r in rows]
+
+
+
 def get_today_participants(limit: int = 200) -> list[dict]:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_utc = datetime.now(timezone(timedelta(hours=8))).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn = _get_conn()
     rows = conn.execute(
         "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY action_time DESC LIMIT ?",
-        (today, limit),
+        (today_utc, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 

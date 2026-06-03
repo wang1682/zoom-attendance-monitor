@@ -75,6 +75,32 @@ class ZoomAPI:
         except Exception:
             return []
 
+    async def get_live_meetings(self) -> list[dict]:
+        """Business 版: 获取当前所有在线会议及人数"""
+        try:
+            result = await self._get("/metrics/meetings", {"type": "live", "page_size": 100})
+            return result.get("meetings", [])
+        except Exception:
+            return []
+
+    async def get_live_participants(self, meeting_id: str) -> list[dict]:
+        """Business 版: 获取当前会议的真实在线名单"""
+        all_p = []
+        next_token = ""
+        while True:
+            params = {"page_size": 300}
+            if next_token:
+                params["next_page_token"] = next_token
+            try:
+                result = await self._get(f"/metrics/meetings/{meeting_id}/participants", params)
+                all_p.extend(result.get("participants", []))
+                next_token = result.get("next_page_token", "")
+                if not next_token:
+                    break
+            except Exception:
+                break
+        return all_p
+
     async def get_user_id(self) -> Optional[str]:
         try:
             result = await self._get("/users/me")

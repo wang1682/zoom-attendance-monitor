@@ -13,6 +13,34 @@ import hmac
 import json
 import sys
 from datetime import datetime, timezone, timedelta
+
+MYT = timezone(timedelta(hours=8))
+
+def today_myt():
+    return datetime.now(MYT).strftime("%Y-%m-%d")
+
+def today_myt_utc_start():
+    d = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def today_myt_utc_range():
+    start_myt = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
+    end_myt = start_myt + timedelta(days=1)
+    return (
+        start_myt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        end_myt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
+
+def now_myt():
+    return datetime.now(MYT)
+
+    """返回马来西亚今天的 YYYY-MM-DD"""
+    return datetime.now(MYT).strftime("%Y-%m-%d")
+
+def now_myt():
+    """返回马来西亚当前时间的 datetime"""
+    return datetime.now(MYT)
+
 from pathlib import Path
 
 from config import settings
@@ -46,6 +74,15 @@ def to_myt_display(dt_str, fmt="%m-%d %H:%M:%S"):
     except:
         return dt_str[:16]
 
+
+def format_duration(seconds):
+    """将秒数转为可读格式"""
+    if not seconds or seconds <= 0:
+        return "—"
+    h, m = divmod(int(seconds), 3600)
+    if h > 0:
+        return f"{h}h{m//60:02d}"
+    return f"{m//60}分钟"
 
 
 def dedup_participants(participants):
@@ -84,6 +121,7 @@ def _ensure_demo():
     return _DEMO_MODULE
 
 
+
 def build_app() -> "FastAPI":
     """创建并配置完整的 FastAPI 应用（只在 api/webhook 模式下调用）"""
     global _app
@@ -91,11 +129,15 @@ def build_app() -> "FastAPI":
         return _app
 
     from fastapi import FastAPI, Request, HTTPException
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, Response
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
     app = FastAPI(title=BRAND["app_name_zh"], version="2.0.0")
+    start_utc, end_utc = today_myt_utc_range()
+    app.state.start_utc = start_utc
+    app.state.end_utc = end_utc
+
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
@@ -158,7 +200,7 @@ def build_app() -> "FastAPI":
                 "checkin_rate": 0,
             }
         return tmpl.TemplateResponse(request, "dashboard.html", {
-            "today": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "today": today_myt(),
             "participants": participants,
             "alerts": alerts,
             "stats": stats,
@@ -217,12 +259,80 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             participants = _ensure_demo().get_demo_participants()
         else:
-            participants = db.get_today_participants(limit=200)
+            start_utc, end_utc = today_myt_utc_range()
+            # Session summary + live online merge
+            session_summary = db.get_today_session_summary(start_utc, end_utc)
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            live_names = set()
+            for p in live_data.get("participants_summary", []):
+                name = (p.get("name") or p.get("user_name") or "").strip().lower()
+                if name:
+                    live_names.add(name)
+            # Build summary rows
+            summary = []
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            MYT_TZ = _tz(_td(hours=8))
+            now_utc = _dt.now(_tz.utc)
+            for s in session_summary:
+                key = (s.get("user_name") or "").strip().lower()
+                is_online = key in live_names
+                dur_sec = s.get("total_duration", 0) or 0
+                cur_dur = "—"
+                if is_online:
+                    last_join = s.get("last_join", "")
+                    if last_join:
+                        try:
+                            jt = _dt.fromisoformat(last_join.replace("Z", "+00:00"))
+                            secs = int((now_utc - jt).total_seconds())
+                            cur_dur = format_duration(secs)
+                            dur_sec += secs
+                        except: pass
+                summary.append({
+                    "name": s.get("user_name", ""),
+                    "status": "在线中" if is_online else "已离线",
+                    "first_join": to_myt_display(s.get("first_join", "")),
+                    "last_join": to_myt_display(s.get("last_join", "")),
+                    "current_session": cur_dur if is_online else "—",
+                    "total_duration": format_duration(dur_sec),
+                    "leave_count": (s.get("session_count", 0) or 0) - (s.get("closed_count", 0) or 0),
+                    "last_active": to_myt_display(s.get("last_active", "")),
+                    "is_online": is_online,
+                })
+            # Add live-only members not in sessions
+            seen_keys = set()
+            for s in session_summary:
+                k = (s.get("user_name") or "").strip().lower()
+                if k: seen_keys.add(k)
+            for p in live_data.get("participants_summary", []):
+                name = (p.get("name") or p.get("user_name") or "").strip()
+                key = name.lower()
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                    MYT_TZ = _tz(_td(hours=8))
+                    now_myt_val = _dt.now(MYT_TZ)
+                    cut = now_myt_val.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    summary.append({
+                        "name": name,
+                        "status": "在线中",
+                        "first_join": to_myt_display(p.get("join_time", "") or p.get("last_active", "") or cut),
+                        "last_join": to_myt_display(p.get("join_time", "") or p.get("last_active", "") or cut),
+                        "current_session": format_duration(0),
+                        "total_duration": "—",
+                        "leave_count": 0,
+                        "last_active": to_myt_display(p.get("last_active", "") or p.get("join_time", "") or cut),
+                        "is_online": True,
+                    })
+            summary.sort(key=lambda x: x.get("last_active", ""), reverse=True)
+            participants = summary
         return tmpl.TemplateResponse(request, "participants.html", {
             "participants": participants,
             "brand": BRAND,
             "demo_mode": settings.demo_mode,
             "to_myt": to_myt,
+            "format_duration": format_duration,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
@@ -239,45 +349,15 @@ def build_app() -> "FastAPI":
 
     @app.get("/reports", response_class=HTMLResponse)
     async def reports_page(request: Request):
-        if settings.demo_mode:
-            reports = _ensure_demo().get_demo_reports()
-        else:
-            conn = db._get_conn()
-            # 今日统计
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today_str,)).fetchone()[0]
-            unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ?", (today_str,)).fetchone()[0]
-            # 最近7天每天统计
-            rows = []
-            for i in range(7, -1, -1):
-                d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
-                cnt = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
-                uniq = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
-                rows.append({"date": d, "count": cnt, "unique": uniq})
-            # 参会排行（总次数）
-            top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (today_str,)).fetchall()
-            reports = {"total_today": total_today, "unique_today": unique_names, "daily_trend": rows, "top_participants": [{"name": r[0], "count": r[1]} for r in top]}
-        return tmpl.TemplateResponse(request, "reports.html", {
-            "reports": reports,
-            "brand": BRAND,
-            "demo_mode": settings.demo_mode,
-        })
+        return tmpl.TemplateResponse(request, "error.html", {"brand": BRAND, "message": "此页面已停用"})
 
     @app.get("/analytics", response_class=HTMLResponse)
     async def analytics_page(request: Request):
-        if settings.demo_mode:
-            analytics = _ensure_demo().get_demo_analytics()
-        else:
-            analytics = {}
-        return tmpl.TemplateResponse(request, "analytics.html", {
-            "analytics": analytics,
-            "brand": BRAND,
-            "demo_mode": settings.demo_mode,
-        })
+        return tmpl.TemplateResponse(request, "error.html", {"brand": BRAND, "message": "此页面已停用"})
 
     @app.get("/summary", response_class=HTMLResponse)
     async def summary_page(request: Request):
-        return tmpl.TemplateResponse(request, "summary.html", {"brand": BRAND})
+        return tmpl.TemplateResponse(request, "error.html", {"brand": BRAND, "message": "此页面已停用"})
 
     @app.get("/live", response_class=HTMLResponse)
     async def live_page(request: Request):
@@ -285,7 +365,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/attendance", response_class=HTMLResponse)
     async def attendance_page(request: Request):
-        return tmpl.TemplateResponse(request, "attendance.html", {"brand": BRAND})
+        return tmpl.TemplateResponse(request, "error.html", {"brand": BRAND, "message": "此页面已停用"})
 
     # ── AI 报告 ────────────────────────────────────────────────────────────
     @app.get("/ai/daily", response_class=HTMLResponse)
@@ -312,9 +392,10 @@ def build_app() -> "FastAPI":
             since = now - timedelta(days=30)
         else:
             return {"ok": False, "error": "period must be daily/weekly/monthly"}
-        since_str = since.strftime("%Y-%m-%d")
+        since_str = today_myt_utc_start()
+        _, end_str = today_myt_utc_range()
         conn = db._get_conn()
-        rows = conn.execute("SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? ORDER BY action_time", (since_str,)).fetchall()
+        rows = conn.execute("SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time", (since_str, end_str)).fetchall()
         if not rows:
             return {"ok": False, "note": f"该周期内无数据", "period": period}
         names = set()
@@ -501,8 +582,9 @@ def build_app() -> "FastAPI":
             cnt = _conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
             uniq = _conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
             trend.append({"date": d, "count": cnt, "unique": uniq})
-        today = now.strftime("%Y-%m-%d")
-        top = _conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC LIMIT 20", (today,)).fetchall()
+        today = today_myt_utc_start()
+        start_utc_at, end_utc_at = today_myt_utc_range()
+        top = _conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC LIMIT 20", (start_utc_at, end_utc_at)).fetchall()
         _conn.close()
         return {"ok": True, "trend": trend, "top": [{"name": r[0], "count": r[1]} for r in top]}
 
@@ -610,6 +692,14 @@ def build_app() -> "FastAPI":
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
                                     source="webhook")
+            user_key = re.sub(r"[^0-9a-zA-Z]", "", (name or "").lower().replace(" ", ""))[:32]
+            at_str = action_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if action == "enter":
+                if user_key:
+                    db.save_participant_session(meeting_id, user_key, name, at_str, source="webhook")
+            elif action == "leave":
+                if user_key:
+                    db.close_participant_session(meeting_id, user_key, at_str)
 
         # Sharing events
         if "sharing_started" in event_type or "sharing_ended" in event_type:
@@ -771,7 +861,7 @@ def build_app() -> "FastAPI":
         rows = conn.execute("""
             SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
             FROM zoom_participants
-            WHERE action_time >= ?
+            WHERE action_time >= ? AND action_time < ?
             GROUP BY name
             ORDER BY cnt DESC
         """, (cutoff,)).fetchall()
@@ -852,6 +942,7 @@ def build_app() -> "FastAPI":
         from datetime import datetime, timezone, timedelta
         MYT = timezone(timedelta(hours=8))
         now_utc = datetime.now(timezone.utc)
+        start_utc, end_utc = today_myt_utc_range()
         STALE_CUTOFF = timedelta(hours=4)
         
         def to_myt(dt_str):
@@ -932,8 +1023,8 @@ def build_app() -> "FastAPI":
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
         events = conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
-            (cutoff_2h,)
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+            (cutoff_2h, end_utc)
         ).fetchall()
         started = {}  # (meeting_id, user_id) -> info
         ended = set()  # (meeting_id, user_id) -> ended
@@ -999,32 +1090,293 @@ def build_app() -> "FastAPI":
                 "source": info.get("source", ""),
             })
         
+# Recent sharing records (last 10, regardless of is_active)
+        recent_rows = conn.execute(
+            "SELECT user_name, user_id, content, start_time, end_time, source, is_active FROM sharing_live WHERE start_time >= ? AND start_time < ? ORDER BY start_time DESC LIMIT 10",
+            (start_utc, end_utc)
+        ).fetchall()
+        recent_list = []
+        for r in recent_rows:
+            raw = r[0]
+            dn = db.resolve_display_name(raw)["display_name"]
+            st = r[3] or ""
+            et = r[4] or ""
+            recent_list.append({
+                "name": dn,
+                "raw_name": raw,
+                "content": r[2] or "",
+                "start_time": st,
+                "start_time_display": to_myt(st),
+                "end_time": et,
+                "end_time_display": to_myt(et),
+                "source": r[5] or "",
+                "is_active": bool(r[6]),
+            })
+
+        # Also check zoom_events for breakout sharing missing from sharing_live
+        recent_events = conn.execute(
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND created_at < ? ORDER BY id DESC LIMIT 10",
+            (start_utc, end_utc)
+        ).fetchall()
+        event_seen = {}
+        for (payload_json,) in recent_events:
+            try:
+                p = _json.loads(payload_json)
+                et = p.get("event", "")
+                if "started" not in et: continue
+                obj = p.get("payload", {}).get("object", p.get("object", {}))
+                pt = obj.get("participant", {})
+                raw = pt.get("user_name", "").strip()
+                sd = pt.get("sharing_details", {})
+                dt_str = sd.get("date_time", "")
+                content = sd.get("content", "")
+                if not raw or not dt_str: continue
+                key = raw + dt_str
+                if key in event_seen: continue
+                event_seen[key] = True
+                dn = db.resolve_display_name(raw)["display_name"]
+                dup = False
+                for rr in recent_list:
+                    if rr["raw_name"] == raw:
+                        try:
+                            t1 = datetime.fromisoformat(rr["start_time"].replace("Z","+00:00"))
+                            t2 = datetime.fromisoformat(dt_str.replace("Z","+00:00"))
+                            if abs((t1 - t2).total_seconds()) < 120:
+                                dup = True
+                                break
+                        except: pass
+                if not dup:
+                    recent_list.append({
+                        "name": dn, "raw_name": raw,
+                        "content": content, "start_time": dt_str,
+                        "start_time_display": to_myt(dt_str),
+                        "end_time": "", "end_time_display": "",
+                        "source": "webhook_event", "is_active": False,
+                    })
+            except: pass
+
+        def _sort_recent(x):
+            try:
+                return datetime.fromisoformat(x.get("start_time","").replace("Z","+00:00"))
+            except:
+                return datetime.min.replace(tzinfo=timezone.utc)
+        recent_list.sort(key=_sort_recent, reverse=True)
+        recent_list = recent_list[:10]
+
         return {
             "ok": True,
             "current": len(active),
             "active": active,
+            "recent": recent_list,
             "sources": sources,
         }
         
-        # Build response
-        current_sharing = []
-        for uid, info in merged.items():
-            st = info.get("start_time", info.get("join_time", ""))
-            mins = calc_mins(st)
-            current_sharing.append({
-                "name": info.get("name", ""),
-                "raw_name": info.get("raw_name", ""),
-                "user_id": uid,
-                "content": info.get("content", ""),
-                "start_time": st,
-                "start_time_display": to_myt(st),
-                "duration_minutes": mins,
-                "duration_display": disp_mins(mins),
-                "source": info.get("source", ""),
+
+
+
+    @app.get("/download/participants.csv")
+    async def download_participants_csv(date: str = "", from_date: str = "", to_date: str = ""):
+        return await _export_csv("participants", date, from_date, to_date)
+
+    @app.get("/download/participants.xlsx")
+    async def download_participants_xlsx(date: str = "", from_date: str = "", to_date: str = ""):
+        return await _export_xlsx("participants", date, from_date, to_date)
+
+    @app.get("/download/events.csv")
+    async def download_events_csv(date: str = "", from_date: str = "", to_date: str = ""):
+        return await _export_csv("events", date, from_date, to_date)
+
+    @app.get("/download/sharing.csv")
+    async def download_sharing_csv(date: str = "", from_date: str = "", to_date: str = ""):
+        return await _export_csv("sharing", date, from_date, to_date)
+
+    @app.get("/api/v3/dashboard")
+    async def api_v3_dashboard():
+        """Dashboard 数据：session 口径"""
+        start_utc, end_utc = today_myt_utc_range()
+        conn = db._get_conn()
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        live_data = await zm.get_live()
+        live_names = set()
+        live_dur = {}
+        for p in live_data.get("participants_summary", []):
+            n = (p.get("name") or p.get("user_name") or "").strip().lower()
+            if n:
+                live_names.add(n)
+                live_dur[n] = p.get("duration_display", "") or ""
+        # Session summary
+        sessions = db.get_today_session_summary(start_utc, end_utc)
+        participants = []
+        seen = set()
+        for s in sessions:
+            key = (s.get("user_name") or "").strip().lower()
+            is_online = key in live_names
+            seen.add(key)
+            dur_sec = s.get("total_duration", 0) or 0
+            # Current session duration: if online, from last join to now
+            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            MYT_TZ = _tz(_td(hours=8))
+            now_utc = _dt.now(_tz.utc)
+            cur_dur = "—"
+            if is_online:
+                last_join = s.get("last_join", "")
+                if last_join:
+                    try:
+                        jt = _dt.fromisoformat(last_join.replace("Z", "+00:00"))
+                        secs = int((now_utc - jt).total_seconds())
+                        cur_dur = format_duration(secs)
+                        # Total includes current session
+                        dur_sec += secs
+                    except: pass
+            participants.append({
+                "name": s.get("user_name", ""),
+                "status": "在线中" if is_online else "已离线",
+                "current_session": cur_dur if is_online else "—",
+                "total_duration": format_duration(dur_sec),
+                "leave_count": (s.get("session_count", 0) or 0) - (s.get("closed_count", 0) or 0),
+                "last_active": "现在" if is_online else to_myt_display(s.get("last_active", "")),
             })
-        
+        # Add live-only members
+        for p in live_data.get("participants_summary", []):
+            name = (p.get("name") or p.get("user_name") or "").strip()
+            key = name.lower()
+            if key not in seen:
+                seen.add(key)
+                dur_str = live_dur.get(key, "")
+                participants.insert(0, {
+                    "name": name,
+                    "status": "在线中",
+                    "current_session": dur_str or "—",
+                    "total_duration": dur_str or "—",
+                    "leave_count": 0,
+                    "last_active": "现在",
+                })
+        join_count = conn.execute(
+            "SELECT COUNT(*) FROM zoom_participants WHERE action='enter' AND action_time >= ? AND action_time < ?",
+            (start_utc, end_utc)
+        ).fetchone()[0]
+        leave_count = conn.execute(
+            "SELECT COUNT(*) FROM zoom_participants WHERE action='leave' AND action_time >= ? AND action_time < ?",
+            (start_utc, end_utc)
+        ).fetchone()[0]
+        # Sharing current count from /api/v3/sharing-live
+        sharing_current = 0
+        try:
+            import httpx
+            sr = await httpx.AsyncClient(timeout=5).get("http://localhost:8000/api/v3/sharing-live")
+            if sr.status_code == 200:
+                sd = sr.json()
+                sharing_current = sd.get("current", 0)
+        except: pass
+        return {
+            "ok": True,
+            "online_count": len(live_names),
+            "participant_count": len(participants),
+            "join_count": join_count,
+            "leave_count": leave_count,
+            "events_count": join_count + leave_count,
+            "sharing_count": sharing_current,
+            "participants": participants,
+        }
 
+    async def _export_csv(export_type: str, date: str, from_date: str, to_date: str):
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        import csv, io
+        MYT = _tz(_td(hours=8))
+        # Determine date range
+        if date:
+            start = _dt.strptime(date, "%Y-%m-%d").replace(tzinfo=MYT)
+            end = start + _td(days=1)
+        elif from_date and to_date:
+            start = _dt.strptime(from_date, "%Y-%m-%d").replace(tzinfo=MYT)
+            end = _dt.strptime(to_date, "%Y-%m-%d").replace(tzinfo=MYT) + _td(days=1)
+        else:
+            start = _dt.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + _td(days=1)
+        start_utc = start.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_utc = end.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn = db._get_conn()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        if export_type == "participants":
+            writer.writerow(["姓名", "动作", "时间(MYT)", "会议室", "来源"])
+            rows = conn.execute(
+                "SELECT name, action, action_time, meeting_id, source FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
+                (start_utc, end_utc)
+            ).fetchall()
+            for r in rows:
+                writer.writerow([r[0], r[1], to_myt_display(r[2]), r[3], r[4]])
+        elif export_type == "events":
+            writer.writerow(["时间(MYT)", "事件类型", "内容"])
+            rows = conn.execute(
+                "SELECT event_type, created_at, payload FROM zoom_events WHERE created_at >= ? AND created_at < ? ORDER BY id",
+                (start_utc.replace("T", " ")[:19], end_utc.replace("T", " ")[:19])
+            ).fetchall()
+            for r in rows:
+                writer.writerow([to_myt_display(r[1]), r[0], (r[2] or "")[:200]])
+        elif export_type == "sharing":
+            writer.writerow(["姓名", "内容", "开始时间(MYT)", "结束时间(MYT)", "活跃"])
+            rows = conn.execute(
+                "SELECT user_name, content, start_time, end_time, is_active FROM sharing_live WHERE start_time >= ? AND start_time < ? ORDER BY start_time",
+                (start_utc, end_utc)
+            ).fetchall()
+            for r in rows:
+                writer.writerow([r[0], r[1], to_myt_display(r[2]), to_myt_display(r[3]), "是" if r[4] else "否"])
+        return Response(content=output.getvalue().encode("utf-8-sig"), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={export_type}_{date or 'today'}.csv"})
 
+    async def _export_xlsx(export_type: str, date: str, from_date: str, to_date: str):
+        try:
+            import openpyxl
+        except ImportError:
+            return {"ok": False, "error": "openpyxl not installed"}
+        from openpyxl import Workbook
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        MYT = _tz(_td(hours=8))
+        if date:
+            start = _dt.strptime(date, "%Y-%m-%d").replace(tzinfo=MYT)
+            end = start + _td(days=1)
+        elif from_date and to_date:
+            start = _dt.strptime(from_date, "%Y-%m-%d").replace(tzinfo=MYT)
+            end = _dt.strptime(to_date, "%Y-%m-%d").replace(tzinfo=MYT) + _td(days=1)
+        else:
+            start = _dt.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + _td(days=1)
+        start_utc = start.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_utc = end.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn = db._get_conn()
+        wb = Workbook()
+        ws = wb.active
+        ws.title = export_type
+        if export_type == "participants":
+            ws.append(["姓名", "动作", "时间(MYT)", "会议室", "来源"])
+            rows = conn.execute(
+                "SELECT name, action, action_time, meeting_id, source FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
+                (start_utc, end_utc)
+            ).fetchall()
+            for r in rows:
+                ws.append([r[0], r[1], to_myt_display(r[2]), r[3], r[4]])
+        elif export_type == "events":
+            ws.append(["时间(MYT)", "事件类型", "内容"])
+            rows = conn.execute(
+                "SELECT event_type, created_at, payload FROM zoom_events WHERE created_at >= ? AND created_at < ? ORDER BY id",
+                (start_utc.replace("T", " ")[:19], end_utc.replace("T", " ")[:19])
+            ).fetchall()
+            for r in rows:
+                ws.append([to_myt_display(r[1]), r[0], (r[2] or "")[:200]])
+        elif export_type == "sharing":
+            ws.append(["姓名", "内容", "开始时间(MYT)", "结束时间(MYT)", "活跃"])
+            rows = conn.execute(
+                "SELECT user_name, content, start_time, end_time, is_active FROM sharing_live WHERE start_time >= ? AND start_time < ? ORDER BY start_time",
+                (start_utc, end_utc)
+            ).fetchall()
+            for r in rows:
+                ws.append([r[0], r[1], to_myt_display(r[2]), to_myt_display(r[3]), "是" if r[4] else "否"])
+        import io
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(content=buf.read(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={export_type}_{date or 'today'}.xlsx"})
 
     @app.get("/api/v3/sharing-debug")
     async def api_v3_sharing_debug():
@@ -1061,7 +1413,7 @@ def build_app() -> "FastAPI":
         # Recovery candidates: started in last 2h without ended
         recovery = []
         for (payload_json,) in conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
+            "SELECT payload FROM zoom_events WHERE event_type LIKE "'%sharing%'"AND created_at >= ? AND created_at < ? ORDER BY created_at DESC",
             ((now_utc - timedelta(hours=2)).isoformat(),)
         ).fetchall():
             try:
@@ -1128,7 +1480,7 @@ def build_app() -> "FastAPI":
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         rows = conn.execute(
-            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
+            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC",
             (cutoff,)
         ).fetchall()
         
@@ -1408,10 +1760,11 @@ def build_app() -> "FastAPI":
         """参会汇总统计：在线时长、迟到早退、会议室维度"""
         conn = db._get_conn()
         now_myt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_str = now_myt.strftime("%Y-%m-%d")
+        today_str = today_myt_utc_start()
 
         # 查今天的参会记录
-        rows = conn.execute("SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY name, action_time", (today_str,)).fetchall()
+        start_utc, end_utc = today_myt_utc_range()
+        rows = conn.execute("SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time", (start_utc, end_utc)).fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
 
         # 按人+会议分组，算在线时长
@@ -1482,24 +1835,52 @@ def build_app() -> "FastAPI":
         data = await zm.get_live()
         return {"ok": True, "data": data}
 
-
+    @app.get("/api/v3/live")
     async def api_v3_live():
         """Business Metrics API 实时在线数据（去重）"""
         from zoom_metrics import ZoomMetrics
         zm = ZoomMetrics()
         data = await zm.get_live()
+        from datetime import datetime, timezone, timedelta
+        MYT_TZ = timezone(timedelta(hours=8))
+        ps = data.get("participants_summary", [])
+        for p in ps:
+            raw = p.get("last_active", "")
+            if raw and not p.get("join_time"):
+                try:
+                    s = raw.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+                    p["join_time"] = dt.astimezone(MYT_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+                    p["join_time_display"] = dt.astimezone(MYT_TZ).strftime("%m/%d %H:%M:%S")
+                except:
+                    p["join_time_display"] = p.get("last_active_myt", "")
+            elif p.get("last_active_myt") and not p.get("join_time_display"):
+                p["join_time_display"] = p["last_active_myt"]
+        # Also inject join_time_display into meetings[].participants for live.html
+        from datetime import datetime as _dt2, timezone as _tz2, timedelta as _td2
+        MYT_TZ2 = _tz2(_td2(hours=8))
+        for m in data.get("meetings", []):
+            for mp in m.get("participants", []):
+                raw2 = mp.get("last_active", "") or mp.get("join_time", "")
+                if raw2:
+                    try:
+                        s2 = raw2.replace("Z", "+00:00")
+                        if "+" not in s2 and "Z" not in raw2 and not s2.endswith("+00:00"):
+                            s2 += "+00:00"
+                        dt2 = _dt2.fromisoformat(s2)
+                        mp["join_time_display"] = dt2.astimezone(MYT_TZ2).strftime("%m/%d %H:%M:%S")
+                        mp["join_time"] = dt2.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    except:
+                        pass
         return {"ok": True, "data": data}
 
     @app.get("/api/v2/ai-analysis")
     async def api_ai_analysis():
         """用 AI（DeepSeek）分析今日参会数据，生成自然语言报告"""
-        # 先拿汇总数据
         summary_resp = await api_summary()
         if not summary_resp.get("ok"):
             return {"ok": False, "error": "无数据"}
         data = summary_resp
-
-        # 构建 prompt
         stats = data.get("stats", {})
         members = data.get("members", [])
         meetings = data.get("meetings", [])
@@ -1747,7 +2128,7 @@ def build_app() -> "FastAPI":
         except:
             pass
         conn = db._get_conn()
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = today_myt()
 
         # 找所有今天有 enter 但没有对应 leave 的记录（即还在线上）
         rows = conn.execute("""
@@ -1760,7 +2141,7 @@ def build_app() -> "FastAPI":
                 AND p2.action = 'leave' AND p2.action_time > p1.action_time
             )
             ORDER BY p1.action_time DESC
-        """, (today,)).fetchall()
+        """, (start_utc, end_utc)).fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
 
         now = datetime.now(timezone.utc)
@@ -1804,29 +2185,29 @@ def build_app() -> "FastAPI":
         top_online = [{"name": p["name"], "duration_display": p["online_display"], "minutes": p["online_minutes"]} for p in sorted_online[:5]]
 
         # 今日总记录数
-        total_events = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        total_events = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (start_utc, end_utc)).fetchone()[0]
         # 唯一参与者数
-        unique_participants = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        unique_participants = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (start_utc, end_utc)).fetchone()[0]
         # 在线率 = 当前在线 / 唯一参与者
         unique_online_rate = round(len(online) / unique_participants * 100, 1) if unique_participants > 0 else 0
 
         # 活跃时段
-        hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+        hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (start_utc, end_utc)).fetchall()
         active_hours = [f"{r[0]:02d}:00-{r[0]+1:02d}:00" for r in hour_dist]
 
         # 最活跃成员
-        top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+        top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY c DESC LIMIT 3", (start_utc, end_utc)).fetchall()
 
         # 参与者汇总（去重后每人统计，含异常检测）
         participants_summary = []
         anomalies = []  # 异常成员列表
-        unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ?", (today,)).fetchall()
+        unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (start_utc, end_utc)).fetchall()
         for (name,) in unique_names_rows:
-            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'enter'", (today, name)).fetchone()[0]
-            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'leave'", (today, name)).fetchone()[0]
+            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'enter'", (today, name)).fetchone()[0]
+            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'leave'", (today, name)).fetchone()[0]
             total_actions = enters + leaves
-            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND name = ?", (today, name)).fetchone()[0]
-            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
+            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ?", (today, name)).fetchone()[0]
+            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
             is_online = last_action and last_action[0] == "enter"
             # 检查是否在10分钟内活跃
             if is_online and last_time:
@@ -1930,7 +2311,7 @@ def build_app() -> "FastAPI":
         start_str = start.strftime("%Y-%m-%d")
         rows = conn.execute("""
             SELECT name, meeting_id, action, action_time, email
-            FROM zoom_participants WHERE action_time >= ?
+            FROM zoom_participants WHERE action_time >= ? AND action_time < ?
             ORDER BY name, action_time
         """, (start_str,)).fetchall()
         cols = ["name", "meeting_id", "action", "action_time", "email"]
@@ -1998,7 +2379,7 @@ def build_app() -> "FastAPI":
     async def api_leave_analysis():
         """离开时长分析：中途离场统计"""
         conn = db._get_conn()
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = today_myt()
 
         rows = conn.execute("""
             SELECT e.name, e.meeting_id, e.action_time as enter_time, l.action_time as leave_time
@@ -2008,7 +2389,7 @@ def build_app() -> "FastAPI":
             AND l.action_time > e.action_time
             AND l.action_time < datetime(e.action_time, '+4 hours')
             ORDER BY e.name, e.action_time
-        """, (today,)).fetchall()
+        """, (start_utc, end_utc)).fetchall()
 
         leaves = []
         total_away = 0

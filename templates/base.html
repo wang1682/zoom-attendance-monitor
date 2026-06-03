@@ -13,7 +13,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',Robot
 a{color:var(--pr);text-decoration:none}
 .ah{height:48px;display:flex;align-items:center;padding:0 20px;gap:10px;background:var(--hb);backdrop-filter:blur(12px);border-bottom:1px solid var(--hbd);position:sticky;top:0;z-index:30}
 .ab{display:flex;min-height:calc(100vh - 48px)}
-.as{width:240px;background:var(--sb-bg);border-right:1px solid var(--sb-bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
+.as{width:240px;background:var(--sb-bg);border-right:1px solid var(--sb-bd);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;position:sticky;top:48px;height:calc(100vh - 48px)}
 .asc{flex:1;overflow-y:auto;padding:10px}
 .ac{flex:1;overflow-y:auto;min-width:0}
 .pc{max-width:1340px;margin:0 auto;padding:28px 32px}
@@ -182,10 +182,7 @@ a{color:var(--pr);text-decoration:none}
       </div></div>
       <div class="st-label">ANALYTICS</div>
       <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
-        <a href="/summary" class="ni {% if request.url.path == '/summary' %}act{% endif %}"><i data-lucide="file-text" class="ic"></i><span>汇总分析</span></a>
-        <a href="/attendance" class="ni {% if request.url.path == '/attendance' %}act{% endif %}"><i data-lucide="calendar-check" class="ic"></i><span>出勤统计</span></a>
         <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
-        <a href="/reports" class="ni {% if request.url.path == '/reports' %}act{% endif %}"><i data-lucide="line-chart" class="ic"></i><span>报表分析</span></a>
       </div></div>
       <div class="st-label">AI REPORTS</div>
       <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">

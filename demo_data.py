@@ -148,7 +148,7 @@ def seed_demo_data(force: bool = False):
         return
 
     conn = _get_conn()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(MYT)
     today = now.strftime("%Y-%m-%d")
 
     # ── Participants ──

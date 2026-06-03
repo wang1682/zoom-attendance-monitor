@@ -1,13 +1,31 @@
-<!-- TEMPLATE: participants.html v082-polish -->
 {% extends "base.html" %}
 {% block title %}参会明细{% endblock %}
 {% block content %}
 <div class="page-container">
-<div class="page-header"><h1 class="page-title">参会明细</h1><p class="page-subtitle">今日所有参会记录</p></div>
+<div class="page-header">
+  <h1 class="page-title">参会明细</h1>
+  <p class="page-subtitle">今日成员汇总</p>
+  <div class="page-header-actions">
+    <a href="/download/participants.csv" class="bt bt-s">下载 CSV</a>
+    <a href="/download/participants.xlsx" class="bt bt-s">下载 Excel</a>
+  </div>
+</div>
 <div class="card">
   {% if participants %}
-  <table class="data-table"><thead><tr><th>姓名</th><th>动作</th><th>时间</th><th>来源</th></tr></thead><tbody>
-  {% for p in participants %}<tr><td class="td-name">{{ p.name }}</td><td>{% if p.action == 'enter' %}<span class="badge badge-green">进入</span>{% else %}<span class="badge badge-red">离开</span>{% endif %}</td><td class="td-mono">{{ to_myt(p.action_time) }}</td><td>{{ p.source }}</td></tr>
+  <table class="data-table"><thead><tr>
+    <th>成员</th><th>状态</th><th>首次进入</th><th>本次进入</th><th>本次在线</th><th>今日累计</th><th>离开次数</th><th>最后活动</th>
+  </tr></thead><tbody>
+  {% for p in participants %}
+  <tr>
+    <td class="td-name">{{ p.name }}</td>
+    <td>{% if p.status == '在线中' %}<span class="badge badge-green">在线中</span>{% else %}<span class="badge">已离线</span>{% endif %}</td>
+    <td class="td-mono">{{ p.first_join if p.first_join else '—' }}</td>
+    <td class="td-mono">{{ p.last_join if p.last_join else '—' }}</td>
+    <td>{{ p.current_session if p.current_session else '—' }}</td>
+    <td>{{ p.total_duration if p.total_duration else '—' }}</td>
+    <td>{{ p.leave_count if p.leave_count else 0 }}</td>
+    <td class="td-mono">{% if p.is_online %}现在{% else %}{{ p.last_active if p.last_active else '—' }}{% endif %}</td>
+  </tr>
   {% endfor %}</tbody></table>
   {% else %}
   <div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">今天还没有参会记录</div></div>

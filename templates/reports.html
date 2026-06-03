@@ -26,13 +26,13 @@
   </div>
 
   <div class="cc2">
-    <div class="chart-card">
+    <div class="chart-card" style="height:220px;position:relative">
       <h3>🏆 Top 10 成员</h3>
-      <canvas id="topChart" height="180"></canvas>
+      <canvas id="topChart" style="width:100%;height:180px"></canvas>
     </div>
-    <div class="chart-card">
+    <div class="chart-card" style="height:220px;position:relative">
       <h3>📊 每日事件数</h3>
-      <canvas id="dailyChart" height="180"></canvas>
+      <canvas id="dailyChart" style="width:100%;height:180px"></canvas>
     </div>
   </div>
 
@@ -80,55 +80,79 @@ async function loadRep(d){
 
   // Top 10 chart
   const top10=j.top.slice(0,10);
-  if(topChartInst) topChartInst.destroy();
-  topChartInst=new Chart(document.getElementById('topChart'),{
-    type:'bar',
-    data:{
-      labels:top10.map(p=>p.name),
-      datasets:[{
-        label:'次数',
-        data:top10.map(p=>p.count),
-        backgroundColor:top10.map((_,i)=>cc.barColors[i]),
-        borderRadius:4
-      }]
-    },
-    options:{
-      indexAxis:'y',responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false}},
-      scales:{
-        x:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true},
-        y:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}}
-      }
-    }
-  });
+  if(topChartInst) { topChartInst.destroy(); topChartInst=null; }
+  const topCanvas=document.getElementById('topChart');
+  if(topCanvas){
+    const wrap=topCanvas.parentElement;
+    const newTopCanvas=document.createElement('canvas');
+    newTopCanvas.id='topChart';
+    newTopCanvas.style.cssText='width:100%;height:180px;display:block';
+    topCanvas.replaceWith(newTopCanvas);
+    setTimeout(function(){
+      try {
+      topChartInst=new Chart(newTopCanvas,{
+        type:'bar',
+        data:{
+          labels:top10.map(p=>p.name),
+          datasets:[{
+            label:'次数',
+            data:top10.map(p=>p.count),
+            backgroundColor:top10.map((_,i)=>cc.barColors[i]),
+            borderRadius:4
+          }]
+        },
+        options:{
+          indexAxis:'y',responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:false}},
+          scales:{
+            x:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true},
+            y:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}}
+          }
+        }
+      });
+      } catch(e){ console.error('Top chart error:', e); }
+    }, 50);
+  }
 
   // Daily events chart
   const trend=j.trend.filter(t=>t.count>0);
-  if(dailyChartInst) dailyChartInst.destroy();
-  dailyChartInst=new Chart(document.getElementById('dailyChart'),{
-    type:'line',
-    data:{
-      labels:trend.map(t=>{const p=t.date.split('-');return p[1]+'/'+p[2]}),
-      datasets:[{
-        label:'事件',
-        data:trend.map(t=>t.count),
-        borderColor:'rgba(99,102,241,.9)',
-        backgroundColor:'rgba(99,102,241,.1)',
-        fill:true,
-        tension:.3,
-        pointRadius:3,
-        pointBackgroundColor:'rgba(99,102,241,.9)'
-      }]
-    },
-    options:{
-      responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false}},
-      scales:{
-        x:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}},
-        y:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true}
-      }
-    }
-  });
+  if(dailyChartInst) { dailyChartInst.destroy(); dailyChartInst=null; }
+  const dailyCanvas=document.getElementById('dailyChart');
+  if(dailyCanvas){
+    const wrap=dailyCanvas.parentElement;
+    const newDailyCanvas=document.createElement('canvas');
+    newDailyCanvas.id='dailyChart';
+    newDailyCanvas.style.cssText='width:100%;height:180px;display:block';
+    dailyCanvas.replaceWith(newDailyCanvas);
+    setTimeout(function(){
+      try {
+      dailyChartInst=new Chart(newDailyCanvas,{
+        type:'line',
+        data:{
+          labels:trend.map(t=>{const p=t.date.split('-');return p[1]+'/'+p[2]}),
+          datasets:[{
+            label:'事件',
+            data:trend.map(t=>t.count),
+            borderColor:'rgba(99,102,241,.9)',
+            backgroundColor:'rgba(99,102,241,.1)',
+            fill:true,
+            tension:.3,
+            pointRadius:3,
+            pointBackgroundColor:'rgba(99,102,241,.9)'
+          }]
+        },
+        options:{
+          responsive:true,maintainAspectRatio:false,
+          plugins:{legend:{display:false}},
+          scales:{
+            x:{ticks:{color:cc.text,font:{size:10}},grid:{display:false}},
+            y:{ticks:{color:cc.text,font:{size:10}},grid:{color:cc.grid},beginAtZero:true}
+          }
+        }
+      });
+      } catch(e){ console.error('Daily chart error:', e); }
+    }, 50);
+  }
 
   // Mini bar chart
   const mx=Math.max(...j.trend.map(t=>t.count),1);
@@ -158,7 +182,19 @@ function expCSV(){
   a.click();
 }
 
-loadRep(7);
+// Wait for Chart.js before rendering
+if(typeof Chart !== 'undefined'){
+  loadRep(7);
+} else {
+  document.addEventListener('DOMContentLoaded', function(){
+    var _check = setInterval(function(){
+      if(typeof Chart !== 'undefined'){
+        clearInterval(_check);
+        loadRep(7);
+      }
+    }, 100);
+  });
+}
 
 // Theme sync
 const _obs=new MutationObserver(()=>{

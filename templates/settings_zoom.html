@@ -12,11 +12,13 @@
         <tr><td style="color:var(--ts)">Webhook</td><td><span class="bg {{ 'bg-g' if webhook_status=='运行中' else 'bg-r' }}">{{ webhook_status }}</span></td></tr>
       </tbody></table>
     </div>
-    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔗 已授权账号</h2>
-      {% if oauth_accounts %}<table class="data-table"><tbody>{% for a in oauth_accounts %}
-        <tr><td>✅</td><td>{{ a.email }}</td></tr>{% endfor %}</tbody></table>
-      {% else %}<div style="text-align:center;padding:32px;color:var(--tm)">暂无</div>{% endif %}
-      <a href="#" onclick="conZ();return false" class="bt bt-s" style="margin-top:12px;display:inline-block">＋ 添加账号</a>
+    <div class="card cp">
+      <h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔗 当前账号</h2>
+      <div style="text-align:center;padding:24px;color:var(--tm);font-size:13px">
+        <div style="font-size:40px;margin-bottom:8px">✅</div>
+        <div style="font-weight:500;color:var(--text)">marieonn27@gmail.com</div>
+        <div style="margin-top:4px">超级管理员</div>
+      </div>
     </div>
   </div>
 </div>

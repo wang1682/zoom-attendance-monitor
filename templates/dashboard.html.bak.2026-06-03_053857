@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title %}Zoom Monitor{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+/* Dashboard Hero */
+.dh{margin-bottom:24px}
+.dh h1{font-size:22px;font-weight:700;margin:0;color:var(--text)}
+.dh p{font-size:13px;color:var(--ts);margin:4px 0 0}
+
+/* Status grid — BetterStack style */
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+@media(max-width:900px){.sg{grid-template-columns:repeat(2,1fr)}}
+.sc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;display:flex;flex-direction:column}
+.sc .sv{font-size:30px;font-weight:700;line-height:1;color:var(--text)}
+.sc .sl{font-size:11px;color:var(--ts);margin:2px 0 0}
+.sc .ss{font-size:10px;color:var(--tm);margin-top:1px}
+
+/* AI Hero section */
+.aih{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px;margin-bottom:24px}
+.aih .aih-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px}
+.aih .aih-items{display:flex;flex-direction:column;gap:10px}
+.aih .aih-item{display:flex;align-items:flex-start;gap:10px}
+.aih .aih-dot{width:6px;height:6px;border-radius:50%;margin-top:7px;flex-shrink:0}
+.aih .aih-text{font-size:13px;line-height:1.6;color:var(--ts)}
+.aih .aih-highlight{font-weight:600;color:var(--text)}
+
+/* Insight grid for anomaly + online */
+.dig{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:768px){.dig{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="dh">
+  <h1>📊 今日概况</h1>
+  <p>实时监控 · {{ today }}</p>
+</div>
+
+<div class="sg" id="heroGrid">
+  <div class="sc">
+    <div class="sv" id="hParticipants">—</div>
+    <div class="sl">参与者</div>
+    <div class="ss">今日活跃成员</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hOnline" style="color:var(--sc)">—</div>
+    <div class="sl">在线</div>
+    <div class="ss">当前正在会议</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hRisk" style="color:var(--wa)">—</div>
+    <div class="sl">风险</div>
+    <div class="ss">需关注的成员</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hEvents">—</div>
+    <div class="sl">事件</div>
+    <div class="ss">今日总进出次数</div>
+  </div>
+</div>
+
+<div class="aih" id="aiHero">
+  <div class="aih-title">🤖 AI 今日分析</div>
+  <div class="aih-items" id="aiContent">
+    <div style="text-align:center;padding:16px;color:var(--tm);font-size:13px">分析中...</div>
+  </div>
+</div>
+
+<div class="dig">
+  <div class="card cp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="font-size:14px;font-weight:600;margin:0">🚨 异常成员</h2>
+      <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="at">—</span>
+    </div>
+    <div id="al" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
+  </div>
+  <div class="card cp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="font-size:14px;font-weight:600;margin:0">🟢 当前在线</h2>
+      <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="oc">—</span>
+    </div>
+    <div id="ol" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">暂无</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="sh"><h2>👥 参与者概览</h2><span class="c" id="sc">—</span></div>
+  <table class="dt"><thead><tr><th>#</th><th>成员</th><th>事件</th><th>时长</th><th>风险</th><th>状态</th><th>最后</th></tr></thead><tbody id="sb"></tbody></table>
+</div>
+
+<div class="card">
+  <div class="sh"><h2>📋 近期事件</h2><span class="c" id="ec">—</span></div>
+  <table class="dt"><thead><tr><th>#</th><th>成员</th><th>状态</th><th>时间</th></tr></thead><tbody id="eb"></tbody></table>
+</div>
+
+<script>
+async function ld(){
+  try{
+    const r=await fetch("/api/v2/live");
+    const d=await r.json();
+    if(!d.ok)return;
+
+    // Hero grid
+    document.getElementById("hParticipants").textContent=d.unique_participants;
+    document.getElementById("hOnline").textContent=d.total_online;
+    const anoms=d.anomalies?.length||0;
+    document.getElementById("hRisk").textContent=anoms;
+    document.getElementById("hEvents").textContent=d.total_events;
+
+    // AI Hero — structured insights
+    const aiDiv=document.getElementById("aiContent");
+    const ps=(d.ai_summary||"").split("。").filter(Boolean);
+    if(ps.length){
+      let html="";
+      // Most active
+      if(d.top_active?.length){
+        const ta=d.top_active[0];
+        html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--in)"></span><div class="aih-text"><span class="aih-highlight">🏆 最活跃：</span>${ta.name}（${ta.count}次）</div></div>`;
+      }
+      // Risk
+      if(d.anomalies?.length){
+        d.anomalies.slice(0,2).forEach(a=>{
+          html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--da)"></span><div class="aih-text"><span class="aih-highlight">⚠ ${a.name}：</span>${a.flags.join("、")}</div></div>`;
+        });
+      }
+      // Summary
+      const summaryPs=ps.filter(s=>s.includes("建议")||s.includes("关注")||s.includes("正常"));
+      if(summaryPs.length){
+        html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--sc)"></span><div class="aih-text">💡 ${summaryPs[0]}</div></div>`;
+      }
+      aiDiv.innerHTML=html||`<div class="aih-item"><div class="aih-text" style="color:var(--tm)">暂无足够数据生成分析</div></div>`;
+    } else {
+      aiDiv.innerHTML='<div class="aih-item"><div class="aih-text" style="color:var(--tm)">暂无 AI 分析</div></div>';
+    }
+
+    // Anomaly detail
+    document.getElementById("at").textContent=anoms+"人";
+    const al=document.getElementById("al");
+    if(anoms){
+      al.innerHTML=d.anomalies.slice(0,3).map((a,i)=>'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--div)"><span style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;background:'+(i===0?'var(--da-b);color:var(--da)':i===1?'var(--wa-b);color:var(--wa)':'var(--in-b);color:var(--in)')+'">'+(i+1)+'</span><div style="flex:1"><div style="font-size:13px;font-weight:600">'+a.name+'</div><div style="font-size:11px;color:var(--ts)">'+a.flags.join("、")+'</div></div><div style="font-size:14px;font-weight:600;color:var(--ts)">'+a.actions+'次</div></div>').join("");
+    } else {
+      al.innerHTML='<div style="text-align:center;padding:24px;color:var(--tm)">✅ 今日无异常</div>';
+    }
+
+    // Online list
+    document.getElementById("oc").textContent=d.total_online+"人";
+    const ol=document.getElementById("ol");
+    if(d.online.length){
+      ol.innerHTML=d.online.map(p=>'<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)"><span style="width:8px;height:8px;border-radius:50%;background:var(--sc);flex-shrink:0"></span><span style="flex:1;font-size:13px;font-weight:500">'+p.name+'</span><span style="font-size:12px;color:var(--ts)">'+(p.online_display||p.online_minutes+"分钟")+'</span></div>').join("");
+    } else {
+      ol.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">暂无在线</div>';
+    }
+
+    // Participants table
+    const sd=d.participants_summary||[];
+    document.getElementById("sc").textContent=sd.length+"人";
+    const sb=document.getElementById("sb");
+    if(sd.length){
+      sb.innerHTML=sd.slice(0,8).map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td>'+(p.total_actions||(p.enters+p.leaves))+'</td><td>'+p.duration_display+'</td><td>'+(p.flags?.length?p.flags.map(f=>'<span class="tg tg-d">'+f+'</span>').join(""):'<span style="color:var(--tm)">—</span>')+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'\"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("");
+    } else {
+      sb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
+    }
+
+    // Recent events
+    const ev=sd.filter(p=>p.last_active).sort((a,b)=>(b.last_active||"").localeCompare(a.last_active||"")).slice(0,10);
+    document.getElementById("ec").textContent=(d.total_events||0)+"条";
+    const eb=document.getElementById("eb");
+    if(ev.length){
+      eb.innerHTML=ev.map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'\"></span></td><td class="mono">'+((p.last_active||"").slice(11,19))+'</td></tr>').join("");
+    } else {
+      eb.innerHTML='<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
+    }
+  } catch(e){}
+}
+ld();
+setInterval(ld,15000);
+</script>
+{% endblock %}

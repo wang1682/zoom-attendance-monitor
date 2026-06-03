@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block title %}Zoom Monitor{% endblock %}
+{% block head %}
+<style>
+.dh{margin-bottom:24px}
+.dh h1{font-size:22px;font-weight:700;margin:0;color:var(--text)}
+.dh p{font-size:13px;color:var(--ts);margin:4px 0 0}
+.sg{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+@media(max-width:900px){.sg{grid-template-columns:repeat(2,1fr)}}
+.sc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;display:flex;flex-direction:column}
+.sc .sv{font-size:30px;font-weight:700;line-height:1;color:var(--text)}
+.sc .sl{font-size:11px;color:var(--ts);margin:2px 0 0}
+.sc .ss{font-size:10px;color:var(--tm);margin-top:1px}
+.aih{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px;margin-bottom:24px}
+.aih .aih-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px}
+.aih .aih-items{display:flex;flex-direction:column;gap:10px}
+.aih .aih-item{display:flex;align-items:flex-start;gap:10px}
+.aih .aih-dot{width:6px;height:6px;border-radius:50%;margin-top:7px;flex-shrink:0}
+.aih .aih-text{font-size:13px;line-height:1.6;color:var(--ts)}
+.aih .aih-highlight{font-weight:600;color:var(--text)}
+.dig{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:900px){.dig{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+{% block content %}
+<div class="dh">
+  <h1>📊 今日概况</h1>
+  <p>实时监控 · {{ today }}</p>
+</div>
+
+<div class="sg" id="heroGrid">
+  <div class="sc">
+    <div class="sv" id="hParticipants">—</div>
+    <div class="sl">参与者</div>
+    <div class="ss">今日活跃成员</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hOnline" style="color:var(--sc)">—</div>
+    <div class="sl">在线</div>
+    <div class="ss">当前会议中</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hRisk" style="color:var(--wa)">—</div>
+    <div class="sl">风险</div>
+    <div class="ss">需关注的成员</div>
+  </div>
+  <div class="sc">
+    <div class="sv" id="hEvents">—</div>
+    <div class="sl">事件</div>
+    <div class="ss">今日总进出次数</div>
+  </div>
+</div>
+
+<div class="aih" id="aiHero">
+  <div class="aih-title">🤖 AI 今日分析</div>
+  <div class="aih-items" id="aiContent">
+    <div style="text-align:center;padding:16px;color:var(--tm);font-size:13px">分析中...</div>
+  </div>
+</div>
+
+<div class="dig">
+  <div class="card cp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="font-size:14px;font-weight:600;margin:0">🚨 异常成员</h2>
+      <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="at">—</span>
+    </div>
+    <div id="al" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
+  </div>
+  <div class="card cp">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h2 style="font-size:14px;font-weight:600;margin:0">🖥 当前共享</h2>
+      <span style="font-size:11px;color:var(--tm);background:var(--div);padding:2px 10px;border-radius:10px" id="sc">—</span>
+    </div>
+    <div id="sl" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="sh"><h2>👥 参与者</h2><span class="c" id="sc">—</span></div>
+  <table class="dt"><thead><tr><th>成员</th><th>状态</th><th>已在线</th><th>最后活动</th></tr></thead><tbody id="sb"></tbody></table>
+</div>
+
+<script>
+async function ld(){
+  try{
+    // v3 live — Business Metrics API
+    const r=await fetch("/api/v3/live");
+    const j=await r.json();
+    if(!j.ok)return;
+    const d=j.data;
+    window.v3data=d;
+    const totalOnline=d.total_online||0;
+    const meetings=d.meetings||[];
+    const allParticipants=[];
+    meetings.forEach(m=>(m.participants||[]).forEach(p=>allParticipants.push({...p,meeting_topic:m.meeting_topic})));
+
+    // Hero grid
+    document.getElementById("hOnline").textContent=totalOnline;
+    document.getElementById("hParticipants").textContent=allParticipants.length;
+    document.getElementById("hRisk").textContent="—";
+    document.getElementById("hEvents").textContent=allParticipants.length;
+
+    // AI Hero (from v2 live for ai_summary)
+    try{
+      const a=await fetch("/api/v2/live");
+      const ad=await a.json();
+      if(ad.ok&&ad.ai_summary){
+        const aiDiv=document.getElementById("aiContent");
+        const ps=ad.ai_summary.split("。").filter(Boolean);
+        let html="";
+        if(ad.top_active?.length){
+          const ta=ad.top_active[0];
+          html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--in)"></span><div class="aih-text"><span class="aih-highlight">🏆 最活跃：</span>${ta.name}（${ta.count}次）</div></div>`;
+        }
+        if(ad.anomalies?.length){
+          ad.anomalies.slice(0,2).forEach(a=>{
+            html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--da)"></span><div class="aih-text"><span class="aih-highlight">⚠ ${a.name}：</span>${a.flags.join("、")}</div></div>`;
+          });
+        }
+        const sumPs=ps.filter(s=>s.includes("建议")||s.includes("关注")||s.includes("正常"));
+        if(sumPs.length){
+          html+=`<div class="aih-item"><span class="aih-dot" style="background:var(--sc)"></span><div class="aih-text">💡 ${sumPs[0]}</div></div>`;
+        }
+        aiDiv.innerHTML=html||`<div class="aih-item"><div class="aih-text" style="color:var(--tm)">暂无足够数据生成分析</div></div>`;
+      }
+    }catch(e){}
+
+    // Online list (from v3 — real data)
+    document.getElementById("oc").textContent=totalOnline+"人";
+    const ol=document.getElementById("ol");
+    if(allParticipants.length){
+      ol.innerHTML=allParticipants.map(p=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)"><span style="width:8px;height:8px;border-radius:50%;background:var(--sc);flex-shrink:0"></span><span style="flex:1;font-size:13px;font-weight:500">${p.name}</span><span style="font-size:12px;color:var(--ts)">${p.online_display||""}</span></div>`).join("");
+    } else {
+      ol.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">暂无在线</div>';
+    }
+
+    // Sharing
+    try{
+      const sr=await fetch("/api/v3/sharing-live");
+      const sd=await sr.json();
+      if(sd.ok){
+        document.getElementById("sc").textContent=sd.current+"人";
+        const sl=document.getElementById("sl");
+        if(sd.current>0 && sd.active && sd.active.length){
+          sl.innerHTML=sd.active.map(s=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)"><span style="width:8px;height:8px;border-radius:50%;background:var(--in);flex-shrink:0"></span><span style="flex:1;font-size:13px;font-weight:500">${s.name}</span><span style="font-size:12px;color:var(--ts)">${s.duration_display}</span></div>`).join("");
+        } else if(sd.current>0){
+          sl.innerHTML='<div style="text-align:center;padding:20px;color:var(--wa)">已检测到 '+sd.current+' 人共享，但暂无明细</div>';
+        } else {
+          sl.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm)">当前无人共享</div>';
+        }
+      }
+    }catch(e){}
+
+    // Anomaly (from v2)
+    try{
+      const a2=await fetch("/api/v2/live");
+      const ad2=await a2.json();
+      if(ad2.ok){
+        const anoms=ad2.anomalies||[];
+        document.getElementById("at").textContent=anoms.length+"人";
+        const al=document.getElementById("al");
+        if(anoms.length){
+          al.innerHTML=anoms.slice(0,3).map((a,i)=>'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--div)"><span style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;background:'+(i===0?'var(--da-b);color:var(--da)':i===1?'var(--wa-b);color:var(--wa)':'var(--in-b);color:var(--in)')+'">'+(i+1)+'</span><div style="flex:1"><div style="font-size:13px;font-weight:600">'+a.name+'</div><div style="font-size:11px;color:var(--ts)">'+a.flags.join("、")+'</div></div><div style="font-size:14px;font-weight:600;color:var(--ts)">'+a.actions+'次</div></div>').join("");
+        } else {
+          al.innerHTML='<div style="text-align:center;padding:24px;color:var(--tm)">✅ 今日无异常</div>';
+        }
+
+      }
+    }catch(e){}
+    // Participants — independent from v2, ded try/catch
+    try {
+      var v3ps2 = (window.v3data && (window.v3data.participants_summary || (window.v3data.data && window.v3data.data.participants_summary) || [])) || [];
+      var tbody = document.querySelector("#sb");
+      if (tbody && v3ps2.length) {
+        tbody.innerHTML = v3ps2.map(function(p){
+          return "<tr>"
+            + "<td>" + (p.name || "-") + "</td>"
+            + "<td>" + (p.is_online ? "在线" : "离线") + "</td>"
+            + "<td>" + (p.duration_display || p.duration || "-") + "</td>"
+            + "<td>" + (p.last_active_display || p.last_active || "-") + "</td>"
+            + "</tr>";
+        }).join("");
+      }
+      document.getElementById("sc").textContent = v3ps2.length + "人";
+      var sb2 = document.getElementById("sb");
+      if (sb2) {
+        if (v3ps2.length) {
+          var sorted2 = v3ps2.slice().sort(function(a, b) {
+            if (a.is_online && !b.is_online) return -1;
+            if (!a.is_online && b.is_online) return 1;
+            return 0;
+          });
+          sb2.innerHTML = sorted2.map(function(p) {
+            return '<tr><td class="nm">' + p.name + '</td><td>' + (p.is_online ? "🟢 在线" : "⚫ 离线") + '</td><td>' + (p.duration_display || "") + '</td><td class="mono">' + (p.last_active_display || formatMYT(p.last_active) || "") + '</td></tr>';
+          }).join("");
+        } else {
+          sb2.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无数据</td></tr>';
+        }
+      }
+    } catch(e) { console.error("participants error:", e); }
+  }catch(e){}
+}
+ld();
+setInterval(ld,30000);
+</script>
+{% endblock %}
+
+<script>
+async function hardRenderDashboardV3(){
+  try{
+    const res = await fetch("/api/v3/live?_=" + Date.now(), {cache:"no-store"});
+    const j = await res.json();
+    const d = j.data || j || {};
+    const ps = d.participants_summary || d.online_list || [];
+
+    const sb = document.getElementById("sb");
+    const sc = document.getElementById("sc");
+
+    if(sc) sc.textContent = ps.length + "人";
+
+    if(sb){
+      sb.innerHTML = ps.length ? ps.map(function(p){
+        return "<tr>"
+          + "<td class='nm'>" + (p.name || "-") + "</td>"
+          + "<td>" + (p.is_online === false ? "⚫ 离线" : "🟢 在线") + "</td>"
+          + "<td>" + (p.duration_display || p.online_display || "") + "</td>"
+          + "<td class='mono'>" + (p.last_active_display || p.join_time_display || "") + "</td>"
+          + "</tr>";
+      }).join("") : "<tr><td colspan='4' style='text-align:center;padding:32px;color:var(--tm)'>暂无数据</td></tr>";
+    }
+
+    const al = document.getElementById("al");
+    if(al){
+      const anoms = ps.filter(function(p){ return (p.flags || []).length; });
+      al.innerHTML = anoms.length ? anoms.map(function(p){
+        return "<div style='padding:8px 0;border-bottom:1px solid var(--div)'><b>"
+          + (p.name || "-")
+          + "</b><div style='font-size:11px;color:var(--ts)'>"
+          + (p.flags || []).join("、")
+          + "</div></div>";
+      }).join("") : "<div style='text-align:center;padding:24px;color:var(--tm)'>✅ 今日无异常</div>";
+    }
+
+    const sl = document.getElementById("sl");
+    if(sl){
+      const sharing = ps.filter(function(p){ return p.is_sharing; });
+      sl.innerHTML = sharing.length ? sharing.map(function(p){
+        return "<div style='padding:8px 0;border-bottom:1px solid var(--div)'>🖥️ <b>"
+          + (p.name || "-")
+          + "</b></div>";
+      }).join("") : "<div style='text-align:center;padding:20px;color:var(--tm)'>当前无人共享</div>";
+    }
+  }catch(e){
+    console.error("hardRenderDashboardV3 error:", e);
+  }
+}
+window.addEventListener("load", hardRenderDashboardV3);
+setInterval(hardRenderDashboardV3, 15000);
+</script>

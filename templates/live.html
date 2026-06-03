@@ -57,8 +57,12 @@ async function loadLive(){
     const d=j.data||j||{};
     if(!d.total_online&&d.total_online!==0) throw new Error("API returned no data");
 
-    // Get online list
-    const online = d.online_list || []; if(!online.length && d.meetings && d.meetings.length) { var fl=[]; d.meetings.forEach(function(m){(m.participants||[]).forEach(function(p){fl.push(p)});}); fl.forEach(function(p){if(p.is_online!==false)online.push(p);}); }
+    const online = d.online_list || [];
+    if(!online.length && d.meetings && d.meetings.length) {
+      var fl=[];
+      d.meetings.forEach(function(m){(m.participants||[]).forEach(function(p){fl.push(p)});});
+      fl.forEach(function(p){if(p.is_online!==false)online.push(p);});
+    }
     const meetings=d.meetings||[];
     const totalOnline=d.total_online||online.length;
 
@@ -71,9 +75,10 @@ async function loadLive(){
       lt.innerHTML=online.map(p=>{
         const name=p.name||p.display_name||p.user_name||"—";
         const room=p.room||p.meeting_topic||p.meeting_id||"—";
-        const jt=p.join_time_display||p.join_time||"—";
+        // join_time_display is already MYT, display directly
+        const jt = to_myt(p.join_time) || p.join_time_display || p.last_active_myt || "—";
         const dur=p.duration_display||p.duration_text||p.duration||p.online_duration||(p.online_display||"");
-        return `<tr><td class="td-name">${name}</td><td class="td-mono">${room}</td><td>${to_myt(jt)}</td><td><span class="badge badge-green">${dur}</span></td></tr>`;
+        return `<tr><td class="td-name">${name}</td><td class="td-mono">${room}</td><td>${jt}</td><td><span class="badge badge-green">${dur}</span></td></tr>`;
       }).join("");
     } else {
       lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无在线</td></tr>';
