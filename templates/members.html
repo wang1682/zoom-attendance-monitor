@@ -1,0 +1,179 @@
+<!-- TEMPLATE: members.html -->
+{% extends "base.html" %}
+{% block title %}成员名单管理{% endblock %}
+{% block head %}
+<style>
+.ml{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:900px){.ml{grid-template-columns:1fr}}
+.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;max-height:550px;overflow-y:auto}
+.mh{font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--div);display:flex;justify-content:space-between}
+.mi{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:13px;transition:background .1s}
+.mi:hover{background:var(--rh)}
+.mi .md{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dn{font-weight:600;color:var(--text)}
+.rn{font-size:11px;color:var(--tm);margin-left:4px}
+.ms{font-size:10px;color:var(--tm);margin-left:auto}
+.action-btn{font-size:10px;padding:2px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--cb);background:var(--card);color:var(--ts);margin-left:6px;opacity:0;transition:opacity .15s}
+.mi:hover .action-btn{opacity:1}
+.action-btn:hover{background:var(--pr);color:#fff;border-color:var(--pr)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
+.modal{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:24px;min-width:360px}
+.modal h3{font-size:15px;font-weight:600;margin:0 0 12px;color:var(--text)}
+.modal label{font-size:12px;color:var(--ts);display:block;margin-bottom:3px;margin-top:8px}
+.modal input,.modal select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:4px;box-sizing:border-box}
+.modal .row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.online-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}
+.search-box{padding:7px 12px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px;width:100%;margin-bottom:10px;box-sizing:border-box}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-container">
+<div class="page-header"><h1 class="page-title">成员名单</h1><p class="page-subtitle">统一 Zoom 用户名显示，自动合并重复成员</p></div>
+
+<div style="display:flex;gap:8px;margin-bottom:16px">
+  <input class="search-box" id="searchBox" placeholder="搜索成员..." oninput="filterList()" style="flex:1;margin-bottom:0">
+  <button class="btn btn-primary btn-sm" onclick="openMap('','')">+ 新建映射</button>
+</div>
+
+<div class="ml">
+  <div class="mc">
+    <div class="mh"><span>所有用户名</span><span id="totalCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
+    <div id="nameList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+  </div>
+  <div class="mc">
+    <div class="mh"><span>已配置映射</span><span id="mappedCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
+    <div id="mappedList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="mapModal" onclick="if(event.target===this)closeMap()">
+  <div class="modal">
+    <h3 id="mapTitle">新建映射</h3>
+    <label>Zoom 原始用户名</label>
+    <input id="modalRawName" readonly style="background:var(--div)">
+    <label>显示名称</label>
+    <input id="modalDisplayName" placeholder="输入统一显示名">
+    <div class="row">
+      <input type="checkbox" id="modalCountEnabled" checked>
+      <label for="modalCountEnabled" style="margin:0;font-size:12px;color:var(--ts)">计入在线人数</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="closeMap()">取消</button>
+      <button class="btn btn-primary btn-sm" onclick="saveMap()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let allNames = [];
+let currentRaw = "";
+
+async function loadData(){
+  const [d, m] = await Promise.all([
+    fetch("/api/v3/member-discover").then(r=>r.json()),
+    fetch("/api/v3/member-display").then(r=>r.json())
+  ]);
+  if(!d.ok||!m.ok)return;
+  allNames = d.names || [];
+  
+  // Build mapped set
+  const mapped = m.items || [];
+  const mappedRaws = new Set(mapped.map(x => x.raw_name.toLowerCase().replace(/\s+/g, '')));
+  
+  // Left: all names
+  document.getElementById("totalCount").textContent = allNames.length;
+  renderNameList(allNames, mappedRaws);
+  
+  // Right: mapped items grouped by display_name
+  document.getElementById("mappedCount").textContent = mapped.length;
+  renderMappedList(mapped);
+}
+
+function renderNameList(names, mappedRaws){
+  const div = document.getElementById("nameList");
+  if(!names.length){
+    div.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm)">无数据</div>';
+    return;
+  }
+  div.innerHTML = names.map(n => {
+    const alreadyMapped = mappedRaws.has(n.raw_name.toLowerCase().replace(/\s+/g, ''));
+    const isOnline = n.last_seen_display ? `<span class="online-dot" style="background:var(--sc)"></span>` : '';
+    return `<div class="mi" onclick="${alreadyMapped ? '' : "openMap('"+n.raw_name.replace(/'/g,"\\'")+"','"+n.raw_name.replace(/'/g,"\\'")+"')"}" style="${alreadyMapped ? 'opacity:0.5' : ''}">
+      ${isOnline}<span class="dn">${n.display_name}</span>
+      <span class="rn">${n.raw_name !== n.display_name ? n.raw_name : ''}</span>
+      <span class="ms">${n.count}次</span>
+      ${!alreadyMapped ? '<span class="action-btn">映射</span>' : '<span class="action-btn" style="opacity:0.3">已映射</span>'}
+    </div>`;
+  }).join("");
+}
+
+function renderMappedList(mapped){
+  const div = document.getElementById("mappedList");
+  if(!mapped.length){
+    div.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm)">暂无映射</div>';
+    return;
+  }
+  div.innerHTML = mapped.map(x => {
+    return `<div class="mi" style="cursor:default">
+      <span class="md" style="background:${x.count_enabled ? 'var(--sc)' : 'var(--tm)'}"></span>
+      <span class="dn">${x.display_name}</span>
+      <span class="rn">← ${x.raw_name}</span>
+      <span class="action-btn" onclick="delMap(${x.id})" style="opacity:1">✕</span>
+    </div>`;
+  }).join("");
+}
+
+function filterList(){
+  const q = document.getElementById("searchBox").value.toLowerCase();
+  const mappedRaws = new Set();
+  // We need to re-fetch or keep mappedRaws from loadData
+  fetch("/api/v3/member-display").then(r=>r.json()).then(m => {
+    const raws = new Set(m.items.map(x => x.raw_name.toLowerCase().replace(/\s+/g, '')));
+    const filtered = allNames.filter(n => 
+      n.raw_name.toLowerCase().includes(q) || n.display_name.toLowerCase().includes(q)
+    );
+    renderNameList(filtered, raws);
+  });
+}
+
+function openMap(rawName, displayName){
+  currentRaw = rawName;
+  document.getElementById("mapTitle").textContent = rawName ? `映射: ${rawName}` : "新建映射";
+  document.getElementById("modalRawName").value = rawName;
+  document.getElementById("modalDisplayName").value = displayName || rawName;
+  document.getElementById("mapModal").style.display = "flex";
+}
+
+function closeMap(){
+  document.getElementById("mapModal").style.display = "none";
+}
+
+async function saveMap(){
+  const raw = document.getElementById("modalRawName").value.trim();
+  const display = document.getElementById("modalDisplayName").value.trim();
+  const cnt = document.getElementById("modalCountEnabled").checked ? 1 : 0;
+  if(!raw || !display) return alert("请填写完整");
+  const r = await fetch("/api/v3/member-display", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({raw_name: raw, display_name: display, count_enabled: cnt})
+  });
+  const d = await r.json();
+  if(d.ok){
+    closeMap();
+    loadData();
+  } else {
+    alert(d.error || "保存失败");
+  }
+}
+
+async function delMap(id){
+  if(!confirm("删除此映射？")) return;
+  await fetch("/api/v3/member-display/"+id, {method: "DELETE"});
+  loadData();
+}
+
+loadData();
+</script>
+{% endblock %}

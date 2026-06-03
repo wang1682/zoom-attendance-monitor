@@ -113,6 +113,38 @@ def init_db():
         
         "CREATE INDEX IF NOT EXISTS idx_aliases_canonical ON member_aliases(canonical_name)",
         "CREATE INDEX IF NOT EXISTS idx_aliases_alias     ON member_aliases(alias_name)",
+        "CREATE TABLE IF NOT EXISTS member_display ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  raw_name TEXT NOT NULL UNIQUE,"
+        "  display_name TEXT NOT NULL,"
+        "  match_key TEXT NOT NULL DEFAULT '',"
+        "  count_enabled INTEGER NOT NULL DEFAULT 1,"
+        "  note TEXT DEFAULT '',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_md_raw    ON member_display(raw_name)",
+        "CREATE INDEX IF NOT EXISTS idx_md_match  ON member_display(match_key)",
+        "CREATE INDEX IF NOT EXISTS idx_md_display ON member_display(display_name)",
+
+        "CREATE TABLE IF NOT EXISTS sharing_live ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  meeting_id TEXT NOT NULL DEFAULT '',"
+        "  user_name TEXT NOT NULL,"
+        "  user_id TEXT NOT NULL DEFAULT '',"
+        "  content TEXT DEFAULT '',"
+        "  start_time TEXT,"
+        "  end_time TEXT,"
+        "  is_active INTEGER NOT NULL DEFAULT 1,"
+        "  source TEXT DEFAULT 'webhook',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+        
+        "CREATE INDEX IF NOT EXISTS idx_sharing_active ON sharing_live(is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_sharing_user   ON sharing_live(user_name)",
+
 
     ]
     for sql in statements:
@@ -272,6 +304,42 @@ def get_bot_state(key: str, default: str = "0") -> str:
 def set_bot_state(key: str, value: str):
     set_setting(key, value)
 
+
+
+_display_cache = {"mapping": {}, "ts": 0}
+
+def resolve_display_name(raw_name: str) -> dict:
+    """返回 {display_name, count_enabled, raw_name}"""
+    import time, re
+    now = time.time()
+    if not _display_cache["mapping"] or now - _display_cache["ts"] > 30:
+        conn = _get_conn()
+        rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled FROM member_display").fetchall()
+        _display_cache["mapping"] = {
+            r[0]: {"display": r[1], "key": r[2], "enabled": bool(r[3])}
+            for r in rows
+        }
+        _display_cache["ts"] = now
+    
+    name = raw_name.strip()
+    if not name:
+        return {"display_name": "", "count_enabled": True, "raw_name": name}
+    
+    mapping = _display_cache["mapping"]
+    
+    # 1. Exact match on raw_name
+    if name in mapping:
+        m = mapping[name]
+        return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
+    
+    # 2. Match on match_key (lowercase, no spaces)
+    key = re.sub(r'\s+', '', name.lower())
+    for raw, m in mapping.items():
+        if m["key"] == key:
+            return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
+    
+    # 3. No match, return as-is
+    return {"display_name": name, "count_enabled": True, "raw_name": name}
 
 def log_command(chat_id: str, command: str, args: str = "", response: str = ""):
     conn = _get_conn()

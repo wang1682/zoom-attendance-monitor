@@ -1,9 +1,10 @@
 """
 zoom_metrics.py — Zoom Business Metrics API 服务层
-支持 member_aliases 别名映射和去重
+所有姓名输出统一经 resolve_display_name()
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 
@@ -11,44 +12,8 @@ import httpx
 from config import settings
 import db as _db
 
-_cache = {"live": {"data": None, "ts": 0}, "aliases": {"data": {}, "ts": 0}}
+_cache = {"live": {"data": None, "ts": 0}}
 CACHE_TTL = 30
-ALIAS_CACHE_TTL = 60
-
-
-def _load_aliases() -> dict:
-    """加载别名映射：alias_name -> {canonical_name, count_enabled}"""
-    now = time.time()
-    ac = _cache["aliases"]
-    if ac["data"] and now - ac["ts"] < ALIAS_CACHE_TTL:
-        return ac["data"]
-    conn = _db._get_conn()
-    rows = conn.execute(
-        "SELECT alias_name, canonical_name, count_enabled FROM member_aliases"
-    ).fetchall()
-    mapping = {}
-    for alias, canonical, enabled in rows:
-        mapping[alias.strip().lower().replace(" ", "")] = {
-            "canonical": canonical.strip(),
-            "enabled": bool(enabled),
-        }
-    ac["data"] = mapping
-    ac["ts"] = now
-    return mapping
-
-
-def _normalize(name: str) -> str:
-    """基础归一化：trim + lowercase + 去空格"""
-    return name.strip().lower().replace(" ", "")
-
-
-def _resolve_name(raw_name: str, aliases: dict) -> tuple:
-    """返回 (canonical_name, count_enabled, is_aliased)"""
-    key = _normalize(raw_name)
-    if key in aliases:
-        a = aliases[key]
-        return a["canonical"], a["enabled"], True
-    return raw_name.strip(), True, False
 
 
 class ZoomMetrics:
@@ -87,7 +52,7 @@ class ZoomMetrics:
             return r.json()
 
     async def get_live(self) -> dict:
-        """获取在线数据，按 canonical_name 去重，支持别名"""
+        """获取在线数据，所有姓名经 resolve_display_name()"""
         now = time.time()
         cached = _cache["live"]
         if cached["data"] and now - cached["ts"] < CACHE_TTL:
@@ -97,7 +62,6 @@ class ZoomMetrics:
             "/metrics/meetings", {"type": "live", "page_size": 100}
         )
         meetings_list = meetings_data.get("meetings", [])
-        aliases = _load_aliases()
         now_utc = datetime.now(timezone.utc)
 
         result = {"meetings": [], "total_online": 0}
@@ -107,11 +71,8 @@ class ZoomMetrics:
         for m in meetings_list:
             mid = str(m.get("id", ""))
             topic = m.get("topic", mid)
-
             raw_participants = await self._get_participants(mid)
 
-            # 过滤：in_meeting + 无 leave_time
-            # 按 canonical_name 去重
             seen = {}
             for p in raw_participants:
                 if p.get("status") != "in_meeting":
@@ -122,22 +83,25 @@ class ZoomMetrics:
                 if not uid:
                     continue
                 raw_name = p.get("user_name", "").strip()
-                canonical, count_it, is_aliased = _resolve_name(raw_name, aliases)
-                key = _normalize(canonical)
+                if not raw_name:
+                    continue
+                resolved = _db.resolve_display_name(raw_name)
+                display = resolved["display_name"]
+                count_it = resolved["count_enabled"]
+                key = re.sub(r"\s+", "", display.lower())
 
                 if key not in seen:
                     seen[key] = {
-                        "name": canonical,
+                        "name": display,
                         "raw_name": raw_name,
                         "user_id": uid,
                         "join_time": p.get("join_time", ""),
                         "status": p.get("status"),
                         "count_enabled": count_it,
-                        "is_aliased": is_aliased,
+                        "is_aliased": (display != raw_name),
                         "email": p.get("email", ""),
                     }
                 else:
-                    # 同名：保留最早的 join_time
                     existing = seen[key]["join_time"]
                     new_jt = p.get("join_time", "")
                     if new_jt and (not existing or new_jt < existing):
@@ -145,7 +109,6 @@ class ZoomMetrics:
 
             participants = list(seen.values())
 
-            # 计算在线时长
             for p in participants:
                 jt = p.get("join_time", "")
                 mins = 0
@@ -163,6 +126,16 @@ class ZoomMetrics:
                 p["online_minutes"] = mins
                 p["online_display"] = disp
 
+                # MYT display
+                if jt:
+                    try:
+                        jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                        p["join_time_display"] = jd.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M:%S")
+                    except:
+                        p["join_time_display"] = jt[:16] if jt else ""
+                else:
+                    p["join_time_display"] = ""
+
             result["meetings"].append({
                 "meeting_id": mid,
                 "meeting_topic": topic,
@@ -170,7 +143,7 @@ class ZoomMetrics:
             })
 
             for p in participants:
-                key = _normalize(p["name"])
+                key = re.sub(r"\s+", "", p["name"].lower())
                 if key not in all_canonical:
                     all_canonical.add(key)
                     if p["count_enabled"]:

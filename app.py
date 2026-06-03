@@ -31,6 +31,21 @@ def to_myt(dt_str):
         return dt_str[:16]
 
 
+def to_myt_display(dt_str, fmt="%m-%d %H:%M:%S"):
+    """统一 MYT 转换函数"""
+    if not dt_str:
+        return ""
+    try:
+        s = dt_str.replace("Z", "+00:00")
+        if "+" not in s and s.count("-") >= 2:
+            # naive datetime, assume UTC
+            s += "+00:00"
+        dt = datetime.fromisoformat(s)
+        return dt.astimezone(MYT).strftime(fmt)
+    except:
+        return dt_str[:16]
+
+
 
 def dedup_participants(participants):
     """合并连续同人的进出记录，只保留状态变化"""
@@ -528,9 +543,7 @@ def build_app() -> "FastAPI":
         if "participant_joined" in event_type or "participant_left" in event_type:
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
-            # breakout room 事件取父会议 ID
             meeting_id = str(obj.get("id", ""))
-            # 如果是 breakout_room 事件，用父会议 ID
             if "breakout" in event_type:
                 meeting_id = str(payload.get("payload", {}).get("object", {}).get("id", ""))
             name = participant.get("user_name", "").strip()
@@ -540,6 +553,30 @@ def build_app() -> "FastAPI":
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
                                     source="webhook")
+
+        # Sharing events
+        if "sharing_started" in event_type or "sharing_ended" in event_type:
+            obj = payload.get("payload", {}).get("object", payload.get("object", {}))
+            participant = obj.get("participant", {})
+            meeting_id = str(obj.get("id", ""))
+            name = participant.get("user_name", "").strip()
+            user_id = str(participant.get("user_id", ""))
+            sd = participant.get("sharing_details", {})
+            content = sd.get("content", "")
+            dt_str = sd.get("date_time", "")
+            conn = db._get_conn()
+            if "sharing_started" in event_type:
+                conn.execute(
+                    "INSERT INTO sharing_live (meeting_id, user_name, user_id, content, start_time, is_active, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 'webhook', ?, ?)",
+                    (meeting_id, name, user_id, content, dt_str, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat())
+                )
+            elif "sharing_ended" in event_type:
+                # Mark the most recent active sharing as ended
+                conn.execute(
+                    "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE user_name=? AND is_active=1",
+                    (dt_str, datetime.now(timezone.utc).isoformat(), name)
+                )
+            conn.commit()
 
         return {"ok": True}
 
@@ -664,6 +701,331 @@ def build_app() -> "FastAPI":
         return {"ok": True}
 
 
+
+    @app.get("/api/v3/sharing-live")
+    async def api_v3_sharing_live():
+        """当前共享状态：Zoom Metrics API + zoom_events + sharing_live"""
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        MYT = timezone(timedelta(hours=8))
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.strftime("%Y-%m-%d")
+        
+        def to_myt(dt_str):
+            if not dt_str: return ""
+            try:
+                s = dt_str.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+            except: return dt_str[:16]
+        
+        def calc_mins(start_str):
+            if not start_str: return 0
+            try:
+                sd = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                return int((now_utc - sd).total_seconds() / 60)
+            except: return 0
+        
+        def disp_mins(m):
+            return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
+        
+        def resolve(name):
+            return db.resolve_display_name(name)["display_name"]
+        
+        # Source 1: Zoom Metrics API - live participant share status
+        metrics_sharing = {}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                tr = await c.post("https://zoom.us/oauth/token",
+                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
+                if tr.status_code == 200:
+                    token = tr.json().get("access_token", "")
+                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
+                        headers={"Authorization": f"Bearer {token}"})
+                    if mr.status_code == 200:
+                        for m in mr.json().get("meetings", []):
+                            mid = str(m.get("id", ""))
+                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
+                                headers={"Authorization": f"Bearer {token}"})
+                            if pr.status_code == 200:
+                                for p in pr.json().get("participants", []):
+                                    if p.get("status") != "in_meeting": continue
+                                    uid = str(p.get("user_id", ""))
+                                    name = p.get("user_name", "").strip()
+                                    is_sharing = (
+                                        p.get("share_application", False) or
+                                        p.get("share_desktop", False) or
+                                        p.get("share_whiteboard", False)
+                                    )
+                                    if is_sharing and uid and uid not in metrics_sharing:
+                                        metrics_sharing[uid] = {
+                                            "name": resolve(name),
+                                            "raw_name": name,
+                                            "user_id": uid,
+                                            "content": "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard"),
+                                            "join_time": p.get("join_time", ""),
+                                            "source": "metrics_api",
+                                        }
+        except: pass
+        
+        # Source 2: zoom_events last 10 min
+        cutoff_10m = (now_utc - timedelta(minutes=10)).isoformat()
+        events = conn.execute(
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC LIMIT 50",
+            (cutoff_10m,)
+        ).fetchall()
+        import json as _json
+        
+        events_sharing = {}  # user_id -> event_info
+        events_ended = set()
+        for (payload_json,) in events:
+            try:
+                p = _json.loads(payload_json)
+                et = p.get("event", "")
+                obj = p.get("payload", {}).get("object", p.get("object", {}))
+                participant = obj.get("participant", {})
+                uid = str(participant.get("user_id", "")).split("20")[0]  # clean user_id
+                name = participant.get("user_name", "").strip()
+                sd = participant.get("sharing_details", {})
+                dt_str = sd.get("date_time", "")
+                content = sd.get("content", "")
+                if "started" in et and uid:
+                    events_sharing[uid] = {
+                        "name": resolve(name),
+                        "raw_name": name,
+                        "user_id": uid,
+                        "content": content,
+                        "start_time": dt_str,
+                        "source": "webhook",
+                    }
+                elif "ended" in et:
+                    events_ended.add(uid)
+            except: pass
+        
+        # Remove ended from events_sharing
+        for uid in events_ended:
+            events_sharing.pop(uid, None)
+        
+        # Source 3: sharing_live active
+        live_rows = conn.execute(
+            "SELECT * FROM sharing_live WHERE is_active=1"
+        ).fetchall()
+        live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
+        table_sharing = {}
+        for r in live_rows:
+            d = dict(zip(live_cols, r))
+            uid = d.get("user_id", "")
+            if uid:
+                table_sharing[uid] = {
+                    "name": resolve(d.get("user_name", "")),
+                    "raw_name": d.get("user_name", ""),
+                    "user_id": uid,
+                    "content": d.get("content", ""),
+                    "start_time": d.get("start_time", ""),
+                    "source": "sharing_live",
+                }
+        
+        # Merge: Metrics API is source of truth, supplement with events + table
+        merged = {}
+        for uid, info in metrics_sharing.items():
+            merged[uid] = info
+            # Get start_time from events or table
+            if uid in events_sharing and events_sharing[uid].get("start_time"):
+                merged[uid]["start_time"] = events_sharing[uid]["start_time"]
+                merged[uid]["source"] = "metrics+webhook"
+            elif uid in table_sharing and table_sharing[uid].get("start_time"):
+                if not merged[uid].get("start_time"):
+                    merged[uid]["start_time"] = table_sharing[uid]["start_time"]
+        
+        # Also include events_sharing not in metrics (e.g. breakout rooms)
+        for uid, info in events_sharing.items():
+            if uid not in merged:
+                merged[uid] = info
+                merged[uid]["source"] = "webhook_only"
+        
+        # Build response
+        current_sharing = []
+        for uid, info in merged.items():
+            st = info.get("start_time", info.get("join_time", ""))
+            mins = calc_mins(st)
+            current_sharing.append({
+                "name": info.get("name", ""),
+                "raw_name": info.get("raw_name", ""),
+                "user_id": uid,
+                "content": info.get("content", ""),
+                "start_time": st,
+                "start_time_display": to_myt(st),
+                "duration_minutes": mins,
+                "duration_display": disp_mins(mins),
+                "source": info.get("source", ""),
+            })
+        
+        # Today history (from sharing_live + events)
+        history = conn.execute(
+            "SELECT * FROM sharing_live WHERE created_at >= ? ORDER BY start_time DESC LIMIT 50",
+            (today,)
+        ).fetchall()
+        history_list = []
+        longest = None
+        for r in history:
+            d = dict(zip(live_cols, r))
+            name = resolve(d.get("user_name", ""))
+            start = d.get("start_time", "")
+            end = d.get("end_time", "")
+            mins = 0
+            if start and end:
+                try:
+                    sd = datetime.fromisoformat(start.replace("Z", "+00:00"))
+                    ed = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                    mins = int((ed - sd).total_seconds() / 60)
+                except: pass
+            elif start:
+                mins = calc_mins(start)
+            item = {
+                "name": name,
+                "raw_name": d.get("user_name", ""),
+                "content": d.get("content", ""),
+                "start_time": start,
+                "start_time_display": to_myt(start),
+                "end_time": end,
+                "end_time_display": to_myt(end),
+                "duration_minutes": mins,
+                "duration_display": disp_mins(mins),
+            }
+            history_list.append(item)
+            if not longest or (mins > longest["duration_minutes"]):
+                longest = item
+        
+        return {
+            "ok": True,
+            "current_sharing": current_sharing,
+            "today_summary": {
+                "active_count": len(current_sharing),
+                "sharing_count": len(history_list),
+                "unique_users": len(set(h["name"] for h in history_list + current_sharing)),
+                "longest": longest,
+            },
+            "today_history": history_list,
+        }
+
+
+    @app.get("/api/v3/sharing-debug")
+    async def api_v3_sharing_debug():
+        """调试：最近 sharing 事件 + 当前 sharing_live 表"""
+        conn = db._get_conn()
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        cutoff = (now_utc - timedelta(minutes=30)).isoformat()
+        events = conn.execute(
+            "SELECT id, event_type, created_at, payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC LIMIT 20",
+            (cutoff,)
+        ).fetchall()
+        import json as _json
+        event_list = []
+        for e in events:
+            try:
+                p = _json.loads(e[3])
+                obj = p.get("payload", {}).get("object", {})
+                pt = obj.get("participant", {})
+                sd = pt.get("sharing_details", {})
+                event_list.append({
+                    "id": e[0], "event_type": e[1], "created_at": e[2],
+                    "user_name": pt.get("user_name", ""),
+                    "user_id": str(pt.get("user_id", "")),
+                    "content": sd.get("content", ""),
+                    "date_time": sd.get("date_time", ""),
+                })
+            except: pass
+        
+        live_rows = conn.execute("SELECT * FROM sharing_live WHERE is_active=1").fetchall()
+        live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
+        active_sharing = [dict(zip(live_cols, r)) for r in live_rows]
+        
+        return {
+            "ok": True,
+            "events_30min": event_list,
+            "sharing_live_active": active_sharing,
+        }
+    @app.get("/sharing", response_class=HTMLResponse)
+    async def sharing_page(request: Request):
+        return tmpl.TemplateResponse(request, "sharing.html", {"brand": BRAND})
+
+    @app.get("/api/v3/member-discover")
+    async def api_v3_member_discover():
+        """自动发现历史 Zoom 用户名"""
+        conn = db._get_conn()
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        rows = conn.execute(
+            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
+            (cutoff,)
+        ).fetchall()
+        
+        # Check which are already mapped
+        def to_myt_display(s):
+            if not s: return ""
+            try:
+                d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+                return d.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M")
+            except: return s[:16]
+        
+        results = []
+        for name, cnt, last_seen in rows:
+            resolved = db.resolve_display_name(name)
+            results.append({
+                "raw_name": name,
+                "display_name": resolved["display_name"],
+                "count_enabled": resolved["count_enabled"],
+                "is_mapped": resolved["display_name"] != name,
+                "count": cnt,
+                "last_seen": last_seen or "",
+                "last_seen_display": to_myt_display(last_seen),
+            })
+        return {"ok": True, "names": results}
+
+    @app.get("/api/v3/member-display")
+    async def api_v3_member_display_list():
+        """所有显示名映射"""
+        conn = db._get_conn()
+        rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
+        return {"ok": True, "items": [dict(zip(cols, r)) for r in rows]}
+
+    @app.post("/api/v3/member-display")
+    async def api_v3_member_display_add(request: Request):
+        data = await request.json()
+        raw_name = data.get("raw_name", "").strip()
+        display_name = data.get("display_name", "").strip()
+        count_enabled = data.get("count_enabled", 1)
+        note = data.get("note", "")
+        if not raw_name or not display_name:
+            return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
+        import re
+        match_key = re.sub(r'\s+', '', raw_name.lower())
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO member_display (raw_name, display_name, match_key, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (raw_name, display_name, match_key, int(count_enabled), note, now, now)
+            )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.delete("/api/v3/member-display/{item_id}")
+    async def api_v3_member_display_del(item_id: int):
+        conn = db._get_conn()
+        conn.execute("DELETE FROM member_display WHERE id=?", (item_id,))
+        conn.commit()
+        return {"ok": True}
+
+    @app.get("/members", response_class=HTMLResponse)
+    async def members_page(request: Request):
+        return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})
     @app.get("/health")
     async def health():
         return {
@@ -1225,7 +1587,7 @@ def build_app() -> "FastAPI":
             participants_summary.append({
                 "name": name, "enters": enters, "leaves": leaves,
                 "total_duration_min": duration_min, "duration_display": duration_display,
-                "is_online": is_online, "last_active": (last_time or "")[:19],
+                "is_online": is_online, "last_active": (last_time or "")[:19], "last_active_display": to_myt_display(last_time or ""),
                 "flags": flags, "total_actions": total_actions, "short_sessions": short_sessions,
                 "avg_min": round(total_secs / enters / 60, 1) if enters else 0
             })
