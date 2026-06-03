@@ -93,8 +93,27 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_participants_time   ON zoom_participants(action_time)",
         "CREATE INDEX IF NOT EXISTS idx_events_type          ON zoom_events(event_type)",
         "CREATE INDEX IF NOT EXISTS idx_events_created       ON zoom_events(created_at)",
+        "CREATE TABLE IF NOT EXISTS meeting_topics ("
+        "  meeting_id TEXT PRIMARY KEY,"
+        "  topic TEXT NOT NULL DEFAULT '',"
+        "  updated_at TEXT"
+        ")",
+
         "CREATE INDEX IF NOT EXISTS idx_alerts_type          ON alerts(alert_type)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_created       ON alerts(created_at)",
+        "CREATE TABLE IF NOT EXISTS member_aliases ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  canonical_name TEXT NOT NULL,"
+        "  alias_name TEXT NOT NULL UNIQUE,"
+        "  count_enabled INTEGER NOT NULL DEFAULT 1,"
+        "  note TEXT DEFAULT '',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+        
+        "CREATE INDEX IF NOT EXISTS idx_aliases_canonical ON member_aliases(canonical_name)",
+        "CREATE INDEX IF NOT EXISTS idx_aliases_alias     ON member_aliases(alias_name)",
+
     ]
     for sql in statements:
         try:

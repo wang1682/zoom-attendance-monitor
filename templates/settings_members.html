@@ -1,0 +1,223 @@
+<!-- TEMPLATE: settings_members.html v2 -->
+{% extends "base.html" %}
+{% block title %}成员别名配置{% endblock %}
+{% block head %}
+<style>
+.ml{display:grid;grid-template-columns:2fr 2fr 3fr;gap:16px;margin-bottom:20px}
+@media(max-width:900px){.ml{grid-template-columns:1fr}}
+.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;max-height:500px;overflow-y:auto}
+.mh{font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--div);display:flex;justify-content:space-between}
+.mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;transition:background .1s}
+.mi:hover{background:var(--rh)}
+.mi .md{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.mn{flex:1;color:var(--text);font-weight:500}
+.ms{font-size:10px;color:var(--tm);margin-left:4px}
+.mi .ma{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s}
+.mi:hover .ma{opacity:1}
+.mi .ma:hover{background:var(--pr);color:#fff}
+.alias-tree{font-size:13px;color:var(--ts);padding-left:16px;margin:2px 0}
+.alias-tree .at-item{display:flex;align-items:center;gap:6px;padding:2px 0}
+.alias-tree .at-del{font-size:10px;color:var(--da);cursor:pointer;padding:1px 5px;border-radius:3px}
+.alias-tree .at-del:hover{background:var(--da-b)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
+.modal{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:24px;min-width:320px;max-width:420px}
+.modal h3{font-size:15px;font-weight:600;margin:0 0 12px;color:var(--text)}
+.modal label{font-size:12px;color:var(--ts);display:block;margin-bottom:4px}
+.modal input,.modal select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:10px;box-sizing:border-box}
+.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
+.online-badge{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-container">
+<div class="page-header"><h1 class="page-title">成员别名配置</h1><p class="page-subtitle">自动发现 Zoom 用户名，映射为标准成员名</p></div>
+
+<div class="ml">
+  <!-- A: 已配置成员 -->
+  <div class="mc">
+    <div class="mh"><span>已配置成员</span><span id="configCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
+    <div id="configList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+  </div>
+
+  <!-- B: 未映射用户名 -->
+  <div class="mc">
+    <div class="mh"><span>未映射用户名</span><span id="unmappedCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
+    <div id="unmappedList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+  </div>
+
+  <!-- C: 当前在线 -->
+  <div class="mc">
+    <div class="mh"><span>当前在线</span><span id="onlineCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
+    <div id="onlineList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+  </div>
+</div>
+
+<!-- 映射对话框 -->
+<div class="modal-overlay" id="mapModal" onclick="if(event.target===this)closeMap()">
+  <div class="modal">
+    <h3>映射: <span id="mapZoomName" style="font-weight:400"></span></h3>
+    <label>归属到</label>
+    <select id="mapTarget">
+      <option value="__new__">新建成员</option>
+    </select>
+    <div id="mapNewField" style="display:block">
+      <label>新成员名称</label>
+      <input id="mapNewName" placeholder="输入标准姓名">
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <input type="checkbox" id="mapCountEnabled" checked>
+      <label for="mapCountEnabled" style="margin:0;font-size:12px;color:var(--ts)">计入在线人数</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="closeMap()">取消</button>
+      <button class="btn btn-primary btn-sm" onclick="doMap()">保存映射</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let discoverData = null;
+let aliasesData = null;
+let mappingZoomName = "";
+
+async function loadAll(){
+  const [d, a] = await Promise.all([
+    fetch("/api/v3/aliases/discover").then(r=>r.json()),
+    fetch("/api/v3/aliases").then(r=>r.json())
+  ]);
+  if(!d.ok||!a.ok)return;
+  discoverData = d;
+  aliasesData = a;
+
+  // Build configured set
+  const configuredKeys = new Set();
+  const aliasMap = {}; // alias_lower -> canonical
+  const canonicalGroups = {}; // canonical -> [{alias_name, id}]
+  a.aliases.forEach(al => {
+    const key = al.alias_name.trim().toLowerCase().replace(/\\s+/g, "");
+    configuredKeys.add(key);
+    aliasMap[key] = al.canonical_name;
+    if(!canonicalGroups[al.canonical_name]) canonicalGroups[al.canonical_name] = [];
+    canonicalGroups[al.canonical_name].push({alias_name: al.alias_name, id: al.id});
+  });
+
+  // A: Config list
+  const configDiv = document.getElementById("configList");
+  const cans = Object.keys(canonicalGroups).sort();
+  document.getElementById("configCount").textContent = cans.length;
+  if(cans.length){
+    configDiv.innerHTML = cans.map(can => {
+      const aliases = canonicalGroups[can];
+      const first = aliases[0];
+      // Check if count_enabled (from first alias record)
+      const cntEnabled = a.aliases.find(al => al.canonical_name === can)?.count_enabled !== 0;
+      return `<div style="margin-bottom:8px">
+        <div class="mi" style="cursor:default">
+          <span class="md" style="background:${cntEnabled?'var(--sc)':'var(--tm)'}"></span>
+          <span class="mn">${can}</span>
+          <span class="ms">${cntEnabled?'✓':'✗不计入'}</span>
+        </div>
+        <div class="alias-tree">${aliases.map(al => `<div class="at-item"><span>${al.alias_name}</span><span class="at-del" onclick="delAlias(${al.id})">✕</span></div>`).join("")}</div>
+      </div>`;
+    }).join("");
+  } else {
+    configDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无配置</div>';
+  }
+
+  // B: Unmapped names
+  const unmappedDiv = document.getElementById("unmappedList");
+  const unmapped = d.names.filter(n => !configuredKeys.has(n.name.toLowerCase().replace(/\\s+/g, "")));
+  document.getElementById("unmappedCount").textContent = unmapped.length;
+  if(unmapped.length){
+    unmappedDiv.innerHTML = unmapped.map(n => {
+      const isOnline = n.is_online ? '<span class="online-badge" style="background:var(--sc)"></span>' : '';
+      const timeAgo = n.last_seen ? n.last_seen.slice(11,16) : '';
+      return `<div class="mi" onclick="openMap('${n.name.replace(/'/g, "\\'")}')">
+        ${isOnline}<span class="mn">${n.name}</span><span class="ms">${n.count}次 ${timeAgo}</span><span class="ma">映射</span>
+      </div>`;
+    }).join("");
+  } else {
+    unmappedDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">✅ 全部已映射</div>';
+  }
+
+  // C: Online
+  const onlineDiv = document.getElementById("onlineList");
+  const v3 = await fetch("/api/v3/live").then(r=>r.json());
+  const onlineParts = [];
+  if(v3.ok && v3.data){
+    for(const m of v3.data.meetings||[]){
+      for(const p of m.participants||[]){
+        onlineParts.push(p);
+      }
+    }
+  }
+  document.getElementById("onlineCount").textContent = v3.data?.total_online || 0;
+  if(onlineParts.length){
+    onlineDiv.innerHTML = onlineParts.map(p => {
+      const cnt = p.count_enabled !== false ? '' : '<span class="ms" style="color:var(--wa)">不计入</span>';
+      return `<div class="mi" style="cursor:default"><span class="md" style="background:var(--sc)"></span><span class="mn">${p.name}</span><span class="ms">${p.online_display||''}</span>${cnt}</div>`;
+    }).join("");
+  } else {
+    onlineDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无在线</div>';
+  }
+}
+
+function openMap(name){
+  mappingZoomName = name;
+  document.getElementById("mapZoomName").textContent = name;
+  document.getElementById("mapNewName").value = name; // default to same name
+  
+  // Populate existing members
+  const sel = document.getElementById("mapTarget");
+  sel.innerHTML = '<option value="__new__">新建成员</option>';
+  if(aliasesData && aliasesData.aliases){
+    const cans = [...new Set(aliasesData.aliases.map(a => a.canonical_name))].sort();
+    cans.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      sel.appendChild(opt);
+    });
+  }
+  sel.value = "__new__";
+  document.getElementById("mapNewField").style.display = "block";
+  document.getElementById("mapModal").style.display = "flex";
+}
+
+function closeMap(){
+  document.getElementById("mapModal").style.display = "none";
+}
+
+document.getElementById("mapTarget").addEventListener("change", function(){
+  document.getElementById("mapNewField").style.display = this.value === "__new__" ? "block" : "none";
+});
+
+async function doMap(){
+  const target = document.getElementById("mapTarget").value;
+  const canonical = target === "__new__" ? document.getElementById("mapNewName").value.trim() : target;
+  const countEnabled = document.getElementById("mapCountEnabled").checked ? 1 : 0;
+  if(!canonical) return alert("请输入成员名称");
+  
+  const r = await fetch("/api/v3/aliases/map", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({zoom_name: mappingZoomName, canonical_name: canonical, count_enabled: countEnabled})
+  });
+  const d = await r.json();
+  if(d.ok){
+    closeMap();
+    loadAll();
+  } else {
+    alert(d.error || "映射失败");
+  }
+}
+
+async function delAlias(id){
+  if(!confirm("删除此别名？")) return;
+  await fetch("/api/v3/aliases/"+id, {method: "DELETE"});
+  loadAll();
+}
+
+loadAll();
+</script>
+{% endblock %}

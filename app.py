@@ -544,6 +544,126 @@ def build_app() -> "FastAPI":
         return {"ok": True}
 
     # ── 健康检查 ─────────────────────────────────────────────────────────────
+
+    @app.get("/settings/members", response_class=HTMLResponse)
+    async def settings_members_page(request: Request):
+        return tmpl.TemplateResponse(request, "settings_members.html", {"brand": BRAND})
+
+    @app.get("/api/v3/aliases")
+    async def api_v3_aliases():
+        """获取所有别名配置"""
+        conn = db._get_conn()
+        rows = conn.execute("SELECT id, canonical_name, alias_name, count_enabled, note, created_at, updated_at FROM member_aliases ORDER BY canonical_name").fetchall()
+        cols = ["id", "canonical_name", "alias_name", "count_enabled", "note", "created_at", "updated_at"]
+        return {"ok": True, "aliases": [dict(zip(cols, r)) for r in rows]}
+
+    @app.post("/api/v3/aliases")
+    async def api_v3_add_alias(request: Request):
+        data = await request.json()
+        canonical = data.get("canonical_name", "").strip()
+        alias = data.get("alias_name", "").strip()
+        if not canonical or not alias:
+            return {"ok": False, "error": "参数不完整"}
+        count_enabled = data.get("count_enabled", 1)
+        note = data.get("note", "")
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO member_aliases (canonical_name, alias_name, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (canonical, alias, count_enabled, note, now, now)
+            )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+
+
+    @app.get("/api/v3/aliases/discover")
+    async def api_v3_discover():
+        """自动发现历史 Zoom 用户名，统计出现次数和是否在线"""
+        conn = db._get_conn()
+        from datetime import datetime, timezone, timedelta
+        
+        # 统计最近30天的 Zoom 用户名出现次数
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        rows = conn.execute("""
+            SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
+            FROM zoom_participants
+            WHERE action_time >= ?
+            GROUP BY name
+            ORDER BY cnt DESC
+        """, (cutoff,)).fetchall()
+        
+        # 加载已配置的别名
+        alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
+        configured_aliases = set()
+        for (alias_name,) in alias_rows:
+            configured_aliases.add(alias_name.strip().lower().replace(" ", ""))
+        
+        # 当前在线（来自 v3）
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        live_data = await zm.get_live()
+        online_names = set()
+        for m in live_data.get("meetings", []):
+            for p in m.get("participants", []):
+                online_names.add(p.get("name", ""))
+        
+        # 检查每个历史名字是否已被映射
+        results = []
+        for name, cnt, last_seen in rows:
+            name = name.strip()
+            if not name:
+                continue
+            key = name.lower().replace(" ", "")
+            already_mapped = key in configured_aliases
+            is_online = name in online_names
+            results.append({
+                "name": name,
+                "count": cnt,
+                "last_seen": last_seen or "",
+                "is_online": is_online,
+                "already_mapped": already_mapped,
+            })
+        
+        return {"ok": True, "names": results}
+
+    @app.post("/api/v3/aliases/map")
+    async def api_v3_map_alias(request: Request):
+        """一键映射：将 Zoom 用户名映射到标准成员名"""
+        data = await request.json()
+        zoom_name = data.get("zoom_name", "").strip()
+        canonical_name = data.get("canonical_name", "").strip()
+        count_enabled = data.get("count_enabled", 1)
+        note = data.get("note", "")
+        
+        if not zoom_name or not canonical_name:
+            return {"ok": False, "error": "参数不完整"}
+        
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO member_aliases (canonical_name, alias_name, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (canonical_name, zoom_name, count_enabled, note, now, now)
+            )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.delete("/api/v3/aliases/{alias_id}")
+    async def api_v3_del_alias(alias_id: int):
+        conn = db._get_conn()
+        conn.execute("DELETE FROM member_aliases WHERE id=?", (alias_id,))
+        conn.commit()
+        return {"ok": True}
+
+
     @app.get("/health")
     async def health():
         return {
@@ -733,6 +853,24 @@ def build_app() -> "FastAPI":
         return {"ok": True, "stats": stats, "members": sorted(members, key=lambda x: x["name"]), "meetings": [{"meeting_id": k, "count": v["count"], "unique_people": len(v["names"]), "first_enter": v["first_enter"][:19] if v["first_enter"] != "99:99" else "", "last_leave": v["last_leave"][:19] if v["last_leave"] != "00:00" else ""} for k, v in meetings.items()]}
 
     # ── AI 分析 ────────────────────────────────────────────────────────────
+    
+
+    @app.get("/api/v3/live")
+    async def api_v3_live():
+        """Business Metrics API 实时在线数据（去重）"""
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        data = await zm.get_live()
+        return {"ok": True, "data": data}
+
+
+    async def api_v3_live():
+        """Business Metrics API 实时在线数据（去重）"""
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        data = await zm.get_live()
+        return {"ok": True, "data": data}
+
     @app.get("/api/v2/ai-analysis")
     async def api_ai_analysis():
         """用 AI（DeepSeek）分析今日参会数据，生成自然语言报告"""
@@ -877,9 +1015,98 @@ def build_app() -> "FastAPI":
 
     # ── 实时功能 ────────────────────────────────────────────────────────────
 
+    async def _build_live_from_metrics(meetings_data: list, token: str) -> dict:
+        """从 Business Metrics API 构建在线数据"""
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        meetings = {}
+        online = []
+        total_online = 0
+        top_active = {}
+        participants_summary = []
+        async with httpx.AsyncClient(timeout=10) as client:
+            for m in meetings_data:
+                mid = str(m.get("id", ""))
+                topic = m.get("topic", mid)
+                pc = m.get("participants", 0)
+                total_online += pc
+                start_time = m.get("start_time", "")
+                elapsed = 0
+                if start_time:
+                    try:
+                        sd = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                        elapsed = int((now_utc - sd).total_seconds() / 60)
+                    except:
+                        pass
+                meetings[mid] = {"participant_count": pc, "topic": topic,
+                                 "earliest_enter": start_time, "elapsed_minutes": elapsed}
+                try:
+                    pr = await client.get(
+                        "https://api.zoom.us/v2/metrics/meetings/{}/participants?page_size=300".format(mid),
+                        headers={"Authorization": "Bearer {}".format(token)})
+                    if pr.status_code == 200:
+                        for p in pr.json().get("participants", []):
+                            name = p.get("user_name", "").strip()
+                            if not name:
+                                continue
+                            jt = p.get("join_time", "")
+                            mins = 0
+                            disp = ""
+                            if jt:
+                                try:
+                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                    mins = int((now_utc - jd).total_seconds() / 60)
+                                    disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
+                                except:
+                                    pass
+                            online.append({"name": name, "meeting_id": mid, "topic": topic,
+                                           "enter_time": jt, "online_minutes": mins,
+                                           "online_display": disp})
+                            top_active[name] = top_active.get(name, 0) + 1
+                            participants_summary.append({
+                                "name": name, "email": p.get("email", ""), "meeting_id": mid,
+                                "is_online": True, "last_active": jt,
+                                "total_actions": 1, "duration_display": disp, "flags": []})
+                except:
+                    pass
+        sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
+        total_unique = len(set(p["name"] for p in participants_summary))
+        return {
+            "ok": True, "online": online, "meetings": meetings,
+            "total_online": total_online,
+            "total_events": sum(p["total_actions"] for p in participants_summary),
+            "unique_participants": total_unique,
+            "unique_online_rate": round(total_online / max(total_unique, 1) * 100, 1),
+            "top_online": sorted(online, key=lambda x: -x["online_minutes"])[:5],
+            "top_active": [{"name": k, "count": v} for k, v in sa],
+            "participants_summary": participants_summary,
+            "anomalies": [], "health_level": "green",
+            "ai_summary": "当前在线 {} 人，{} 个活跃会议室".format(total_online, len(meetings))
+        }
+
+
+
     @app.get("/api/v2/live")
     async def api_live():
         """当前在线列表：谁在会议室、在线时长、会议进行状态"""
+        # Business Metrics API 优先
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                tr = await c.post("https://zoom.us/oauth/token",
+                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
+                if tr.status_code == 200:
+                    token = tr.json().get("access_token", "")
+                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
+                        headers={"Authorization": "Bearer " + token})
+                    if mr.status_code == 200:
+                        md = mr.json().get("meetings", [])
+                        if md:
+                            return await _build_live_from_metrics(md, token)
+        except:
+            pass
         conn = db._get_conn()
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
