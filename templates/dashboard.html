@@ -83,13 +83,8 @@
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <div class="sh"><h2>👥 参与者概览</h2><span class="c" id="sc">—</span></div>
-  <table class="dt"><thead><tr><th>#</th><th>成员</th><th>事件</th><th>时长</th><th>风险</th><th>状态</th><th>最后</th></tr></thead><tbody id="sb"></tbody></table>
-</div>
-
-<div class="card">
-  <div class="sh"><h2>📋 近期事件</h2><span class="c" id="ec">—</span></div>
-  <table class="dt"><thead><tr><th>#</th><th>成员</th><th>状态</th><th>时间</th></tr></thead><tbody id="eb"></tbody></table>
+  <div class="sh"><h2>👥 参与者</h2><span class="c" id="sc">—</span></div>
+  <table class="dt"><thead><tr><th>成员</th><th>状态</th><th>已在线</th><th>最后活动</th></tr></thead><tbody id="sb"></tbody></table>
 </div>
 
 <script>
@@ -177,24 +172,23 @@ async function ld(){
           al.innerHTML='<div style="text-align:center;padding:24px;color:var(--tm)">✅ 今日无异常</div>';
         }
 
-        // Participants table (from v2 for historical data)
-        const sd=ad2.participants_summary||[];
-        document.getElementById("sc").textContent=sd.length+"人";
-        const sb=document.getElementById("sb");
-        if(sd.length){
-sb.innerHTML=sd.slice(0,8).map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td>'+(p.total_actions||(p.enters+p.leaves))+'</td><td>'+p.duration_display+'</td><td>'+(p.flags?.length?p.flags.map(f=>'<span class="tg tg-d">'+f+'</span>').join(""):'<span style="color:var(--tm)">—</span>')+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'"></span></td><td class="mono">'+(p.last_active_display||formatMYT(p.last_active)||"—")+'</td></tr>').join("");
+        // Participants — merged view from v3, sorted online first
+        const v3ps = v3data.participants_summary || [];
+        document.getElementById("sc").textContent = v3ps.length + "人";
+        const sb = document.getElementById("sb");
+        if (v3ps.length) {
+          const sorted = [...v3ps].sort(function(a, b) {
+            if (a.is_online && !b.is_online) return -1;
+            if (!a.is_online && b.is_online) return 1;
+            return 0;
+          });
+          sb.innerHTML = sorted.map(function(p) {
+            var dot = p.is_online ? "var(--sc)" : "var(--tm)";
+            var label = p.is_online ? "🟢 在线" : "⚫ 离线";
+            return '<tr><td class="nm">' + p.name + '</td><td>' + label + '</td><td>' + (p.duration_display || "") + '</td><td class="mono">' + (p.last_active_display || formatMYT(p.last_active) || "") + '</td></tr>';
+          }).join("");
         } else {
-          sb.innerHTML='<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
-        }
-
-        // Recent events
-        const ev=sd.filter(p=>p.last_active).sort((a,b)=>(b.last_active||"").localeCompare(a.last_active||"")).slice(0,10);
-        document.getElementById("ec").textContent=(ad2.total_events||0)+"条";
-        const eb=document.getElementById("eb");
-        if(ev.length){
-eb.innerHTML=ev.map((p,i)=>'<tr><td class="i">'+(i+1)+'</td><td class="nm">'+p.name+'</td><td><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:'+(p.is_online?"var(--sc)":"var(--tm)")+'"></span></td><td class="mono">'+(p.last_active_display||formatMYT(p.last_active)||"—")+'</td></tr>').join("");
-        } else {
-          eb.innerHTML='<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无</td></tr>';
+          sb.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:32px;color:var(--tm)">暂无数据</td></tr>';
         }
       }
     }catch(e){}
