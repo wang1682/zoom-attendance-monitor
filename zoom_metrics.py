@@ -166,12 +166,31 @@ class ZoomMetrics:
                 raw = p.get("name", "").strip()
                 dn = _db.resolve_display_name(raw)["display_name"]
                 key = dn.lower().replace(" ", "")
+                from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+                _MYT = _tz(_td(hours=8))
+                _now = _dt.now(_tz.utc)
+                _jt = p.get("join_time", "")
+                _lad = ""
+                _myt = ""
+                if _jt:
+                    try:
+                        _jd = _dt.fromisoformat(_jt.replace("Z", "+00:00"))
+                        _secs = int((_now - _jd).total_seconds())
+                        if _secs < 60: _lad = "刚刚"
+                        elif _secs < 3600: _lad = str(_secs // 60) + "分钟前"
+                        elif _secs < 86400: _lad = str(_secs // 3600) + "小时前"
+                        else: _lad = _jd.astimezone(_MYT).strftime("%m-%d %H:%M")
+                        _myt = _jd.astimezone(_MYT).strftime("%m-%d %H:%M:%S")
+                    except:
+                        _lad = _jt[:16]
+                        _myt = _jt[:16]
                 if key not in ps_map:
                     ps_map[key] = {
                         "name": dn,
                         "is_online": p.get("status") == "in_meeting",
-                        "last_active": p.get("join_time", ""),
-                        "last_active_display": p.get("join_time_display", ""),
+                        "last_active": _jt,
+                        "last_active_display": _lad,
+                        "last_active_myt": _myt,
                         "total_actions": 1,
                         "duration_display": p.get("online_display", ""),
                         "flags": [],
