@@ -967,7 +967,7 @@ def build_app() -> "FastAPI":
         active = []
         for uid, info in merged.items():
             st = info.get("start_time", "")
-            m = mins_between(st)
+            m = max(0, mins_between(st))
             active.append({
                 "name": info.get("name", ""),
                 "raw_name": info.get("raw_name", ""),
@@ -1186,7 +1186,7 @@ def build_app() -> "FastAPI":
                                     if jt:
                                         try:
                                             jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                            mins = int((now_utc - jd).total_seconds() / 60)
+                                            mins = max(0, int((now_utc - jd).total_seconds() / 60))
                                         except: pass
                                     if mins >= threshold:
                                         alert_key = f"sharing_timeout_{name_raw}_{mid}"
@@ -1619,7 +1619,7 @@ def build_app() -> "FastAPI":
                                 if jt:
                                     try:
                                         jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                        mins = int((now_utc - jd).total_seconds() / 60)
+                                        mins = max(0, int((now_utc - jd).total_seconds() / 60))
                                         disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
                                     except:
                                         pass
