@@ -617,7 +617,7 @@ def build_app() -> "FastAPI":
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
             name = participant.get("user_name", "").strip()
-            user_id = str(participant.get("user_id", ""))
+            user_id = re.sub(r"[^0-9]", "", str(participant.get("user_id", "")))[:20]
             sd = participant.get("sharing_details", {})
             content = sd.get("content", "")
             dt_str = sd.get("date_time", "")
@@ -943,7 +943,7 @@ def build_app() -> "FastAPI":
                 et = p.get("event", "")
                 obj = p.get("payload", {}).get("object", p.get("object", {}))
                 pt = obj.get("participant", {})
-                uid = str(pt.get("user_id", "")).split("20")[0]
+                uid = re.sub(r"[^0-9]", "", str(pt.get("user_id", "")))[:20]
                 raw = pt.get("user_name", "").strip()
                 sd = pt.get("sharing_details", {})
                 dt_str = sd.get("date_time", "")
@@ -1069,7 +1069,7 @@ def build_app() -> "FastAPI":
                 et = p.get("event", "")
                 obj = p.get("payload", {}).get("object", p.get("object", {}))
                 pt = obj.get("participant", {})
-                uid = str(pt.get("user_id", "")).split("20")[0]
+                uid = re.sub(r"[^0-9]", "", str(pt.get("user_id", "")))[:20]
                 raw = pt.get("user_name", "").strip()
                 sd = pt.get("sharing_details", {})
                 mid = str(obj.get("id", ""))
@@ -1635,139 +1635,96 @@ def build_app() -> "FastAPI":
     # ── 实时功能 ────────────────────────────────────────────────────────────
 
     async def _build_live_from_metrics(meetings_data: list, token: str) -> dict:
-            """Unified live state builder — canonical data source for all pages"""
-            import httpx
-            from datetime import datetime, timezone, timedelta
-            MYT = timezone(timedelta(hours=8))
-            now_utc = datetime.now(timezone.utc)
-    
-            meetings = {}
-            participants_summary = {}  # key -> aggregated record
-            top_active = {}
-            online_count = 0
-    
-            async with httpx.AsyncClient(timeout=10) as client:
-                for m in meetings_data:
-                    mid = str(m.get("id", ""))
-                    topic = m.get("topic", mid)
-                    raw_count = m.get("participants", 0)
-                    online_count += raw_count
-                    start_time = m.get("start_time", "")
-                    elapsed = 0
-                    if start_time:
-                        try:
-                            sd = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                            elapsed = int((now_utc - sd).total_seconds() / 60)
-                        except:
-                            pass
-                    meetings[mid] = {"meeting_id": mid, "topic": topic,
-                                     "raw_online_count": raw_count,
-                                     "start_time": start_time,
-                                     "elapsed_minutes": elapsed}
-    
+        """Unified live state builder"""
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        MYT = timezone(timedelta(hours=8))
+        now_utc = datetime.now(timezone.utc)
+        meetings = {}
+        participants_summary = {}
+        top_active = {}
+        online_count = 0
+        async with httpx.AsyncClient(timeout=10) as client:
+            for m in meetings_data:
+                mid = str(m.get("id", ""))
+                topic = m.get("topic", mid)
+                raw_count = m.get("participants", 0)
+                online_count += raw_count
+                start_time = m.get("start_time", "")
+                elapsed = 0
+                if start_time:
                     try:
-                        pr = await client.get(
-                            "https://api.zoom.us/v2/metrics/meetings/{}/participants?page_size=300".format(mid),
-                            headers={"Authorization": "Bearer {}".format(token)})
-                        if pr.status_code == 200:
-                            for p in pr.json().get("participants", []):
-                                name = p.get("user_name", "").strip()
-                                if not name:
-                                    continue
-                                jt = p.get("join_time", "")
-                                is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
-                                share_content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else ("whiteboard" if p.get("share_whiteboard") else ""))
-    
-                                # resolve display name
+                        sd = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                        elapsed = int((now_utc - sd).total_seconds() / 60)
+                    except: pass
+                meetings[mid] = {"meeting_id": mid, "topic": topic,
+                                 "raw_online_count": raw_count,
+                                 "start_time": start_time, "elapsed_minutes": elapsed}
+                try:
+                    pr = await client.get(
+                        "https://api.zoom.us/v2/metrics/meetings/" + mid + "/participants?page_size=300",
+                        headers={"Authorization": "Bearer " + token})
+                    if pr.status_code == 200:
+                        for p in pr.json().get("participants", []):
+                            name = p.get("user_name", "").strip()
+                            if not name: continue
+                            jt = p.get("join_time", "")
+                            is_sh = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
+                            sc = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else ("whiteboard" if p.get("share_whiteboard") else ""))
+                            try:
+                                r = db.resolve_display_name(name)
+                                dn = r["display_name"]
+                            except: dn = name
+                            mins = 0; disp = ""; jtd = ""
+                            if jt:
                                 try:
-                                    resolved = db.resolve_display_name(name)
-                                    display_name = resolved["display_name"]
-                                except:
-                                    display_name = name
-    
-                                # online time
-                                mins = 0
-                                disp = ""
-                                if jt:
-                                    try:
-                                        jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                        mins = max(0, int((now_utc - jd).total_seconds() / 60))
-                                        disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
-                                    except:
-                                        pass
-    
-                                # Online status: 10min stale cutoff
-                                is_online = True
-                                if jt:
-                                    try:
-                                        jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                        if (now_utc - jd).total_seconds() > 600:
-                                            is_online = False
-                                    except:
-                                        pass
-    
-                                # MYT display
-                                jt_display = ""
-                                if jt:
-                                    try:
-                                        jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                        jt_display = jd.astimezone(MYT).strftime("%m-%d %H:%M:%S")
-                                    except:
-                                        jt_display = jt[:16]
-    
-                                key = display_name.strip().lower().replace(" ", "")
-                                top_active[display_name] = top_active.get(display_name, 0) + 1
-    
-                                if key not in participants_summary:
-                                    participants_summary[key] = {
-                                        "name": display_name,
-                                        "is_online": is_online,
-                                        "last_active": jt,
-                                        "last_active_display": jt_display,
-                                        "total_actions": 0,
-                                        "duration_display": disp,
-                                        "flags": [],
-                                        "email": p.get("email", ""),
-                                        "meeting_id": mid,
-                                        "is_sharing": is_sharing,
-                                        "share_content": share_content,
-                                    }
-                                else:
-                                    participants_summary[key]["total_actions"] += 1
-                                    if jt and (not participants_summary[key]["last_active"] or jt > participants_summary[key]["last_active"]):
-                                        participants_summary[key]["last_active"] = jt
-                                        participants_summary[key]["last_active_display"] = jt_display
-                                        participants_summary[key]["duration_display"] = disp
-                                    if is_sharing:
-                                        participants_summary[key]["is_sharing"] = True
-                                        participants_summary[key]["share_content"] = share_content
-                                    if not participants_summary[key]["is_online"] and is_online:
-                                        participants_summary[key]["is_online"] = is_online
-                    except:
-                        pass
-    
-            ps_list = list(participants_summary.values())
-            ps_list.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
-            online_list = [p for p in ps_list if p["is_online"]]
-            sharing_list = [p for p in online_list if p.get("is_sharing")]
-    
-            sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
-    
-            return {
-                "ok": True,
-                "total_online": len(online_list),
-                "total_online_raw": online_count,
-                "meetings": list(meetings.values()),
-                "participants_summary": ps_list,
-                "online_list": online_list,
-                "sharing_list": sharing_list,
-                "unique_participants": len(ps_list),
-                "top_online": sorted(online_list, key=lambda x: int(x.get("duration_display", "0").replace("h","").replace("分钟","") or 0), reverse=True)[:5],
-                "top_active": [{"name": k, "count": v} for k, v in sa],
-                "anomalies": [],
-                "health_level": "green",
-                "ai_summary": "当前在线 {} 人，{} 个活跃会议室".format(len(online_list), len(meetings_data)),
-            }
+                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                    mins = max(0, int((now_utc - jd).total_seconds() / 60))
+                                    disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
+                                    jtd = jd.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+                                except: pass
+                            ol = True
+                            if jt:
+                                try:
+                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                    if (now_utc - jd).total_seconds() > 600: ol = False
+                                except: pass
+                            key = dn.lower().replace(" ", "")
+                            top_active[dn] = top_active.get(dn, 0) + 1
+                            if key not in participants_summary:
+                                participants_summary[key] = {"name": dn, "is_online": ol,
+                                    "last_active": jt, "last_active_display": jtd,
+                                    "total_actions": 0, "duration_display": disp, "flags": [],
+                                    "email": p.get("email", ""), "meeting_id": mid,
+                                    "is_sharing": is_sh, "share_content": sc}
+                            else:
+                                participants_summary[key]["total_actions"] += 1
+                                if jt and (not participants_summary[key]["last_active"] or jt > participants_summary[key]["last_active"]):
+                                    participants_summary[key]["last_active"] = jt
+                                    participants_summary[key]["last_active_display"] = jtd
+                                    participants_summary[key]["duration_display"] = disp
+                                if is_sh: participants_summary[key]["is_sharing"] = True
+                                if not participants_summary[key]["is_online"] and ol:
+                                    participants_summary[key]["is_online"] = ol
+                except: pass
+        ps = list(participants_summary.values())
+        ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
+        ol_list = [p for p in ps if p["is_online"]]
+        sl_list = [p for p in ol_list if p.get("is_sharing")]
+        sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
+        return {
+            "ok": True,
+            "total_online": len(ol_list),
+            "meetings": list(meetings.values()),
+            "participants_summary": ps,
+            "online_list": ol_list,
+            "sharing_list": sl_list,
+            "unique_participants": len(ps),
+            "top_online": sorted(ol_list, key=lambda x: int(x.get("duration_display","0").replace("h","").replace("分钟","") or 0), reverse=True)[:5],
+            "top_active": [{"name": k, "count": v} for k, v in sa],
+            "anomalies": [], "health_level": "green",
+            "ai_summary": "当前在线 {} 人，{} 个活跃会议室".format(len(ol_list), len(meetings_data)),
+        }
 
     @app.get("/api/v2/live")
     async def api_live():
