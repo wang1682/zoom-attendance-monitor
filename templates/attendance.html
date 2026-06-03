@@ -55,9 +55,9 @@
   </div>
 </div>
 
-<div class="chart-wrap">
+<div class="chart-wrap" style="height:220px;position:relative">
   <h3>📊 出勤趋势</h3>
-  <canvas id="attChart" height="180"></canvas>
+  <canvas id="attChart" style="width:100%;height:180px"></canvas>
 </div>
 
 <div class="card" id="attCard">
@@ -94,13 +94,23 @@ async function loadAtt(p){
     t.innerHTML='<tr><td colspan="6"><div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">今天还没有出勤记录</div></div></td></tr>';
   }
 
-  // Chart — duration per member (top 8)
-  const top8=ms.slice(0,8);
-  if(attChart) attChart.destroy();
+  // Chart — duration per member (top 8, skip negative)
+  const top8=ms.slice(0,8).filter(m=>m.total_duration_min>=0);
+  if(attChart) { attChart.destroy(); attChart=null; }
   const isDark=document.documentElement.getAttribute('data-theme')==='dark';
   const textColor=isDark?'#94a3b8':'#64748b';
   const gridColor=isDark?'#1a2540':'#f1f5f9';
-  attChart=new Chart(document.getElementById('attChart'),{
+  // Replace canvas and create chart on next tick
+  const oldCanvas=document.getElementById('attChart');
+  if(oldCanvas){
+    const wrap=oldCanvas.parentElement;
+    const newCanvas=document.createElement('canvas');
+    newCanvas.id='attChart';
+    newCanvas.style.cssText='width:100%;height:180px;display:block';
+    oldCanvas.replaceWith(newCanvas);
+    setTimeout(function(){
+      try {
+        attChart=new Chart(newCanvas,{
     type:'bar',
     data:{
       labels:top8.map(m=>m.name),
@@ -118,9 +128,12 @@ async function loadAtt(p){
         x:{ticks:{color:textColor,font:{size:10}},grid:{display:false}},
         y:{ticks:{color:textColor,font:{size:10}},grid:{color:gridColor},beginAtZero:true}
       }
-    }
-  });
+    });
+      } catch(e){ console.error('Chart error:', e); }
+    }, 50);
+  }
 }
+// Render immediately, Chart.js will be loaded from head
 loadAtt('week');
 // Watch theme toggle
 const _origTheme=document.querySelector('#tB')?.onclick;

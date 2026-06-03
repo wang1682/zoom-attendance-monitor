@@ -178,6 +178,7 @@ a{color:var(--pr);text-decoration:none}
         <a href="/live" class="ni {% if request.url.path == '/live' %}act{% endif %}"><i data-lucide="radio" class="ic"></i><span>实时在线</span></a>
         <a href="/participants" class="ni {% if request.url.path == '/participants' %}act{% endif %}"><i data-lucide="users" class="ic"></i><span>参会明细</span></a>
         <a href="/alerts" class="ni {% if request.url.path == '/alerts' %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警日志</span></a>
+        <a href="/sharing" class="ni {% if request.url.path == '/sharing' %}act{% endif %}"><i data-lucide="monitor" class="ic"></i><span>共享监控</span></a>
       </div></div>
       <div class="st-label">ANALYTICS</div>
       <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
@@ -211,6 +212,7 @@ function uB(t){const b=document.getElementById('tB');if(b)b.textContent=t==='dar
 function tN(id,el){const s=document.getElementById(id);if(!s)return;s.classList.toggle('cl');const c=el.querySelector('.cv');if(c)c.classList.toggle('op')}
 function tM(){document.getElementById('sd').classList.toggle('op');document.getElementById('mO').classList.toggle('sh')}
 function to_myt(s){if(!s||s==='—')return'—';try{const d=new Date(s.replace('Z','+00:00'));if(isNaN(d.getTime()))return s.slice(11,16);return d.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'Asia/Kuala_Lumpur'})}catch(e){return s.slice(11,16)}}
+function formatMYT(s){return to_myt(s)}
 async function cZ(){const r=await fetch('/api/v2/auth/login');const d=await r.json();if(d.ok&&d.auth_url){if(d.is_mobile){const t=setTimeout(()=>window.location.href=d.fallback_url,3000);window.location.href=d.auth_url;document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(t)})}else window.location.href=d.auth_url}}
 </script>
 </body>
