@@ -1676,9 +1676,17 @@ def build_app() -> "FastAPI":
                                 if jt and (not existing_ps["last_active"] or jt > existing_ps["last_active"]):
                                     existing_ps["last_active"] = jt
                             else:
-                                participants_summary.append({
+                                is_online_val = True
+                            if jt:
+                                try:
+                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                    if (now_utc - jd).total_seconds() > 600:
+                                        is_online_val = False
+                                except:
+                                    pass
+                            participants_summary.append({
                                     "_key": key, "name": name, "email": p.get("email", ""), "meeting_id": mid,
-                                    "is_online": True, "last_active": jt,
+                                    "is_online": is_online_val, "last_active": jt,
                                     "total_actions": 1, "duration_display": disp, "flags": []})
                 except:
                     pass
@@ -1804,6 +1812,15 @@ def build_app() -> "FastAPI":
             last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND name = ?", (today, name)).fetchone()[0]
             last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
             is_online = last_action and last_action[0] == "enter"
+            # 检查是否在10分钟内活跃
+            if is_online and last_time:
+                try:
+                    last_dt = datetime.fromisoformat(last_time.replace("Z", "+00:00"))
+                    now_utc = datetime.now(timezone.utc)
+                    if (now_utc - last_dt).total_seconds() > 600:
+                        is_online = False
+                except:
+                    pass
 
             # 在线时长（前30对进出配对）
             pairs = conn.execute("""
