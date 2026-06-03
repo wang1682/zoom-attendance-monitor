@@ -1,3 +1,4 @@
+import os
 """
 app.py — Zoom 参会监控统一入口
 Modes:
@@ -307,7 +308,7 @@ def build_app() -> "FastAPI":
             import requests as req
             ai = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions",
                 json={"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 500},
-                headers={"Authorization": "Bearer sk-91f4854792e51c66d3a558227c54a5312fd59dfc71ad2c4cfa5ce39192d936cf"},
+                headers={"Authorization": "Bearer " + (os.environ.get("SUB2API_KEY") or os.environ.get("DEEPSEEK_API_KEY", ""))},
                 timeout=30)
             d = ai.json()
             report = d["choices"][0]["message"]["content"] if d.get("choices") else "AI 暂时不可用"
@@ -401,8 +402,44 @@ def build_app() -> "FastAPI":
         except: result["zoom_api"] = "timeout"
         # Webhook
         try:
-            w = req.get("http://127.0.0.1:9000/health", timeout=3)
+            w = req.get("http://zoom-webhook:9000/health", timeout=3)
             result["webhook"] = "ok" if w.status_code == 200 else "error"
+            if result["webhook"] == "ok":
+                try:
+                    conn = db._get_conn()
+                    last = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
+                    if last:
+                        from datetime import datetime, timezone, timedelta
+                        MYT = timezone(timedelta(hours=8))
+                        try:
+                            last_clean = last.replace("Z", "+00:00")
+                            if "+" not in last_clean and last_clean.count("-") >= 2:
+                                last_clean += "+00:00"
+                            last_dt = datetime.fromisoformat(last_clean)
+                            result["webhook_last_event"] = last_dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+                            delta = (datetime.now(timezone.utc) - last_dt).total_seconds()
+                            result["webhook_last_event_age_seconds"] = int(delta)
+                            if delta < 60:
+                                result["webhook_last_event_age_text"] = "刚刚"
+                            elif delta < 900:
+                                result["webhook_last_event_age_text"] = f"{int(delta//60)} 分钟前"
+                            elif delta < 3600:
+                                result["webhook_last_event_age_text"] = f"{int(delta//60)} 分钟前"
+                            else:
+                                result["webhook_last_event_age_text"] = f"{int(delta//3600)} 小时前"
+                            if delta <= 900:
+                                result["webhook_status"] = "healthy"
+                            elif delta <= 3600:
+                                result["webhook_status"] = "warning"
+                            else:
+                                result["webhook_status"] = "offline"
+                        except Exception as e:
+                            result["webhook_status"] = f"unknown({str(e)[:30]})"
+                    else:
+                        result["webhook_status"] = "offline"
+                        result["webhook_last_event_age_text"] = "无事件"
+                except:
+                    result["webhook_status"] = "unknown"
         except: result["webhook"] = "timeout"
         # Telegram
         try:
@@ -411,7 +448,7 @@ def build_app() -> "FastAPI":
         except: result["telegram"] = "timeout"
         # sub2api
         try:
-            s2 = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions", json={"model":"gpt-5.4-mini","messages":[{"role":"user","content":"hi"}],"max_tokens":5}, headers={"Authorization":"Bearer sk-91f4854792e51c66d3a558227c54a5312fd59dfc71ad2c4cfa5ce39192d936cf"}, timeout=8)
+            s2 = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions", json={"model":"gpt-5.4-mini","messages":[{"role":"user","content":"hi"}],"max_tokens":5}, headers={"Authorization":"Bearer " + (os.environ.get("SUB2API_KEY") or os.environ.get("DEEPSEEK_API_KEY", ""))}, timeout=8)
             result["sub2api"] = "ok" if s2.status_code == 200 else "error"
         except: result["sub2api"] = "timeout"
         # DB
@@ -1271,7 +1308,7 @@ def build_app() -> "FastAPI":
             import requests as req
             ai_resp = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions",
                 json={"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 500},
-                headers={"Authorization": "Bearer sk-91f4854792e51c66d3a558227c54a5312fd59dfc71ad2c4cfa5ce39192d936cf"},
+                headers={"Authorization": "Bearer " + (os.environ.get("SUB2API_KEY") or os.environ.get("DEEPSEEK_API_KEY", ""))},
                 timeout=30)
             d = ai_resp.json()
             report = d["choices"][0]["message"]["content"] if d.get("choices") else "AI 分析暂不可用"

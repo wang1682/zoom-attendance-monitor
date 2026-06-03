@@ -1,0 +1,54 @@
+<!-- TEMPLATE: sharing.html -->
+{% extends "base.html" %}
+{% block title %}共享监控{% endblock %}
+{% block content %}
+<div class="page-container">
+<div class="page-header"><h1 class="page-title">🖥 共享监控</h1><p class="page-subtitle">实时屏幕共享状态</p></div>
+
+<div class="trend-summary" id="shareSummary">
+  <div class="trend-card"><div class="t-icon">🖥</div><div class="t-value" id="sActive">—</div><div class="t-label">当前共享</div></div>
+  <div class="trend-card"><div class="t-icon">📊</div><div class="t-value" id="sTotal">—</div><div class="t-label">今日共享次数</div></div>
+  <div class="trend-card"><div class="t-icon">👥</div><div class="t-value" id="sUsers">—</div><div class="t-label">共享成员</div></div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header"><h2>当前共享</h2></div>
+  <tbody id="currentTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="card-header"><h2>今日共享历史</h2></div>
+  <table class="data-table"><thead><tr><th>成员</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr></thead><tbody id="historyTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table>
+</div>
+</div>
+
+<script>
+async function loadShare(){
+  const r=await fetch("/api/v3/sharing-live");
+  const d=await r.json();
+  if(!d.ok)return;
+  
+  document.getElementById("sActive").textContent=d.current_sharing.length;
+  document.getElementById("sTotal").textContent=d.today_summary.sharing_count;
+  document.getElementById("sUsers").textContent=d.today_summary.unique_users;
+  
+  // Current sharing
+  const ct=document.getElementById("currentTable");
+  if(d.current_sharing.length){
+    ct.innerHTML=d.current_sharing.map(s=>`<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display}</td><td>—</td><td><span class="badge badge-green">${s.duration_display}</span></td></tr>`).join("");
+  } else {
+    ct.innerHTML='<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--tm)">当前无人共享</td></tr>';
+  }
+  
+  // History
+  const ht=document.getElementById("historyTable");
+  if(d.today_history.length){
+    ht.innerHTML=d.today_history.map(s=>`<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display}</td><td>${s.end_time_display||'进行中'}</td><td><span class="badge badge-green">${s.duration_display}</span></td></tr>`).join("");
+  } else {
+    ht.innerHTML='<tr><td colspan="5" class="td-empty">暂无记录</td></tr>';
+  }
+}
+loadShare();
+setInterval(loadShare,15000);
+</script>
+{% endblock %}

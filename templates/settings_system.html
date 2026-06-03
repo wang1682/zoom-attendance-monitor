@@ -21,8 +21,8 @@
 </div>
 <script>
 async function health(){const b=document.getElementById("hBtn");const e=document.getElementById("hResults");b.disabled=true;b.textContent="⏳";
-try{const j=await(await fetch("/api/health-check")).json();const items=[{l:"Zoom API",k:"zoom_api"},{l:"Webhook",k:"webhook"},{l:"Telegram",k:"telegram"},{l:"AI",k:"sub2api"},{l:"数据库",k:"database"}];
-e.innerHTML=items.map(i=>{const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");return'<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+(ok?'✅':'❌')+" "+v+"</span></div>"}).join("")}catch(e){e.innerHTML="失败"}
+try{const j=await(await fetch("/api/health-check")).json();const items=[{l:"Zoom API",k:"zoom_api"},{l:"Webhook",k:"webhook",s:j.webhook_status,e:j.webhook_last_event,a:j.webhook_last_event_age_text},{l:"Telegram",k:"telegram"},{l:"AI",k:"sub2api"},{l:"数据库",k:"database"}];
+e.innerHTML=items.map(i=>{const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");let extra="";if(i.s){const c=i.s==="healthy"?"bg-g":i.s==="warning"?"bg-y":"bg-r";extra=` <span class="${c}" style="font-size:10px;padding:1px 6px;border-radius:4px">${i.s}</span>`;if(i.e)extra+=` <span style="font-size:10px;color:var(--tm)">${i.e}</span>`;if(i.a)extra+=` <span style="font-size:9px;color:var(--tm)">${i.a}</span>`}return'<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+(ok?'✅':'❌')+" "+v+extra+"</span></div>"}).join("")}catch(e){e.innerHTML="失败"}
 b.disabled=false;b.textContent="↻ 刷新"}
 </script>
 {% endblock %}
