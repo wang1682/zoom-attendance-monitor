@@ -100,6 +100,7 @@ async function ld(){
     const j=await r.json();
     if(!j.ok)return;
     const d=j.data;
+    const v3data=d;
     const totalOnline=d.total_online||0;
     const meetings=d.meetings||[];
     const allParticipants=[];

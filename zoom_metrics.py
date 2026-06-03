@@ -94,6 +94,8 @@ class ZoomMetrics:
                     seen[key] = {
                         "name": display,
                         "raw_name": raw_name,
+                        "meeting_id": mid,
+                        "meeting_topic": topic,
                         "user_id": uid,
                         "join_time": p.get("join_time", ""),
                         "status": p.get("status"),
