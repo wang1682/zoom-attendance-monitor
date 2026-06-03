@@ -637,8 +637,6 @@ def build_app() -> "FastAPI":
 
         # ── Webhook Telegram Push ──────────────────────────────────────
         try:
-            rule = conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone() if 'conn' in dir() else conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone()
-            # Re-get conn if needed
             p_conn = db._get_conn()
             rule = p_conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone()
             if rule and rule[0] == 1:
@@ -686,18 +684,32 @@ def build_app() -> "FastAPI":
                     push_title = "结束共享屏幕"
                 
                 if push_title and ename:
-                    dedup_key = f"wh_push_{push_event}_{pid}_{sdt or now_utc.isoformat()[:16]}"
+                    mid = str(obj.get("id", ""))
+                    event_ts = sdt or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    user_key = pid or ename.strip().lower().replace(" ", "")
+                    dedup_key = "webhook:" + push_event + ":" + mid + ":" + user_key + ":" + event_ts[:16]
+                    sys.stderr.write("[PUSH] dedup_key=" + dedup_key + "\n")
+                    sys.stderr.flush()
                     already = p_conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)).fetchone()
-                    if not already:
-                        mid = str(obj.get("id", ""))
+                    if already:
+                        sys.stderr.write("[PUSH] duplicate, skipped\n")
+                        sys.stderr.flush()
+                    else:
                         content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                         extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
                         text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
                         result = send_message(text)
+                        sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
+                        sys.stderr.flush()
                         if result.get("ok"):
                             p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
                                 (dedup_key, "webhook_event_push", now_utc.isoformat()))
                             p_conn.commit()
+                            sys.stderr.write("[PUSH] inserted alert_sent\n")
+                            sys.stderr.flush()
+                        else:
+                            sys.stderr.write("[PUSH] send failed: " + str(result.get("error", "")) + "\n")
+                            sys.stderr.flush()
         except Exception as e:
             sys.stderr.write(f"[WEBHOOK_PUSH] error: {e}\n")
             sys.stderr.flush()
