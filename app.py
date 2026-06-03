@@ -112,6 +112,10 @@ def build_app() -> "FastAPI":
             "INSERT OR IGNORE INTO alert_rules (rule_type, enabled, threshold_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
             ("sharing_timeout", 1, 30, now, now)
         )
+        conn.execute(
+            "INSERT OR IGNORE INTO alert_rules (rule_type, enabled, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("webhook_event_push", 1, now, now)
+        )
         conn.commit()
     except:
         pass
@@ -631,6 +635,74 @@ def build_app() -> "FastAPI":
                 )
             conn.commit()
 
+        # ── Webhook Telegram Push ──────────────────────────────────────
+        try:
+            rule = conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone() if 'conn' in dir() else conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone()
+            # Re-get conn if needed
+            p_conn = db._get_conn()
+            rule = p_conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone()
+            if rule and rule[0] == 1:
+                from telegram_push import send_message
+                import datetime as _dt
+                MYT = _dt.timezone(_dt.timedelta(hours=8))
+                now_utc = _dt.datetime.now(_dt.timezone.utc)
+                now_myt_str = now_utc.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+                
+                # Build dedup key
+                obj = payload.get("payload", {}).get("object", payload.get("object", {}))
+                participant = obj.get("participant", {})
+                pid = str(participant.get("user_id", "")) or str(participant.get("id", ""))
+                ename = participant.get("user_name", "").strip()
+                sd = participant.get("sharing_details", {})
+                sdt = sd.get("date_time", "")
+                
+                # Determine event type for display
+                push_event = "unknown"
+                push_icon = "ℹ️"
+                push_title = ""
+                if "participant_joined" in event_type and "waiting_room" not in event_type:
+                    push_event = "participant_joined"
+                    push_icon = "📌"
+                    push_title = "会议有新人加入"
+                elif "participant_left" in event_type:
+                    push_event = "participant_left"
+                    push_icon = "🚪"
+                    push_title = "成员离开会议"
+                elif "waiting_room" in event_type and "joined" in event_type:
+                    push_event = "waiting_room_joined"
+                    push_icon = "⏳"
+                    push_title = "有人在等候室"
+                elif "admitted" in event_type:
+                    push_event = "admitted"
+                    push_icon = "✅"
+                    push_title = "等候室成员已准入"
+                elif "sharing_started" in event_type:
+                    push_event = "sharing_started"
+                    push_icon = "🖥"
+                    push_title = "开始共享屏幕"
+                elif "sharing_ended" in event_type:
+                    push_event = "sharing_ended"
+                    push_icon = "🖥"
+                    push_title = "结束共享屏幕"
+                
+                if push_title and ename:
+                    dedup_key = f"wh_push_{push_event}_{pid}_{sdt or now_utc.isoformat()[:16]}"
+                    already = p_conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)).fetchone()
+                    if not already:
+                        mid = str(obj.get("id", ""))
+                        content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
+                        extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
+                        text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
+                        result = send_message(text)
+                        if result.get("ok"):
+                            p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
+                                (dedup_key, "webhook_event_push", now_utc.isoformat()))
+                            p_conn.commit()
+        except Exception as e:
+            sys.stderr.write(f"[WEBHOOK_PUSH] error: {e}\n")
+            sys.stderr.flush()
+        # ────────────────────────────────────────────────────────────────
+        
         return {"ok": True}
 
     # ── 健康检查 ─────────────────────────────────────────────────────────────
@@ -1562,16 +1634,45 @@ def build_app() -> "FastAPI":
                                     disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
                                 except:
                                     pass
-                            online.append({"name": name, "meeting_id": mid, "topic": topic,
-                                           "enter_time": jt, "online_minutes": mins,
-                                           "online_display": disp})
                             top_active[name] = top_active.get(name, 0) + 1
-                            participants_summary.append({
-                                "name": name, "email": p.get("email", ""), "meeting_id": mid,
-                                "is_online": True, "last_active": jt,
-                                "total_actions": 1, "duration_display": disp, "flags": []})
+                            # Aggregate online by name (deduplicate)
+                            key = name.strip().lower().replace(" ", "")
+                            existing_online = None
+                            for o in online:
+                                if o["_key"] == key:
+                                    existing_online = o
+                                    break
+                            if existing_online:
+                                existing_online["total_actions"] = existing_online.get("total_actions", 0) + 1
+                                if jt and (not existing_online["enter_time"] or jt < existing_online["enter_time"]):
+                                    existing_online["enter_time"] = jt
+                                    existing_online["online_minutes"] = mins
+                                    existing_online["online_display"] = disp
+                            else:
+                                online.append({"_key": key, "name": name, "meeting_id": mid, "topic": topic,
+                                               "enter_time": jt, "online_minutes": mins,
+                                               "online_display": disp, "total_actions": 1})
+                            # Aggregate participants_summary by name
+                            existing_ps = None
+                            for ps in participants_summary:
+                                if ps["_key"] == key:
+                                    existing_ps = ps
+                                    break
+                            if existing_ps:
+                                existing_ps["total_actions"] += 1
+                                existing_ps["duration_display"] = disp
+                                if jt and (not existing_ps["last_active"] or jt > existing_ps["last_active"]):
+                                    existing_ps["last_active"] = jt
+                            else:
+                                participants_summary.append({
+                                    "_key": key, "name": name, "email": p.get("email", ""), "meeting_id": mid,
+                                    "is_online": True, "last_active": jt,
+                                    "total_actions": 1, "duration_display": disp, "flags": []})
                 except:
                     pass
+        # Remove internal _key from output
+        for o in online: o.pop("_key", None)
+        for p in participants_summary: p.pop("_key", None)
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
         total_unique = len(set(p["name"] for p in participants_summary))
         return {
