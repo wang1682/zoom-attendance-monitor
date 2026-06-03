@@ -102,6 +102,22 @@ def build_app() -> "FastAPI":
     tmpl.env.filters["myt"] = to_myt
 
     # ── DB 初始化中间件 ─────────────────────────────────────────────────────
+    # ── Alert rules seed ────────────────────────────────────────────────
+    try:
+        conn = db._get_conn()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        # sharing_timeout rule: enabled by default, threshold 30 min
+        conn.execute(
+            "INSERT OR IGNORE INTO alert_rules (rule_type, enabled, threshold_minutes, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("sharing_timeout", 1, 30, now, now)
+        )
+        conn.commit()
+    except:
+        pass
+    # ────────────────────────────────────────────────────────────────────
+
+
     @app.middleware("http")
     async def _ensure_db(request: Request, call_next):
         global DB_INITED
@@ -1063,6 +1079,93 @@ def build_app() -> "FastAPI":
     @app.get("/members", response_class=HTMLResponse)
     async def members_page(request: Request):
         return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})
+
+    @app.post("/api/v3/alert/test")
+    async def api_v3_alert_test():
+        """Test alert: send a sample sharing-timeout alert to Telegram"""
+        from telegram_push import send_message
+        result = send_message(
+            "⚠️ *共享超时告警测试*\n\n"
+            "成员：Dino Jun\n"
+            "会议：tuijin's Zoom Meeting\n"
+            "共享时长：32 分钟\n\n"
+            "查看：https://zoom.dhbwang.xyz/sharing"
+        )
+        return result
+
+    @app.get("/api/v3/alert/check-sharing")
+    async def api_v3_alert_check_sharing():
+        """Check current sharing for alerts. Manual trigger."""
+        from telegram_push import send_message
+        import httpx
+        from datetime import datetime, timezone, timedelta
+        
+        now_utc = datetime.now(timezone.utc)
+        conn = db._get_conn()
+        
+        # Get rule
+        rule = conn.execute("SELECT * FROM alert_rules WHERE rule_type='sharing_timeout' AND enabled=1").fetchone()
+        if not rule:
+            return {"ok": False, "error": "sharing_timeout rule not found or disabled"}
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(alert_rules)").fetchall()]
+        rule = dict(zip(cols, rule))
+        threshold = rule.get("threshold_minutes", 30)
+        
+        # Get current shared meetings via Metrics API
+        alerts_triggered = []
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                tr = await c.post("https://zoom.us/oauth/token",
+                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
+                if tr.status_code == 200:
+                    token = tr.json().get("access_token", "")
+                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
+                        headers={"Authorization": f"Bearer {token}"})
+                    if mr.status_code == 200:
+                        for m in mr.json().get("meetings", []):
+                            mid = str(m.get("id", ""))
+                            topic = m.get("topic", mid)
+                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
+                                headers={"Authorization": f"Bearer {token}"})
+                            if pr.status_code == 200:
+                                for p in pr.json().get("participants", []):
+                                    if p.get("status") != "in_meeting": continue
+                                    is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
+                                    if not is_sharing: continue
+                                    name_raw = p.get("user_name", "").strip()
+                                    resolved = db.resolve_display_name(name_raw)
+                                    display_name = resolved["display_name"]
+                                    jt = p.get("join_time", "")
+                                    mins = 0
+                                    if jt:
+                                        try:
+                                            jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                            mins = int((now_utc - jd).total_seconds() / 60)
+                                        except: pass
+                                    if mins >= threshold:
+                                        alert_key = f"sharing_timeout_{name_raw}_{mid}"
+                                        already = conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (alert_key,)).fetchone()
+                                        if not already:
+                                            text = (
+                                                "⚠️ *长时间共享*\n\n"
+                                                + f"成员：{display_name}\n"
+                                                + f"会议：{topic}\n"
+                                                + f"共享时长：{mins} 分钟\n\n"
+                                                + "查看：https://zoom.dhbwang.xyz/sharing"
+                                            )
+                                            result = send_message(text, rule.get("chat_id") or None)
+                                            if result.get("ok"):
+                                                conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
+                                                    (alert_key, "sharing_timeout", now_utc.isoformat()))
+                                                conn.commit()
+                                                alerts_triggered.append({"name": display_name, "minutes": mins, "sent": True})
+                                            else:
+                                                alerts_triggered.append({"name": display_name, "minutes": mins, "sent": False, "error": result.get("error")})
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        
+        return {"ok": True, "alerts": alerts_triggered}
     @app.get("/health")
     async def health():
         return {

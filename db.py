@@ -144,6 +144,28 @@ def init_db():
         
         "CREATE INDEX IF NOT EXISTS idx_sharing_active ON sharing_live(is_active)",
         "CREATE INDEX IF NOT EXISTS idx_sharing_user   ON sharing_live(user_name)",
+        "CREATE TABLE IF NOT EXISTS alert_rules ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  rule_type TEXT NOT NULL UNIQUE,"
+        "  enabled INTEGER NOT NULL DEFAULT 1,"
+        "  threshold_minutes INTEGER DEFAULT 30,"
+        "  threshold_count INTEGER DEFAULT 10,"
+        "  chat_id TEXT DEFAULT '',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_alert_rules_type ON alert_rules(rule_type)",
+
+        "CREATE TABLE IF NOT EXISTS alert_sent ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  alert_key TEXT NOT NULL UNIQUE,"
+        "  rule_type TEXT NOT NULL,"
+        "  sent_at TEXT"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_alert_sent_key ON alert_sent(alert_key)",
+
 
 
     ]
