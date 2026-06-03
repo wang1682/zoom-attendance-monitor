@@ -929,14 +929,14 @@ def build_app() -> "FastAPI":
                                "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
                 sources["sharing_live"] += 1
         
-        # Source 3: webhook events last 10 min (no sharing_ended received)
-        cutoff_10m = (now_utc - timedelta(minutes=10)).isoformat()
+        # Source 3: webhook events — recovery from last 2 hours (no ended received)
+        cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
         events = conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC LIMIT 50",
-            (cutoff_10m,)
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
+            (cutoff_2h,)
         ).fetchall()
-        started = {}
-        ended = set()
+        started = {}  # (meeting_id, user_id) -> info
+        ended = set()  # (meeting_id, user_id) -> ended
         for (payload_json,) in events:
             try:
                 p = _json.loads(payload_json)
@@ -949,19 +949,37 @@ def build_app() -> "FastAPI":
                 dt_str = sd.get("date_time", "")
                 content = sd.get("content", "")
                 mid = str(obj.get("id", ""))
-                if "started" in et and uid:
-                    started[uid] = {"raw_name": raw, "content": content, "start_time": dt_str, "meeting_id": mid}
+                if not uid or not mid:
+                    continue
+                key = (mid, uid)
+                if "started" in et:
+                    if key not in started:
+                        started[key] = {"raw_name": raw, "content": content, "start_time": dt_str, "meeting_id": mid}
                 elif "ended" in et:
-                    ended.add(uid)
+                    ended.add(key)
             except: pass
-        for uid in ended:
-            started.pop(uid, None)
-        for uid, info in started.items():
+        # Remove ended
+        for key in ended:
+            started.pop(key, None)
+        # Filter stale (>2h) and add
+        for key, info in list(started.items()):
+            st = info.get("start_time", "")
+            if st:
+                try:
+                    sd = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                    if (now_utc - sd).total_seconds() > 7200:
+                        started.pop(key, None)
+                        continue
+                except:
+                    pass
+            uid = key[1]
             if uid not in merged:
                 dn = db.resolve_display_name(info["raw_name"])["display_name"]
-                merged[uid] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid, "meeting_id": info.get("meeting_id", ""),
-                               "content": info.get("content", ""), "start_time": info.get("start_time", ""), "source": "webhook"}
-                sources["webhook"] += 1
+                merged[uid] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
+                               "meeting_id": info.get("meeting_id", ""),
+                               "content": info.get("content", ""), "start_time": info.get("start_time", ""),
+                               "source": "webhook_recovery"}
+                sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
         # Build output
         active = []
@@ -1040,10 +1058,64 @@ def build_app() -> "FastAPI":
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
         active_sharing = [dict(zip(live_cols, r)) for r in live_rows]
         
+        # Recovery candidates: started in last 2h without ended
+        recovery = []
+        for (payload_json,) in conn.execute(
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
+            ((now_utc - timedelta(hours=2)).isoformat(),)
+        ).fetchall():
+            try:
+                p = _json.loads(payload_json)
+                et = p.get("event", "")
+                obj = p.get("payload", {}).get("object", p.get("object", {}))
+                pt = obj.get("participant", {})
+                uid = str(pt.get("user_id", "")).split("20")[0]
+                raw = pt.get("user_name", "").strip()
+                sd = pt.get("sharing_details", {})
+                mid = str(obj.get("id", ""))
+                recovery.append({
+                    "event_type": et, "user_name": raw, "user_id": uid,
+                    "meeting_id": mid, "content": sd.get("content", ""),
+                    "date_time": sd.get("date_time", ""),
+                })
+            except: pass
+        # Get all unique share fields from Metrics API
+        share_fields_sample = []
+        try:
+            import httpx as _httpx
+            async def _fetch():
+                async with _httpx.AsyncClient(timeout=5) as c:
+                    tr = await c.post("https://zoom.us/oauth/token",
+                        data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                        auth=(settings.zoom_client_id, settings.zoom_client_secret))
+                    if tr.status_code == 200:
+                        tok = tr.json().get("access_token", "")
+                        import asyncio
+                        mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
+                            headers={"Authorization": f"Bearer {tok}"})
+                        if mr.status_code == 200:
+                            for m in mr.json().get("meetings", []):
+                                mid = str(m.get("id", ""))
+                                pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
+                                    headers={"Authorization": f"Bearer {tok}"})
+                                if pr.status_code == 200:
+                                    for p in pr.json().get("participants", [])[:10]:
+                                        share_fields_sample.append({
+                                            "name": p.get("user_name",""),
+                                            "share_application": p.get("share_application"),
+                                            "share_desktop": p.get("share_desktop"),
+                                            "share_whiteboard": p.get("share_whiteboard"),
+                                        })
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_fetch())
+            loop.close()
+        except: pass
+        
         return {
             "ok": True,
-            "events_30min": event_list,
+            "events_2h": recovery,
             "sharing_live_active": active_sharing,
+            "metrics_share_fields_sample": share_fields_sample,
         }
     @app.get("/sharing", response_class=HTMLResponse)
     async def sharing_page(request: Request):
