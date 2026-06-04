@@ -199,7 +199,7 @@ def build_app() -> "FastAPI":
                 "checkin_rate": 0,
             }
         return tmpl.TemplateResponse(request, "dashboard.html", {
-            "today": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "today": datetime.now(timezone.utc).astimezone(MYT).strftime("%Y-%m-%d"),
             "participants": participants,
             "alerts": alerts,
             "stats": stats,
