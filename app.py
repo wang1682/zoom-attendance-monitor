@@ -47,6 +47,47 @@ def to_myt_display(dt_str, fmt="%m-%d %H:%M:%S"):
         return dt_str[:16]
 
 
+# ── 统一时间工具函数 ──────────────────────────────────────────────────
+# 符合 TIME_TARGET_STATE.md 规范
+
+def utc_now() -> datetime:
+    """当前 UTC 时间"""
+    return datetime.now(timezone.utc)
+
+
+def myt_now() -> datetime:
+    """当前 MYT 时间"""
+    return datetime.now(timezone.utc).astimezone(MYT)
+
+
+def myt_day_range_to_utc(dt: datetime = None) -> tuple[str, str]:
+    """MYT 某日的 UTC 起止 ISO 字符串"""
+    if dt is None:
+        dt = myt_now()
+    myt_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    myt_end = myt_start + timedelta(days=1)
+    return (myt_start.astimezone(timezone.utc).isoformat(),
+            myt_end.astimezone(timezone.utc).isoformat())
+
+
+def parse_utc_iso(s: str) -> datetime | None:
+    """安全解析 ISO 时间字符串为 UTC aware datetime"""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except:
+        return None
+
+
+def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
+    """UTC ISO → MYT 显示字符串"""
+    dt = parse_utc_iso(s)
+    if dt is None:
+        return s[:16] if s else "—"
+    return dt.astimezone(MYT).strftime(fmt)
+
+
 
 def dedup_participants(participants):
     """合并连续同人的进出记录，只保留状态变化"""
@@ -1517,14 +1558,30 @@ def build_app() -> "FastAPI":
                 continue
 
             minutes = int(total_secs / 60)
+            is_late_flag = False
+            is_early_leave_flag = False
+            if minutes > 0 and enters:
+                try:
+                    enter_dt = datetime.fromisoformat(enters[0].replace("Z", "+00:00"))
+                    enter_myt_hour = enter_dt.astimezone(MYT).hour
+                    is_late_flag = enter_myt_hour >= 9
+                except:
+                    pass
+            if minutes > 0 and leaves:
+                try:
+                    leave_dt = datetime.fromisoformat(leaves[-1].replace("Z", "+00:00"))
+                    leave_myt_hour = leave_dt.astimezone(MYT).hour
+                    is_early_leave_flag = leave_myt_hour < 17
+                except:
+                    pass
 
             members.append({
                 "name": name, "meeting_id": mid,
                 "enter_time": enters[0] if enters else "",
                 "leave_time": leaves[-1] if leaves else "",
                 "duration_min": minutes,
-                "is_late": minutes > 0 and enters and datetime.fromisoformat(enters[0].replace("Z", "+00:00")).hour >= 9,
-                "is_early_leave": minutes > 0 and leaves and datetime.fromisoformat(leaves[-1].replace("Z", "+00:00")).hour < 17,
+                "is_late": is_late_flag,
+                "is_early_leave": is_early_leave_flag,
             })
 
         # 会议室维度

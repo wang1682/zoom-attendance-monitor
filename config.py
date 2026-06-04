@@ -46,12 +46,12 @@ class Settings:
     telegram_group_chat_id: str = _env("TELEGRAM_GROUP_CHAT_ID")
     telegram_group_enabled: bool = _bool("TELEGRAM_GROUP_ENABLED")
 
-    # 时段
-    push_start_hour: int = _int("PUSH_START_HOUR", 7)
-    push_end_hour: int = _int("PUSH_END_HOUR", 23)
-    signin_deadline_hour: int = _int("SIGNIN_DEADLINE_HOUR", 9)
-    summary_hours: str = _env("SUMMARY_HOURS", "16,23")
-    daily_report_hour: int = _int("DAILY_REPORT_HOUR", 23)
+    # 时段（所有小时值均为 MYT UTC+8）
+    push_start_hour: int = _int("PUSH_START_HOUR", 7)         # MYT
+    push_end_hour: int = _int("PUSH_END_HOUR", 23)            # MYT
+    signin_deadline_hour: int = _int("SIGNIN_DEADLINE_HOUR", 9)  # MYT 9AM = UTC 1AM
+    summary_hours: str = _env("SUMMARY_HOURS", "16,23")       # MYT
+    daily_report_hour: int = _int("DAILY_REPORT_HOUR", 23)    # MYT
     overtime_minutes: int = _int("OVERTIME_MINUTES", 120)
 
     # DB
