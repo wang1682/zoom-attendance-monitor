@@ -1643,11 +1643,10 @@ def build_app() -> "FastAPI":
         except:
             pass
 
+        sharing_count = 0
         try:
-            import httpx
-            sr = httpx.get("http://localhost:8000/api/v3/sharing-live", timeout=3)
-            if sr.status_code == 200:
-                sharing_count = sr.json().get("current", 0)
+            sr = conn.execute("SELECT COUNT(*) FROM sharing_live WHERE is_active=1").fetchone()[0]
+            sharing_count = sr
         except:
             pass
 
