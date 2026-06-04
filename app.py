@@ -1504,6 +1504,9 @@ def build_app() -> "FastAPI":
         for r in rows:
             record = dict(zip(cols, r))
             name = record.get("name", "?")
+            # 统一显示名（alias 归并）
+            resolved = db.resolve_display_name(name)
+            name = resolved["display_name"]
             mid = record.get("meeting_id", "?")
             action = record.get("action", "")
             t = record.get("action_time", "")
@@ -1673,10 +1676,13 @@ def build_app() -> "FastAPI":
         participants = []
         seen = set()
         for r in participants_rows:
-            if r["name"] not in seen:
-                seen.add(r["name"])
+            resolved = db.resolve_display_name(r["name"])
+            canonical = resolved["display_name"]
+            if canonical not in seen:
+                seen.add(canonical)
                 participants.append({
-                    "name": r["name"],
+                    "name": canonical,
+                    "raw_name": r["name"],
                     "meeting_id": r["meeting_id"],
                     "last_action": r["action"],
                     "last_active": r["action_time"],
