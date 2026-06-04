@@ -834,13 +834,14 @@ def build_app() -> "FastAPI":
         
         # 统计最近30天的 Zoom 用户名出现次数
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        now_str = datetime.now(timezone.utc).isoformat()
         rows = conn.execute("""
             SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
             FROM zoom_participants
             WHERE action_time >= ? AND action_time < ?
             GROUP BY name
             ORDER BY cnt DESC
-        """, (cutoff, cutoff)).fetchall()
+        """, (cutoff, now_str)).fetchall()
         
         # 加载已配置的别名
         alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
