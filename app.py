@@ -1429,13 +1429,31 @@ def build_app() -> "FastAPI":
     # ── 汇总分析 ────────────────────────────────────────────────────────────
     @app.get("/api/v2/summary")
     async def api_summary():
-        """参会汇总统计：在线时长、迟到早退、会议室维度"""
-        conn = db._get_conn()
-        now_myt = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        today_str = now_myt.strftime("%Y-%m-%d")
+        """参会汇总统计：在线时长、迟到早退、会议室维度
 
-        # 查今天的参会记录
-        rows = conn.execute("SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY name, action_time", (today_str,)).fetchall()
+        分层设计：
+          - 配对窗口: 最近 7 天（确保跨 UTC 日 enter/leave 能被配对）
+          - 统计窗口: MYT 今日 00:00~24:00
+          - 输出: 只在统计窗口内有活动的人
+        """
+        conn = db._get_conn()
+        MYT = timezone(timedelta(hours=8))
+        now_utc = datetime.now(timezone.utc)
+        now_myt = now_utc.astimezone(MYT)
+
+        # 统计窗口: MYT 今日
+        myt_report_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+        myt_report_end = myt_report_start + timedelta(days=1)
+        report_start_utc = myt_report_start.astimezone(timezone.utc).isoformat()
+        report_end_utc = myt_report_end.astimezone(timezone.utc).isoformat()
+
+        # 配对窗口: 统计窗口前 7 天
+        lookup_start = (myt_report_start - timedelta(days=7)).astimezone(timezone.utc).isoformat()
+
+        rows = conn.execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
+            (lookup_start, report_end_utc)
+        ).fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
 
         # 按人+会议分组，算在线时长
@@ -1453,26 +1471,61 @@ def build_app() -> "FastAPI":
             elif action == "leave":
                 user_sessions[(name, mid)]["leaves"].append(t)
 
-        # 计算每个人的时长
+        def in_today_range(t: str) -> bool:
+            """判断一个 ISO 时间是否在 MYT 今日统计窗口内"""
+            try:
+                dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                return report_start_utc <= dt.isoformat() < report_end_utc
+            except:
+                return False
+
+        # 计算每个人的时长，只输出今日窗口内有活动的人
         members = []
         for (name, mid), sess in user_sessions.items():
             total_secs = 0
             enters = sorted(sess["enters"])
             leaves = sorted(sess["leaves"])
+
+            # 配对 enter/leave，只算与 MYT 今日窗口重叠的部分
             for i in range(min(len(enters), len(leaves))):
                 try:
-                    et = datetime.fromisoformat(enters[i])
-                    lt = datetime.fromisoformat(leaves[i])
-                    total_secs += (lt - et).total_seconds()
-                except: pass
-            # 未离开的也算（用当前时间）
+                    et_raw = datetime.fromisoformat(enters[i])
+                    lt_raw = datetime.fromisoformat(leaves[i])
+                    # 裁剪到今日窗口
+                    effective_start = max(et_raw, datetime.fromisoformat(report_start_utc.replace("Z", "+00:00")))
+                    effective_end = min(lt_raw, datetime.fromisoformat(report_end_utc.replace("Z", "+00:00")))
+                    if effective_end > effective_start:
+                        total_secs += (effective_end - effective_start).total_seconds()
+                except:
+                    pass
+
+            # 未配对的 enter（仍在线），只算今日窗口内时长
             if len(enters) > len(leaves):
                 try:
-                    et = datetime.fromisoformat(enters[-1])
-                    total_secs += (datetime.now(timezone.utc) - et).total_seconds()
-                except: pass
+                    et_raw = datetime.fromisoformat(enters[-1])
+                    effective_start = max(et_raw, datetime.fromisoformat(report_start_utc.replace("Z", "+00:00")))
+                    effective_end = datetime.fromisoformat(report_end_utc.replace("Z", "+00:00"))
+                    if effective_end > effective_start:
+                        total_secs += (effective_end - effective_start).total_seconds()
+                except:
+                    pass
+
+            # 判断此人在今日窗口内是否有活动
+            has_today_activity = any(in_today_range(t) for t in enters + leaves)
+            has_online_now = len(enters) > len(leaves)
+            if not has_today_activity and not has_online_now:
+                continue
+
             minutes = int(total_secs / 60)
-            members.append({"name": name, "meeting_id": mid, "enter_time": enters[0] if enters else "", "leave_time": leaves[-1] if leaves else "", "duration_min": minutes, "is_late": minutes > 0 and enters and datetime.fromisoformat(enters[0]).hour >= 9, "is_early_leave": minutes > 0 and leaves and datetime.fromisoformat(leaves[-1]).hour < 17})
+
+            members.append({
+                "name": name, "meeting_id": mid,
+                "enter_time": enters[0] if enters else "",
+                "leave_time": leaves[-1] if leaves else "",
+                "duration_min": minutes,
+                "is_late": minutes > 0 and enters and datetime.fromisoformat(enters[0].replace("Z", "+00:00")).hour >= 9,
+                "is_early_leave": minutes > 0 and leaves and datetime.fromisoformat(leaves[-1].replace("Z", "+00:00")).hour < 17,
+            })
 
         # 会议室维度
         meetings = defaultdict(lambda: {"count": 0, "names": set(), "first_enter": "99:99", "last_leave": "00:00"})
