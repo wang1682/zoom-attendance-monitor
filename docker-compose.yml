@@ -4,6 +4,11 @@ x-common: &common
   restart: unless-stopped
   env_file:
     - .env
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   volumes:
     - zoom_data:/app/data
     - zoom_logs:/app/logs
@@ -48,6 +53,7 @@ services:
     container_name: zoom-monitor
     environment:
       APP_MODE: monitor
+      DB_READONLY: "true"
     depends_on:
       zoom-api:
         condition: service_started
@@ -64,6 +70,7 @@ services:
     container_name: zoom-command
     environment:
       APP_MODE: command
+      DB_READONLY: "true"
     depends_on:
       zoom-api:
         condition: service_started
