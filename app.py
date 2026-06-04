@@ -1514,6 +1514,77 @@ def build_app() -> "FastAPI":
         data = await zm.get_live()
         return {"ok": True, "data": data}
 
+    @app.get("/api/v3/dashboard")
+    async def api_v3_dashboard():
+        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）"""
+        conn = db._get_conn()
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        online_count = 0
+        sharing_count = 0
+        meetings = []
+        try:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            online_count = live_data.get("total_online", 0)
+            meetings = live_data.get("meetings", [])
+        except:
+            pass
+
+        try:
+            import httpx
+            sr = httpx.get("http://localhost:8000/api/v3/sharing-live", timeout=3)
+            if sr.status_code == 200:
+                sharing_count = sr.json().get("current", 0)
+        except:
+            pass
+
+        participant_count = conn.execute(
+            "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",
+            (today_str, tomorrow)
+        ).fetchone()[0]
+
+        join_count = conn.execute(
+            "SELECT COUNT(*) FROM zoom_participants WHERE action = 'enter' AND action_time >= ? AND action_time < ?",
+            (today_str, tomorrow)
+        ).fetchone()[0]
+
+        leave_count = conn.execute(
+            "SELECT COUNT(*) FROM zoom_participants WHERE action = 'leave' AND action_time >= ? AND action_time < ?",
+            (today_str, tomorrow)
+        ).fetchone()[0]
+
+        participants_rows = conn.execute(
+            "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
+            (today_str, tomorrow)
+        ).fetchall()
+
+        participants = []
+        seen = set()
+        for r in participants_rows:
+            if r["name"] not in seen:
+                seen.add(r["name"])
+                participants.append({
+                    "name": r["name"],
+                    "meeting_id": r["meeting_id"],
+                    "last_action": r["action"],
+                    "last_active": r["action_time"],
+                })
+
+        return {
+            "ok": True,
+            "participant_count": participant_count,
+            "online_count": online_count,
+            "join_count": join_count,
+            "leave_count": leave_count,
+            "participants": participants,
+            "sharing_count": sharing_count,
+            "meetings": meetings,
+        }
+
+
     @app.get("/api/v2/ai-analysis")
     async def api_ai_analysis():
         """用 AI（DeepSeek）分析今日参会数据，生成自然语言报告"""
