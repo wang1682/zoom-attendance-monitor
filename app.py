@@ -47,6 +47,47 @@ def to_myt_display(dt_str, fmt="%m-%d %H:%M:%S"):
         return dt_str[:16]
 
 
+# ── 统一时间工具函数 ──────────────────────────────────────────────────
+# 符合 TIME_TARGET_STATE.md 规范
+
+def utc_now() -> datetime:
+    """当前 UTC 时间"""
+    return datetime.now(timezone.utc)
+
+
+def myt_now() -> datetime:
+    """当前 MYT 时间"""
+    return datetime.now(timezone.utc).astimezone(MYT)
+
+
+def myt_day_range_to_utc(dt: datetime = None) -> tuple[str, str]:
+    """MYT 某日的 UTC 起止 ISO 字符串"""
+    if dt is None:
+        dt = myt_now()
+    myt_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    myt_end = myt_start + timedelta(days=1)
+    return (myt_start.astimezone(timezone.utc).isoformat(),
+            myt_end.astimezone(timezone.utc).isoformat())
+
+
+def parse_utc_iso(s: str) -> datetime | None:
+    """安全解析 ISO 时间字符串为 UTC aware datetime"""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except:
+        return None
+
+
+def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
+    """UTC ISO → MYT 显示字符串"""
+    dt = parse_utc_iso(s)
+    if dt is None:
+        return s[:16] if s else "—"
+    return dt.astimezone(MYT).strftime(fmt)
+
+
 
 def dedup_participants(participants):
     """合并连续同人的进出记录，只保留状态变化"""
@@ -158,7 +199,7 @@ def build_app() -> "FastAPI":
                 "checkin_rate": 0,
             }
         return tmpl.TemplateResponse(request, "dashboard.html", {
-            "today": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "today": datetime.now(timezone.utc).astimezone(MYT).strftime("%Y-%m-%d"),
             "participants": participants,
             "alerts": alerts,
             "stats": stats,
@@ -243,10 +284,11 @@ def build_app() -> "FastAPI":
             reports = _ensure_demo().get_demo_reports()
         else:
             conn = db._get_conn()
-            # 今日统计
+            # 今日统计（MYT 边界）
+            rs_utc, re_utc = myt_day_range_to_utc()
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today_str,)).fetchone()[0]
-            unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ?", (today_str,)).fetchone()[0]
+            total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
+            unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
             # 最近7天每天统计
             rows = []
             for i in range(7, -1, -1):
@@ -255,7 +297,7 @@ def build_app() -> "FastAPI":
                 uniq = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
                 rows.append({"date": d, "count": cnt, "unique": uniq})
             # 参会排行（总次数）
-            top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (today_str,)).fetchall()
+            top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (rs_utc, re_utc)).fetchall()
             reports = {"total_today": total_today, "unique_today": unique_names, "daily_trend": rows, "top_participants": [{"name": r[0], "count": r[1]} for r in top]}
         return tmpl.TemplateResponse(request, "reports.html", {
             "reports": reports,
@@ -1517,14 +1559,30 @@ def build_app() -> "FastAPI":
                 continue
 
             minutes = int(total_secs / 60)
+            is_late_flag = False
+            is_early_leave_flag = False
+            if minutes > 0 and enters:
+                try:
+                    enter_dt = datetime.fromisoformat(enters[0].replace("Z", "+00:00"))
+                    enter_myt_hour = enter_dt.astimezone(MYT).hour
+                    is_late_flag = enter_myt_hour >= 9
+                except:
+                    pass
+            if minutes > 0 and leaves:
+                try:
+                    leave_dt = datetime.fromisoformat(leaves[-1].replace("Z", "+00:00"))
+                    leave_myt_hour = leave_dt.astimezone(MYT).hour
+                    is_early_leave_flag = leave_myt_hour < 17
+                except:
+                    pass
 
             members.append({
                 "name": name, "meeting_id": mid,
                 "enter_time": enters[0] if enters else "",
                 "leave_time": leaves[-1] if leaves else "",
                 "duration_min": minutes,
-                "is_late": minutes > 0 and enters and datetime.fromisoformat(enters[0].replace("Z", "+00:00")).hour >= 9,
-                "is_early_leave": minutes > 0 and leaves and datetime.fromisoformat(leaves[-1].replace("Z", "+00:00")).hour < 17,
+                "is_late": is_late_flag,
+                "is_early_leave": is_early_leave_flag,
             })
 
         # 会议室维度
@@ -1571,8 +1629,7 @@ def build_app() -> "FastAPI":
     async def api_v3_dashboard():
         """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）"""
         conn = db._get_conn()
-        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
+        report_start_utc, report_end_utc = myt_day_range_to_utc()
 
         online_count = 0
         sharing_count = 0
@@ -1596,22 +1653,22 @@ def build_app() -> "FastAPI":
 
         participant_count = conn.execute(
             "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",
-            (today_str, tomorrow)
+            (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
         join_count = conn.execute(
             "SELECT COUNT(*) FROM zoom_participants WHERE action = 'enter' AND action_time >= ? AND action_time < ?",
-            (today_str, tomorrow)
+            (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
         leave_count = conn.execute(
             "SELECT COUNT(*) FROM zoom_participants WHERE action = 'leave' AND action_time >= ? AND action_time < ?",
-            (today_str, tomorrow)
+            (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
         participants_rows = conn.execute(
             "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
-            (today_str, tomorrow)
+            (report_start_utc, report_end_utc)
         ).fetchall()
 
         participants = []
@@ -1895,7 +1952,8 @@ def build_app() -> "FastAPI":
         except:
             pass
         conn = db._get_conn()
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        now_utc = datetime.now(timezone.utc)
+        rs_utc, re_utc = myt_day_range_to_utc()
 
         # 找所有今天有 enter 但没有对应 leave 的记录（即还在线上）
         rows = conn.execute("""
@@ -1908,7 +1966,7 @@ def build_app() -> "FastAPI":
                 AND p2.action = 'leave' AND p2.action_time > p1.action_time
             )
             ORDER BY p1.action_time DESC
-        """, (today,)).fetchall()
+        """, (rs_utc,)).fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
 
         now = datetime.now(timezone.utc)
@@ -1952,29 +2010,29 @@ def build_app() -> "FastAPI":
         top_online = [{"name": p["name"], "duration_display": p["online_display"], "minutes": p["online_minutes"]} for p in sorted_online[:5]]
 
         # 今日总记录数
-        total_events = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        total_events = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
         # 唯一参与者数
-        unique_participants = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ?", (today,)).fetchone()[0]
+        unique_participants = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
         # 在线率 = 当前在线 / 唯一参与者
         unique_online_rate = round(len(online) / unique_participants * 100, 1) if unique_participants > 0 else 0
 
         # 活跃时段
-        hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+        hour_dist = conn.execute("SELECT CAST(strftime('%H', action_time) AS INTEGER) as h, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND action = 'enter' GROUP BY h ORDER BY c DESC LIMIT 3", (rs_utc, re_utc)).fetchall()
         active_hours = [f"{r[0]:02d}:00-{r[0]+1:02d}:00" for r in hour_dist]
 
         # 最活跃成员
-        top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY c DESC LIMIT 3", (today,)).fetchall()
+        top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY c DESC LIMIT 3", (rs_utc, re_utc)).fetchall()
 
         # 参与者汇总（去重后每人统计，含异常检测）
         participants_summary = []
         anomalies = []  # 异常成员列表
-        unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ?", (today,)).fetchall()
+        unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchall()
         for (name,) in unique_names_rows:
-            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'enter'", (today, name)).fetchone()[0]
-            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND name = ? AND action = 'leave'", (today, name)).fetchone()[0]
+            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'enter'", (rs_utc, re_utc, name)).fetchone()[0]
+            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'leave'", (rs_utc, re_utc, name)).fetchone()[0]
             total_actions = enters + leaves
-            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND name = ?", (today, name)).fetchone()[0]
-            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND name = ? ORDER BY action_time DESC LIMIT 1", (today, name)).fetchone()
+            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ?", (rs_utc, re_utc, name)).fetchone()[0]
+            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? ORDER BY action_time DESC LIMIT 1", (rs_utc, re_utc, name)).fetchone()
             is_online = last_action and last_action[0] == "enter"
             # 检查是否在10分钟内活跃
             if is_online and last_time:
