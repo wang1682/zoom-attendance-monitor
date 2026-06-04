@@ -387,14 +387,35 @@ def build_app() -> "FastAPI":
             try:
                 r = subprocess.run(["docker", "inspect", name, "--format", "{{.State.Status}}"], capture_output=True, text=True, timeout=5)
                 docker_status[name] = r.stdout.strip()
-            except: docker_status[name] = "unknown"
+            except:
+                docker_status[name] = "unknown"
+
+        zoom_status = {"webhook_delay_text": "—", "meeting_count": 0, "online_count": 0, "sharing_count": 0}
+        try:
+            conn = db._get_conn()
+            last_wh = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
+            if last_wh:
+                from datetime import datetime as _dt, timezone as _tz
+                try:
+                    lc = last_wh.replace("Z", "+00:00")
+                    ld = _dt.fromisoformat(lc)
+                    delta = (_dt.now(_tz.utc) - ld).total_seconds()
+                    if delta < 60:
+                        zoom_status["webhook_delay_text"] = "刚刚"
+                    else:
+                        zoom_status["webhook_delay_text"] = f"{int(delta/60)}分钟前"
+                except:
+                    pass
+        except:
+            pass
+
         return tmpl.TemplateResponse(request, "settings_system.html", {
             "brand": BRAND,
             "version": "0.2.1",
             "docker_status": docker_status,
+            "zoom_status": zoom_status,
             "participant_count": db.get_today_participants(limit=1) and len(db.get_today_participants(limit=10000)) or 0,
         })
-
     # ── API ──────────────────────────────────────────────────────────────────
     @app.post("/api/tg/send-test")
     async def api_tg_send_test():
