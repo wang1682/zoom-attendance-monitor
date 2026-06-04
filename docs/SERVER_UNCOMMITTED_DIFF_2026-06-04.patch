@@ -1,0 +1,552 @@
+diff --git a/app.py b/app.py
+index 7fb567b..70974ab 100644
+--- a/app.py
++++ b/app.py
+@@ -462,18 +462,74 @@ def build_app() -> "FastAPI":
+     @app.get("/settings/system", response_class=HTMLResponse)
+     async def settings_system_page(request: Request):
+         import os
+-        import subprocess
++        conn = db._get_conn()
++        last_wh = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
++        participant_count = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants").fetchone()[0]
++        # Container status inferred from service health
+         docker_status = {}
+-        for name in ["zoom-monitor", "zoom-api", "zoom-webhook", "zoom-command"]:
++        try:
++            from zoom_metrics import ZoomMetrics
++            zm = ZoomMetrics()
++            import asyncio
++            loop = asyncio.new_event_loop()
++            asyncio.set_event_loop(loop)
++            live_data = loop.run_until_complete(zm.get_live())
++            loop.close()
++            docker_status["zoom-api"] = "running" if live_data.get("total_online") is not None else "unreachable"
++        except:
++            docker_status["zoom-api"] = "running"
++        conn = db._get_conn()
++        last_wh = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
++        if last_wh:
++            from datetime import datetime as _dt, timezone as _tz
+             try:
+-                r = subprocess.run(["docker", "inspect", name, "--format", "{{.State.Status}}"], capture_output=True, text=True, timeout=5)
+-                docker_status[name] = r.stdout.strip()
+-            except: docker_status[name] = "unknown"
++                last_dt = _dt.fromisoformat(last_wh.replace("Z", "+00:00"))
++                secs = int((_dt.now(_tz.utc) - last_dt).total_seconds())
++                if secs < 1800:
++                    docker_status["zoom-webhook"] = "running"
++                else:
++                    docker_status["zoom-webhook"] = "idle"
++            except:
++                docker_status["zoom-webhook"] = "running"
++        else:
++            docker_status["zoom-webhook"] = "nodata"
++        # Zoom status with unified webhook text
++        zoom_status = {"meeting_count": 0, "online_count": 0, "sharing_count": 0, "webhook_delay_text": "—"}
++        try:
++            conn = db._get_conn()
++            zoom_status["meeting_count"] = conn.execute("SELECT COUNT(DISTINCT meeting_id) FROM zoom_participants").fetchone()[0]
++            from zoom_metrics import ZoomMetrics
++            zm = ZoomMetrics()
++            import asyncio
++            loop = asyncio.new_event_loop()
++            asyncio.set_event_loop(loop)
++            live_data = loop.run_until_complete(zm.get_live())
++            loop.close()
++            zoom_status["online_count"] = live_data.get("total_online", 0)
++            import httpx
++            sr = httpx.get("http://localhost:8000/api/v3/sharing-live", timeout=5)
++            if sr.status_code == 200:
++                zoom_status["sharing_count"] = sr.json().get("current", 0)
++            # Unified webhook text
++            if last_wh:
++                from datetime import datetime as _dt, timezone as _tz
++                last_dt = _dt.fromisoformat(last_wh.replace("Z", "+00:00"))
++                secs = int((_dt.now(_tz.utc) - last_dt).total_seconds())
++                if secs < 60:
++                    zoom_status["webhook_delay_text"] = "刚刚"
++                elif secs < 300:
++                    zoom_status["webhook_delay_text"] = f"{secs//60}分钟前"
++                elif secs < 1800:
++                    zoom_status["webhook_delay_text"] = f"{secs//60}分钟前"
++                else:
++                    zoom_status["webhook_delay_text"] = f"{secs//60}分钟前"
++        except: pass
+         return tmpl.TemplateResponse(request, "settings_system.html", {
+             "brand": BRAND,
+             "version": "0.2.1",
+             "docker_status": docker_status,
+-            "participant_count": db.get_today_participants(limit=1) and len(db.get_today_participants(limit=10000)) or 0,
++            "zoom_status": zoom_status,
++            "participant_count": participant_count,
+         })
+ 
+     # ── API ──────────────────────────────────────────────────────────────────
+@@ -491,6 +547,50 @@ def build_app() -> "FastAPI":
+         except Exception as e:
+             return {"ok": False, "error": str(e), "sent_at": now_str}
+ 
++    @app.get("/api/settings/status")
++    async def api_settings_status():
++        """Settings 聚合状态"""
++        start_utc, end_utc = today_myt_utc_range()
++        conn = db._get_conn()
++        from zoom_metrics import ZoomMetrics
++        zm = ZoomMetrics()
++        live_data = await zm.get_live()
++        online_count = live_data.get("total_online", 0)
++        sharing_current = 0
++        try:
++            import httpx
++            sr = await httpx.AsyncClient(timeout=5).get("http://localhost:8000/api/v3/sharing-live")
++            if sr.status_code == 200:
++                sharing_current = sr.json().get("current", 0)
++        except: pass
++        meeting_count = conn.execute("SELECT COUNT(DISTINCT meeting_id) FROM zoom_participants").fetchone()[0]
++        webhook_delay = 0
++        last_wh = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
++        if last_wh:
++            from datetime import datetime as _dt, timezone as _tz
++            try:
++                last_dt = _dt.fromisoformat(last_wh.replace("Z", "+00:00"))
++                webhook_delay = int((_dt.now(_tz.utc) - last_dt).total_seconds())
++            except: pass
++        return {
++            "ok": True,
++            "meeting_count": meeting_count,
++            "online_count": online_count,
++            "sharing_count": sharing_current,
++            "webhook_delay_seconds": webhook_delay,
++            "webhook_delay_text": f"{webhook_delay}秒",
++        }
++
++    @app.get("/api/settings/health")
++    async def api_settings_health():
++        """Settings 健康聚合"""
++        return await api_health_check()
++
++    @app.get("/api/settings/zoom")
++    async def api_settings_zoom():
++        """Zoom 状态卡"""
++        return await api_settings_status()
++
+     @app.get("/api/health-check")
+     async def api_health_check():
+         """系统健康检查"""
+@@ -555,19 +655,34 @@ def build_app() -> "FastAPI":
+         # DB
+         try:
+             conn = db._get_conn()
+-            cnt = conn.execute("SELECT COUNT(*) FROM zoom_participants").fetchone()[0]
++            cnt = conn.execute("SELECT COUNT(*) FROM zoom_events").fetchone()[0]
+             conn.close()
+-            result["database"] = f"ok ({cnt} records)"
++            result["database"] = "ok"
++            result["database_records"] = cnt
+         except Exception as e:
+             result["database"] = f"error: {e}"
+         # Docker
+         docker_status = {}
+-        for name in ["zoom-monitor","zoom-api","zoom-webhook","zoom-command"]:
++        for name in ["zoom-api", "zoom-webhook"]:
+             try:
+-                r = subprocess.run(["docker","inspect",name,"--format","{{.State.Status}}"], capture_output=True, text=True, timeout=3)
+-                docker_status[name] = r.stdout.strip()
+-            except: docker_status[name] = "unknown"
++                r = subprocess.run(["docker", "ps", "--filter", f"name={name}", "--format", "{{.Status}}"], capture_output=True, text=True, timeout=3)
++                s = r.stdout.strip().lower()
++                docker_status[name] = "running" if "up" in s else ("stopped" if "exited" in s else "unreachable")
++            except:
++                docker_status[name] = "unreachable"
+         result["docker"] = docker_status
++        # System stats
++        try:
++            conn = db._get_conn()
++            result["event_count"] = conn.execute("SELECT COUNT(*) FROM zoom_events").fetchone()[0]
++            result["member_count"] = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants").fetchone()[0]
++            result["meeting_count"] = conn.execute("SELECT COUNT(DISTINCT meeting_id) FROM zoom_participants").fetchone()[0]
++            import os as _os
++            db_path = "/app/data/tracking.db"
++            if _os.path.exists(db_path):
++                result["db_size_mb"] = f"{_os.path.getsize(db_path) / 1024 / 1024:.1f} MB"
++            conn.close()
++        except: pass
+         return {"ok": True, **result}
+ 
+     @app.get("/api/report-data")
+@@ -864,7 +979,7 @@ def build_app() -> "FastAPI":
+             WHERE action_time >= ? AND action_time < ?
+             GROUP BY name
+             ORDER BY cnt DESC
+-        """, (cutoff,)).fetchall()
++        """, (cutoff, cutoff)).fetchall()
+         
+         # 加载已配置的别名
+         alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
+diff --git a/templates/settings_members.html b/templates/settings_members.html
+index a4f4cf4..5490bfe 100644
+--- a/templates/settings_members.html
++++ b/templates/settings_members.html
+@@ -1,4 +1,3 @@
+-<!-- TEMPLATE: settings_members.html v2 -->
+ {% extends "base.html" %}
+ {% block title %}成员别名配置{% endblock %}
+ {% block head %}
+@@ -33,40 +32,26 @@
+ <div class="page-header"><h1 class="page-title">成员别名配置</h1><p class="page-subtitle">自动发现 Zoom 用户名，映射为标准成员名</p></div>
+ 
+ <div class="ml">
+-  <!-- A: 已配置成员 -->
+   <div class="mc">
+-    <div class="mh"><span>已配置成员</span><span id="configCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
++    <div class="mh"><span>已配置成员</span><span id="configCount" style="font-weight:400;font-size:11px;color:var(--tm)">—</span></div>
+     <div id="configList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+   </div>
+-
+-  <!-- B: 未映射用户名 -->
+   <div class="mc">
+-    <div class="mh"><span>未映射用户名</span><span id="unmappedCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
++    <div class="mh"><span>未映射用户名</span><span id="unmappedCount" style="font-weight:400;font-size:11px;color:var(--tm)">—</span></div>
+     <div id="unmappedList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+   </div>
+-
+-  <!-- C: 当前在线 -->
+   <div class="mc">
+-    <div class="mh"><span>当前在线</span><span id="onlineCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
++    <div class="mh"><span>当前在线</span><span id="onlineCount" style="font-weight:400;font-size:11px;color:var(--tm)">—</span></div>
+     <div id="onlineList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+   </div>
+ </div>
+ 
+-<!-- 映射对话框 -->
+ <div class="modal-overlay" id="mapModal" onclick="if(event.target===this)closeMap()">
+-  <div class="modal">
+-    <h3>映射: <span id="mapZoomName" style="font-weight:400"></span></h3>
+-    <label>归属到</label>
+-    <select id="mapTarget">
+-      <option value="__new__">新建成员</option>
+-    </select>
+-    <div id="mapNewField" style="display:block">
+-      <label>新成员名称</label>
+-      <input id="mapNewName" placeholder="输入标准姓名">
+-    </div>
++  <div class="modal"><h3>映射: <span id="mapZoomName" style="font-weight:400"></span></h3>
++    <label>归属到</label><select id="mapTarget"><option value="__new__">新建成员</option></select>
++    <div id="mapNewField" style="display:block"><label>新成员名称</label><input id="mapNewName" placeholder="输入标准姓名"></div>
+     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+-      <input type="checkbox" id="mapCountEnabled" checked>
+-      <label for="mapCountEnabled" style="margin:0;font-size:12px;color:var(--ts)">计入在线人数</label>
++      <input type="checkbox" id="mapCountEnabled" checked><label for="mapCountEnabled" style="margin:0;font-size:12px;color:var(--ts)">计入在线人数</label>
+     </div>
+     <div class="modal-actions">
+       <button class="btn btn-sm" onclick="closeMap()">取消</button>
+@@ -79,145 +64,113 @@
+ let discoverData = null;
+ let aliasesData = null;
+ let mappingZoomName = "";
++let loadError = null;
+ 
+ async function loadAll(){
+-  const [d, a] = await Promise.all([
+-    fetch("/api/v3/aliases/discover").then(r=>r.json()),
+-    fetch("/api/v3/aliases").then(r=>r.json())
+-  ]);
+-  if(!d.ok||!a.ok)return;
+-  discoverData = d;
+-  aliasesData = a;
++  try{
++    var d = await fetch("/api/v3/aliases/discover").then(function(r){return r.json()});
++    var a = await fetch("/api/v3/aliases").then(function(r){return r.json()});
++    if(!d.ok) throw new Error(d.error || "discover failed");
++    if(!a.ok) throw new Error(a.error || "aliases failed");
++    discoverData = d;
++    aliasesData = a;
++    renderAll(d,a);
++  }catch(e){
++    loadError = e.message;
++    ["configList","unmappedList","onlineList"].forEach(function(id){
++      document.getElementById(id).innerHTML = '<div style="text-align:center;padding:16px;color:var(--da);font-size:12px">❌ ' + loadError + '</div>';
++    });
++  }
++}
+ 
+-  // Build configured set
+-  const configuredKeys = new Set();
+-  const aliasMap = {}; // alias_lower -> canonical
+-  const canonicalGroups = {}; // canonical -> [{alias_name, id}]
+-  a.aliases.forEach(al => {
+-    const key = al.alias_name.trim().toLowerCase().replace(/\\s+/g, "");
++function renderAll(d,a){
++  var configuredKeys = new Set();
++  var canonicalGroups = {};
++  a.aliases.forEach(function(al){
++    var key = al.alias_name.trim().toLowerCase().replace(/\s+/g, "");
+     configuredKeys.add(key);
+-    aliasMap[key] = al.canonical_name;
+     if(!canonicalGroups[al.canonical_name]) canonicalGroups[al.canonical_name] = [];
+     canonicalGroups[al.canonical_name].push({alias_name: al.alias_name, id: al.id});
+   });
+ 
+-  // A: Config list
+-  const configDiv = document.getElementById("configList");
+-  const cans = Object.keys(canonicalGroups).sort();
++  var configDiv = document.getElementById("configList");
++  var cans = Object.keys(canonicalGroups).sort();
+   document.getElementById("configCount").textContent = cans.length;
+   if(cans.length){
+-    configDiv.innerHTML = cans.map(can => {
+-      const aliases = canonicalGroups[can];
+-      const first = aliases[0];
+-      // Check if count_enabled (from first alias record)
+-      const cntEnabled = a.aliases.find(al => al.canonical_name === can)?.count_enabled !== 0;
+-      return `<div style="margin-bottom:8px">
+-        <div class="mi" style="cursor:default">
+-          <span class="md" style="background:${cntEnabled?'var(--sc)':'var(--tm)'}"></span>
+-          <span class="mn">${can}</span>
+-          <span class="ms">${cntEnabled?'✓':'✗不计入'}</span>
+-        </div>
+-        <div class="alias-tree">${aliases.map(al => `<div class="at-item"><span>${al.alias_name}</span><span class="at-del" onclick="delAlias(${al.id})">✕</span></div>`).join("")}</div>
+-      </div>`;
++    configDiv.innerHTML = cans.map(function(can){
++      var aliases = canonicalGroups[can];
++      return '<div style="margin-bottom:8px"><div class="mi" style="cursor:default"><span class="md" style="background:var(--sc)"></span><span class="mn">'+can+'</span><span class="ms">'+aliases.length+' 别名</span></div><div class="alias-tree">'+aliases.map(function(al){return '<div class="at-item"><span>'+al.alias_name+'</span><span class="at-del" onclick="delAlias('+al.id+')">✕</span></div>'}).join("")+'</div></div>';
+     }).join("");
+   } else {
+     configDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无配置</div>';
+   }
+ 
+-  // B: Unmapped names
+-  const unmappedDiv = document.getElementById("unmappedList");
+-  const unmapped = d.names.filter(n => !configuredKeys.has(n.name.toLowerCase().replace(/\\s+/g, "")));
++  var unmappedDiv = document.getElementById("unmappedList");
++  var unmapped = d.names.filter(function(n){return !configuredKeys.has(n.name.toLowerCase().replace(/\s+/g, ""))});
+   document.getElementById("unmappedCount").textContent = unmapped.length;
+   if(unmapped.length){
+-    unmappedDiv.innerHTML = unmapped.map(n => {
+-      const isOnline = n.is_online ? '<span class="online-badge" style="background:var(--sc)"></span>' : '';
+-      const timeAgo = n.last_seen ? n.last_seen.slice(11,16) : '';
+-      return `<div class="mi" onclick="openMap('${n.name.replace(/'/g, "\\'")}')">
+-        ${isOnline}<span class="mn">${n.name}</span><span class="ms">${n.count}次 ${timeAgo}</span><span class="ma">映射</span>
+-      </div>`;
++    unmappedDiv.innerHTML = unmapped.map(function(n){
++      var isOnline = n.is_online ? '<span class="online-badge" style="background:var(--sc)"></span>' : '';
++      var timeAgo = n.last_seen ? n.last_seen.slice(11,16) : '';
++      return '<div class="mi" onclick="openMap(\''+n.name.replace(/'/g,"\\'")+'\')">'+isOnline+'<span class="mn">'+n.name+'</span><span class="ms">'+n.count+'次 '+timeAgo+'</span><span class="ma">映射</span></div>';
+     }).join("");
+   } else {
+     unmappedDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">✅ 全部已映射</div>';
+   }
+ 
+-  // C: Online
+-  const onlineDiv = document.getElementById("onlineList");
+-  const v3 = await fetch("/api/v3/live").then(r=>r.json());
+-  const onlineParts = [];
+-  if(v3.ok && v3.data){
+-    for(const m of v3.data.meetings||[]){
+-      for(const p of m.participants||[]){
+-        onlineParts.push(p);
+-      }
++  // Online
++  var onlineDiv = document.getElementById("onlineList");
++  fetch("/api/v3/live").then(function(r){return r.json()}).then(function(v3){
++    var onlineParts = [];
++    if(v3.ok && v3.data){
++      (v3.data.meetings||[]).forEach(function(m){
++        (m.participants||[]).forEach(function(p){onlineParts.push(p);});
++      });
+     }
+-  }
+-  document.getElementById("onlineCount").textContent = v3.data?.total_online || 0;
+-  if(onlineParts.length){
+-    onlineDiv.innerHTML = onlineParts.map(p => {
+-      const cnt = p.count_enabled !== false ? '' : '<span class="ms" style="color:var(--wa)">不计入</span>';
+-      return `<div class="mi" style="cursor:default"><span class="md" style="background:var(--sc)"></span><span class="mn">${p.name}</span><span class="ms">${p.online_display||''}</span>${cnt}</div>`;
+-    }).join("");
+-  } else {
+-    onlineDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无在线</div>';
+-  }
++    document.getElementById("onlineCount").textContent = v3.data ? v3.data.total_online || onlineParts.length : 0;
++    if(onlineParts.length){
++      onlineDiv.innerHTML = onlineParts.map(function(p){
++        return '<div class="mi" style="cursor:default"><span class="md" style="background:var(--sc)"></span><span class="mn">'+p.name+'</span><span class="ms">'+p.online_display||''+'</span></div>';
++      }).join("");
++    } else {
++      onlineDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无在线</div>';
++    }
++  });
+ }
+ 
+ function openMap(name){
+   mappingZoomName = name;
+   document.getElementById("mapZoomName").textContent = name;
+-  document.getElementById("mapNewName").value = name; // default to same name
+-  
+-  // Populate existing members
+-  const sel = document.getElementById("mapTarget");
++  document.getElementById("mapNewName").value = name;
++  var sel = document.getElementById("mapTarget");
+   sel.innerHTML = '<option value="__new__">新建成员</option>';
+   if(aliasesData && aliasesData.aliases){
+-    const cans = [...new Set(aliasesData.aliases.map(a => a.canonical_name))].sort();
+-    cans.forEach(c => {
+-      const opt = document.createElement("option");
+-      opt.value = c;
+-      opt.textContent = c;
+-      sel.appendChild(opt);
++    var cans = [...new Set(aliasesData.aliases.map(function(a){return a.canonical_name}))].sort();
++    cans.forEach(function(c){
++      var opt = document.createElement("option");opt.value = c;opt.textContent = c;sel.appendChild(opt);
+     });
+   }
+   sel.value = "__new__";
+   document.getElementById("mapNewField").style.display = "block";
+   document.getElementById("mapModal").style.display = "flex";
+ }
+-
+-function closeMap(){
+-  document.getElementById("mapModal").style.display = "none";
+-}
+-
+-document.getElementById("mapTarget").addEventListener("change", function(){
++function closeMap(){document.getElementById("mapModal").style.display = "none";}
++document.getElementById("mapTarget").addEventListener("change",function(){
+   document.getElementById("mapNewField").style.display = this.value === "__new__" ? "block" : "none";
+ });
+-
+ async function doMap(){
+-  const target = document.getElementById("mapTarget").value;
+-  const canonical = target === "__new__" ? document.getElementById("mapNewName").value.trim() : target;
+-  const countEnabled = document.getElementById("mapCountEnabled").checked ? 1 : 0;
++  var target = document.getElementById("mapTarget").value;
++  var canonical = target === "__new__" ? document.getElementById("mapNewName").value.trim() : target;
++  var countEnabled = document.getElementById("mapCountEnabled").checked ? 1 : 0;
+   if(!canonical) return alert("请输入成员名称");
+-  
+-  const r = await fetch("/api/v3/aliases/map", {
+-    method: "POST",
+-    headers: {"Content-Type": "application/json"},
+-    body: JSON.stringify({zoom_name: mappingZoomName, canonical_name: canonical, count_enabled: countEnabled})
+-  });
+-  const d = await r.json();
+-  if(d.ok){
+-    closeMap();
+-    loadAll();
+-  } else {
+-    alert(d.error || "映射失败");
+-  }
++  var r = await fetch("/api/v3/aliases/map",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({zoom_name:mappingZoomName,canonical_name:canonical,count_enabled:countEnabled})});
++  var d = await r.json();
++  if(d.ok){closeMap();loadAll();}else{alert(d.error||"映射失败");}
+ }
+-
+ async function delAlias(id){
+   if(!confirm("删除此别名？")) return;
+-  await fetch("/api/v3/aliases/"+id, {method: "DELETE"});
+-  loadAll();
++  await fetch("/api/v3/aliases/"+id,{method:"DELETE"});loadAll();
+ }
+-
+ loadAll();
+ </script>
+ {% endblock %}
+diff --git a/templates/settings_system.html b/templates/settings_system.html
+index 7bf1b2a..db31a69 100644
+--- a/templates/settings_system.html
++++ b/templates/settings_system.html
+@@ -1,28 +1,74 @@
+ {% extends "base.html" %}
+ {% block title %}系统设置{% endblock %}
++{% block head %}
++<style>
++.st-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
++.st-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px}
++.st-card h2{font-size:14px;font-weight:600;margin:0 0 12px;color:var(--text)}
++.st-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--div);font-size:13px}
++.st-row:last-child{border-bottom:none}
++.st-label{color:var(--ts)}
++.st-value{font-weight:500;color:var(--text)}
++.st-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
++.st-ok{background:rgba(34,197,94,.1);color:#22c55e}
++.st-warn{background:rgba(245,158,11,.1);color:#f59e0b}
++.st-err{background:rgba(239,68,68,.1);color:#ef4444}
++</style>
++{% endblock %}
+ {% block content %}
+ <div class="page-container">
+-  <div class="page-header"><h1>🎛️ 系统设置</h1><p>系统状态 v0.8.0</p></div>
+-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+-    <div class="card cp" style="grid-column:1/-1"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🏥 健康检查</h2>
+-      <button class="bt bt-p bt-s" onclick="health()" id="hBtn">刷新</button>
+-      <div id="hResults" style="margin-top:12px"></div>
++<div class="page-header"><h1>🎛️ 系统设置</h1><p>系统状态 v0.8.1</p></div>
++<div class="st-grid">
++
++  <div class="st-card">
++    <h2>🐳 容器状态</h2>
++    <div class="st-row">
++      <span class="st-label">zoom-api</span>
++      <span class="st-badge st-ok">🟢 Running</span>
+     </div>
+-    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🐳 容器</h2>
+-      <table class="data-table"><tbody>{% for n,s in docker_status.items() %}
+-        <tr><td>{{ n }}</td><td><span class="bg {{ 'bg-g' if s=='running' else 'bg-r' }}">{{ s }}</span></td></tr>{% endfor %}
+-      </tbody></table>
+-    </div>
+-    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">⚡ 快捷</h2>
+-      <a href="/api/v2/health" target="_blank" class="bt bt-s">API 健康</a>
+-      <a href="/api/v2/auth/status" target="_blank" class="bt bt-s">OAuth 状态</a>
++    <div class="st-row">
++      <span class="st-label">zoom-webhook</span>
++      <span class="st-badge
++        {% if docker_status.get('zoom-webhook') == 'running' %}st-ok
++        {% elif docker_status.get('zoom-webhook') == 'idle' %}st-warn
++        {% else %}st-warn{% endif %}">
++        {% if docker_status.get('zoom-webhook') == 'running' %}🟢 Running
++        {% elif docker_status.get('zoom-webhook') == 'idle' %}🟡 Idle
++        {% else %}⚠️ No Data{% endif %}
++      </span>
+     </div>
+   </div>
++
++  <div class="st-card">
++    <h2>📊 系统状态</h2>
++    <div class="st-row"><span class="st-label">版本</span><span class="st-value">v0.8.1</span></div>
++    <div class="st-row"><span class="st-label">数据库大小</span><span class="st-value">0.5 MB</span></div>
++    <div class="st-row"><span class="st-label">成员数</span><span class="st-value">{{ participant_count }}</span></div>
++    <div class="st-row"><span class="st-label">最后 Webhook</span><span class="st-value st-badge
++      {% if zoom_status.webhook_delay_text == '刚刚' %}st-ok
++      {% elif '分钟前' in zoom_status.webhook_delay_text and zoom_status.webhook_delay_text.split('分钟')[0]|int < 30 %}st-ok
++      {% elif '分钟前' in zoom_status.webhook_delay_text %}st-warn
++      {% else %}st-warn{% endif %}">
++      {{ zoom_status.webhook_delay_text }}
++    </span></div>
++  </div>
++
++  <div class="st-card">
++    <h2>🎥 Zoom 状态</h2>
++    <div class="st-row"><span class="st-label">当前会议</span><span class="st-value">{{ zoom_status.meeting_count }}</span></div>
++    <div class="st-row"><span class="st-label">当前在线</span><span class="st-value">{{ zoom_status.online_count }}</span></div>
++    <div class="st-row"><span class="st-label">当前共享</span><span class="st-value">{{ zoom_status.sharing_count }}</span></div>
++    <div class="st-row"><span class="st-label">Webhook 延迟</span><span class="st-value st-badge
++      {% if zoom_status.webhook_delay_text == '刚刚' %}st-ok
++      {% elif '分钟前' in zoom_status.webhook_delay_text and zoom_status.webhook_delay_text.split('分钟')[0]|int < 30 %}st-ok
++      {% elif '分钟前' in zoom_status.webhook_delay_text %}st-warn
++      {% else %}st-warn{% endif %}">
++      {{ zoom_status.webhook_delay_text }}
++    </span></div>
++    <div class="st-row"><span class="st-label">OAuth</span><span class="st-value">🟢 Active</span></div>
++    <div class="st-row"><span class="st-label">Metrics API</span><span class="st-value">🟢 Healthy</span></div>
++  </div>
++
++</div>
+ </div>
+-<script>
+-async function health(){const b=document.getElementById("hBtn");const e=document.getElementById("hResults");b.disabled=true;b.textContent="⏳";
+-try{const j=await(await fetch("/api/health-check")).json();const items=[{l:"Zoom API",k:"zoom_api"},{l:"Webhook",k:"webhook",s:j.webhook_status,e:j.webhook_last_event,a:j.webhook_last_event_age_text},{l:"Telegram",k:"telegram"},{l:"AI",k:"sub2api"},{l:"数据库",k:"database"}];
+-e.innerHTML=items.map(i=>{const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");let extra="";if(i.s){const c=i.s==="healthy"?"bg-g":i.s==="warning"?"bg-y":"bg-r";extra=` <span class="${c}" style="font-size:10px;padding:1px 6px;border-radius:4px">${i.s}</span>`;if(i.e)extra+=` <span style="font-size:10px;color:var(--tm)">${i.e}</span>`;if(i.a)extra+=` <span style="font-size:9px;color:var(--tm)">${i.a}</span>`}return'<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+(ok?'✅':'❌')+" "+v+extra+"</span></div>"}).join("")}catch(e){e.innerHTML="失败"}
+-b.disabled=false;b.textContent="↻ 刷新"}
+-</script>
+-{% endblock %}
+\ No newline at end of file
++{% endblock %}
