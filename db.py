@@ -9,6 +9,7 @@ Schema：
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -344,9 +345,9 @@ def resolve_display_name(raw_name: str) -> dict:
     now = time.time()
     if not _display_cache["mapping"] or now - _display_cache["ts"] > 30:
         conn = _get_conn()
-        rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled FROM member_display").fetchall()
+        rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display").fetchall()
         _display_cache["mapping"] = {
-            r[0]: {"display": r[1], "key": r[2], "enabled": bool(r[3])}
+            r[0]: {"display": r[1], "key": r[2], "enabled": bool(r[3]), "aliases": json.loads(r[4] or "[]")}
             for r in rows
         }
         _display_cache["ts"] = now
@@ -367,8 +368,14 @@ def resolve_display_name(raw_name: str) -> dict:
     for raw, m in mapping.items():
         if m["key"] == key:
             return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
-    
-    # 3. No match, return as-is
+
+    # 3. Match on aliases (曾用名匹配)
+    name_lower = name.lower().replace(" ", "")
+    for raw, m in mapping.items():
+        if name_lower in [a.lower().replace(" ", "") for a in m.get("aliases", [])]:
+            return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
+
+    # 4. No match, return as-is
     return {"display_name": name, "count_enabled": True, "raw_name": name}
 
 def log_command(chat_id: str, command: str, args: str = "", response: str = ""):
