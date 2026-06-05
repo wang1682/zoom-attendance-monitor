@@ -2088,16 +2088,14 @@ def build_app() -> "FastAPI":
                 except: pass
         ps = list(participants_summary.values())
         ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
-        # 按 last_active 降序排列
-        # 本地 DB 纠偏：leave 在 3 分钟内覆盖 Zoom 在线状态
+        # 本地 DB 纠偏：最后事件是 leave 且无后续 enter，标记离线
         _conn = db._get_conn()
-        _leave_grace = (now_utc - timedelta(seconds=180)).isoformat()
         for _p in ps:
             _row = _conn.execute(
                 "SELECT action, action_time FROM zoom_participants WHERE name = ? ORDER BY action_time DESC LIMIT 1",
                 (_p.get("name", ""),)
             ).fetchone()
-            if _row and _row[0] == "leave" and _row[1] >= _leave_grace:
+            if _row and _row[0] == "leave":
                 _p["is_online"] = False
         ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
         max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
