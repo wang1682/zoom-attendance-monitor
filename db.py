@@ -1,11 +1,12 @@
-"""
-db.py — SQLite 数据库操作
-Schema：
+"""db.py — SQLite 数据库操作
+Schema:
   - zoom_events:     原始 Webhook 事件
   - zoom_participants:参会记录（进出）
   - seen_emails:     邮箱去重
   - alerts:          告警日志
   - settings:        持久化设置（命令控制）
+  - telegram_alert_rules: Telegram 告警规则（替代旧的 alert_rules）
+  - audit_logs:      操作审计日志
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from config import settings
@@ -175,7 +176,30 @@ def init_db():
 
         "CREATE INDEX IF NOT EXISTS idx_alert_sent_key ON alert_sent(alert_key)",
 
+        "CREATE TABLE IF NOT EXISTS telegram_alert_rules ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  event_type TEXT NOT NULL UNIQUE,"
+        "  title TEXT NOT NULL DEFAULT '',"
+        "  enabled INTEGER NOT NULL DEFAULT 1,"
+        "  target_chat_id TEXT DEFAULT '',"
+        "  cooldown_seconds INTEGER DEFAULT 0,"
+        "  quiet_enabled INTEGER DEFAULT 0,"
+        "  quiet_start TEXT DEFAULT '00:00',"
+        "  quiet_end TEXT DEFAULT '08:00',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
 
+        "CREATE INDEX IF NOT EXISTS idx_telegram_rules_event ON telegram_alert_rules(event_type)",
+
+        "CREATE TABLE IF NOT EXISTS audit_logs ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  action TEXT NOT NULL,"
+        "  entity_type TEXT NOT NULL DEFAULT 'telegram_alert_rule',"
+        "  entity_id INTEGER,"
+        "  details TEXT DEFAULT '',"
+        "  created_at TEXT"
+        ")",
 
     ]
     for sql in statements:
@@ -188,6 +212,9 @@ def init_db():
             else:
                 raise
     conn.commit()
+
+    # seed default telegram alert rules
+    seed_telegram_rules()
 
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
@@ -240,63 +267,27 @@ def get_today_participants(limit: int = 200) -> list[dict]:
 
 # ── seen_emails ──────────────────────────────────────────────────────────────
 
-def normalize_identity_name(name: str) -> str:
-    """归一化姓名：去空格、大小写、连字符"""
-    import re
-    return re.sub(r"[\s\-\._']+", "", (name or "").strip().lower())
-
-
 def check_new_email(email: str, name: str, now: datetime) -> bool:
-    """返回 True 表示新人，False 表示已见过
-
-    有 email 时按 email 去重；无 email 时 fallback 到规范化姓名。
-    """
-    email = (email or "").strip().lower()
-    name_key = normalize_identity_name(name)
-
+    """返回 True 表示新人，False 表示已见过"""
+    if not email:
+        return False
     conn = _get_conn()
-
-    if email:
-        row = conn.execute(
-            "SELECT 1 FROM seen_emails WHERE email = ? LIMIT 1", (email,)
-        ).fetchone()
-        if not row:
-            conn.execute(
-                "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-                (email, name, now.isoformat(), now.isoformat()),
-            )
-            conn.commit()
-            return True
-        conn.execute(
-            "UPDATE seen_emails SET name = ?, last_seen = ? WHERE email = ?",
-            (name, now.isoformat(), email),
-        )
-        conn.commit()
-        return False
-
-    # fallback：无 email 时按姓名识别
-    if not name_key:
-        return False
-
-    pseudo_email = f"name:{name_key}"
     row = conn.execute(
-        "SELECT 1 FROM seen_emails WHERE email = ? LIMIT 1", (pseudo_email,)
+        "SELECT * FROM seen_emails WHERE email = ?", (email,)
     ).fetchone()
-
-    if not row:
+    if row:
         conn.execute(
-            "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-            (pseudo_email, name, now.isoformat(), now.isoformat()),
+            "UPDATE seen_emails SET last_seen = ?, seen_count = seen_count + 1 WHERE email = ?",
+            (now.isoformat(), email),
         )
         conn.commit()
-        return True
-
+        return False
     conn.execute(
-        "UPDATE seen_emails SET name = ?, last_seen = ? WHERE email = ?",
-        (name, now.isoformat(), pseudo_email),
+        "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+        (email, name, now.isoformat(), now.isoformat()),
     )
     conn.commit()
-    return False
+    return True
 
 
 # ── alerts ───────────────────────────────────────────────────────────────────
@@ -423,3 +414,212 @@ def log_command(chat_id: str, command: str, args: str = "", response: str = ""):
         message=f"{chat_id}: {args} → {response[:100]}",
         severity="info",
     )
+
+
+# ── Telegram Alert Rules ─────────────────────────────────────────────────────
+
+DEFAULT_TELEGRAM_RULES = [
+    {"event_type": "participant_joined",               "title": "成员加入会议",       "enabled": 1},
+    {"event_type": "participant_left",                  "title": "成员离开会议",       "enabled": 1},
+    {"event_type": "sharing_started",                   "title": "开始共享屏幕",       "enabled": 1},
+    {"event_type": "sharing_ended",                     "title": "结束共享屏幕",       "enabled": 1},
+    {"event_type": "sharing_timeout",                   "title": "共享超时",           "enabled": 1},
+    {"event_type": "unknown_user",                      "title": "陌生人进入",         "enabled": 1},
+    {"event_type": "participant_joined_breakout_room",  "title": "加入分组讨论室",     "enabled": 0},
+    {"event_type": "participant_left_breakout_room",    "title": "离开分组讨论室",     "enabled": 0},
+    {"event_type": "participant_joined_waiting_room",   "title": "有人在等候室",       "enabled": 1},
+]
+
+
+def seed_telegram_rules():
+    """插入默认 Telegram 告警规则，INSERT OR IGNORE 防止重复"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    for rule in DEFAULT_TELEGRAM_RULES:
+        conn.execute(
+            "INSERT OR IGNORE INTO telegram_alert_rules "
+            "(event_type, title, enabled, cooldown_seconds, quiet_enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, 60, 0, ?, ?)",
+            (rule["event_type"], rule["title"], rule["enabled"], now, now),
+        )
+    conn.commit()
+
+
+def get_telegram_rules() -> list[dict]:
+    """获取所有 Telegram 告警规则"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM telegram_alert_rules ORDER BY event_type"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_telegram_rule(event_type: str) -> dict | None:
+    """获取指定 event_type 的告警规则，不存在返回 None"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_telegram_rule(event_type: str, data: dict) -> int:
+    """插入或更新告警规则，返回 id"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 检查是否已存在
+    existing = conn.execute(
+        "SELECT id FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+
+    if existing:
+        fields = []
+        values = []
+        for key in ("title", "enabled", "target_chat_id", "cooldown_seconds",
+                     "quiet_enabled", "quiet_start", "quiet_end"):
+            if key in data:
+                fields.append(f"{key} = ?")
+                values.append(data[key])
+        fields.append("updated_at = ?")
+        values.append(now)
+        values.append(event_type)
+        conn.execute(
+            f"UPDATE telegram_alert_rules SET {', '.join(fields)} WHERE event_type = ?",
+            values,
+        )
+        conn.commit()
+        log_audit("update", "telegram_alert_rule", existing[0],
+                  f"Updated rule for {event_type}")
+        return existing[0]
+    else:
+        cur = conn.execute(
+            "INSERT INTO telegram_alert_rules "
+            "(event_type, title, enabled, target_chat_id, cooldown_seconds, "
+            " quiet_enabled, quiet_start, quiet_end, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                event_type,
+                data.get("title", ""),
+                data.get("enabled", 1),
+                data.get("target_chat_id", ""),
+                data.get("cooldown_seconds", 60),
+                data.get("quiet_enabled", 0),
+                data.get("quiet_start", "00:00"),
+                data.get("quiet_end", "08:00"),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        log_audit("create", "telegram_alert_rule", cur.lastrowid,
+                  f"Created rule for {event_type}")
+        return cur.lastrowid
+
+
+def delete_telegram_rule(event_type: str) -> bool:
+    """删除指定 event_type 的告警规则，返回是否成功删除"""
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT id FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    if not existing:
+        return False
+    conn.execute(
+        "DELETE FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    )
+    conn.commit()
+    log_audit("delete", "telegram_alert_rule", existing[0],
+              f"Deleted rule for {event_type}")
+    return True
+
+
+def _is_within_quiet_hours(rule: dict) -> bool:
+    """判断当前 MYT (UTC+8) 时间是否在静默时段内"""
+    from datetime import time as dt_time
+    myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
+    current = myt_now.time()
+
+    try:
+        start_parts = rule["quiet_start"].split(":")
+        end_parts = rule["quiet_end"].split(":")
+        start = dt_time(int(start_parts[0]), int(start_parts[1]))
+        end = dt_time(int(end_parts[0]), int(end_parts[1]))
+    except (ValueError, IndexError, KeyError):
+        return False
+
+    if start <= end:
+        # 正常区间（如 00:00~08:00）
+        return start <= current <= end
+    else:
+        # 跨天区间（如 22:00~06:00）
+        return current >= start or current <= end
+
+
+def should_send_telegram(event_type: str) -> bool:
+    """判断是否应该发送 Telegram 通知
+
+    逻辑：
+    1. 查规则，不存在则返回 True（兼容旧逻辑）
+    2. not enabled → False
+    3. cooldown: 查 alert_sent 表同一 event_type 最近一次发送时间
+    4. quiet_hours: 判断当前 MYT 时间是否在静默时段内
+    """
+    conn = _get_conn()
+    rule = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+
+    # 1. 规则不存在 → 兼容旧逻辑，允许发送
+    if not rule:
+        return True
+
+    rule = dict(rule)
+
+    # 2. 未启用
+    if not rule["enabled"]:
+        return False
+
+    # 3. Cooldown: 查 alert_sent 表，alert_key 格式为 "telegram:{event_type}"
+    alert_key = f"telegram:{event_type}"
+    last_sent_row = conn.execute(
+        "SELECT sent_at FROM alert_sent WHERE alert_key = ? ORDER BY id DESC LIMIT 1",
+        (alert_key,),
+    ).fetchone()
+
+    if last_sent_row and last_sent_row["sent_at"]:
+        try:
+            last_sent = datetime.fromisoformat(last_sent_row["sent_at"])
+            now = datetime.now(timezone.utc)
+            elapsed = (now - last_sent).total_seconds()
+            cooldown = rule.get("cooldown_seconds", 0)
+            if cooldown > 0 and elapsed < cooldown:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    # 4. Quiet hours
+    if rule.get("quiet_enabled", 0):
+        if _is_within_quiet_hours(rule):
+            return False
+
+    # 5. 允许发送
+    return True
+
+
+def log_audit(action: str, entity_type: str = "telegram_alert_rule",
+              entity_id: int = None, details: str = ""):
+    """写入审计日志"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO audit_logs (action, entity_type, entity_id, details, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (action, entity_type, entity_id, details, now),
+    )
+    conn.commit()

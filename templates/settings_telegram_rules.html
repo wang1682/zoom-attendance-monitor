@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Telegram 推送规则{% endblock %}
+{% block content %}
+<div class="page-container">
+  <div class="page-header"><h1>📋 Telegram 推送规则</h1><p>按事件类型精细控制 Telegram 推送</p></div>
+
+  <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="bt bt-p bt-s" onclick="showCreateForm()">➕ 新建规则</button>
+  </div>
+
+  <div id="ruleForm" style="display:none;background:var(--cb);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:16px">
+    <h3 style="margin:0 0 12px 0;font-size:14px" id="formTitle">新建规则</h3>
+    <input type="hidden" id="editEventType" value="">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:600px">
+      <div>
+        <label style="font-size:12px;color:var(--ts)">事件类型 *</label>
+        <select id="fEventType" class="ipt" style="width:100%">
+          <option value="participant_joined">participant_joined</option>
+          <option value="participant_left">participant_left</option>
+          <option value="waiting_room_joined">waiting_room_joined</option>
+          <option value="admitted">admitted</option>
+          <option value="sharing_started">sharing_started</option>
+          <option value="sharing_ended">sharing_ended</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">标题（可选）</label>
+        <input id="fTitle" class="ipt" style="width:100%" placeholder="留空自动生成">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">启用</label>
+        <select id="fEnabled" class="ipt" style="width:100%">
+          <option value="1">是</option>
+          <option value="0">否</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">冷却时间（秒）</label>
+        <input id="fCooldown" class="ipt" style="width:100%" type="number" value="0" min="0">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">目标 Chat ID</label>
+        <input id="fChatId" class="ipt" style="width:100%" placeholder="默认">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">静默时段启用</label>
+        <select id="fQuietEnabled" class="ipt" style="width:100%">
+          <option value="0">否</option>
+          <option value="1">是</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">静默开始</label>
+        <input id="fQuietStart" class="ipt" style="width:100%" type="time" value="00:00">
+      </div>
+      <div>
+        <label style="font-size:12px;color:var(--ts)">静默结束</label>
+        <input id="fQuietEnd" class="ipt" style="width:100%" type="time" value="08:00">
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="bt bt-p bt-s" onclick="saveRule()">💾 保存</button>
+      <button class="bt bt-s" onclick="hideForm()">取消</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>事件类型</th>
+          <th>标题</th>
+          <th>状态</th>
+          <th>冷却(秒)</th>
+          <th>静默时段</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if rules %}
+        {% for r in rules %}
+        <tr>
+          <td><code class="mono">{{ r.event_type }}</code></td>
+          <td>{{ r.title or "—" }}</td>
+          <td><span class="bg {{ 'bg-g' if r.enabled else 'bg-r' }}">{{ "🟢 启用" if r.enabled else "🔴 禁用" }}</span></td>
+          <td>{{ r.cooldown_seconds or 0 }}</td>
+          <td>
+            {% if r.quiet_enabled %}
+              {{ r.quiet_start or "00:00" }} ~ {{ r.quiet_end or "08:00" }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            <button class="bt bt-s" onclick="editRule('{{ r.event_type }}')">✏️</button>
+            <button class="bt bt-s bt-d" onclick="deleteRule('{{ r.event_type }}')">🗑️</button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--ts)">暂无规则，点击上方按钮创建</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const rulesData = {{ rules | tojson | safe }};
+
+function showCreateForm() {
+  document.getElementById('editEventType').value = '';
+  document.getElementById('formTitle').textContent = '新建规则';
+  document.getElementById('fEventType').value = 'participant_joined';
+  document.getElementById('fEventType').disabled = false;
+  document.getElementById('fTitle').value = '';
+  document.getElementById('fEnabled').value = '1';
+  document.getElementById('fCooldown').value = '0';
+  document.getElementById('fChatId').value = '';
+  document.getElementById('fQuietEnabled').value = '0';
+  document.getElementById('fQuietStart').value = '00:00';
+  document.getElementById('fQuietEnd').value = '08:00';
+  document.getElementById('ruleForm').style.display = 'block';
+}
+
+function hideForm() {
+  document.getElementById('ruleForm').style.display = 'none';
+}
+
+function editRule(eventType) {
+  const r = rulesData.find(x => x.event_type === eventType);
+  if (!r) return;
+  document.getElementById('editEventType').value = eventType;
+  document.getElementById('formTitle').textContent = '编辑规则: ' + eventType;
+  document.getElementById('fEventType').value = eventType;
+  document.getElementById('fEventType').disabled = true;
+  document.getElementById('fTitle').value = r.title || '';
+  document.getElementById('fEnabled').value = r.enabled ? '1' : '0';
+  document.getElementById('fCooldown').value = r.cooldown_seconds || 0;
+  document.getElementById('fChatId').value = r.target_chat_id || '';
+  document.getElementById('fQuietEnabled').value = r.quiet_enabled ? '1' : '0';
+  document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
+  document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
+  document.getElementById('ruleForm').style.display = 'block';
+}
+
+async function saveRule() {
+  const editType = document.getElementById('editEventType').value;
+  const eventType = document.getElementById('fEventType').value;
+  const data = {
+    event_type: eventType,
+    title: document.getElementById('fTitle').value.trim(),
+    enabled: parseInt(document.getElementById('fEnabled').value),
+    cooldown_seconds: parseInt(document.getElementById('fCooldown').value) || 0,
+    target_chat_id: document.getElementById('fChatId').value.trim() || null,
+    quiet_enabled: parseInt(document.getElementById('fQuietEnabled').value),
+    quiet_start: document.getElementById('fQuietStart').value,
+    quiet_end: document.getElementById('fQuietEnd').value,
+  };
+
+  let url = '/api/v3/telegram-rules';
+  let method = 'POST';
+  if (editType) {
+    url = '/api/v3/telegram-rules/' + encodeURIComponent(editType);
+    method = 'PUT';
+  }
+
+  try {
+    const resp = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const j = await resp.json();
+    if (j.ok) {
+      location.reload();
+    } else {
+      alert('保存失败: ' + (j.error || '未知错误'));
+    }
+  } catch(e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function deleteRule(eventType) {
+  if (!confirm('确定要删除规则 "' + eventType + '" 吗？')) return;
+  try {
+    const resp = await fetch('/api/v3/telegram-rules/' + encodeURIComponent(eventType), { method: 'DELETE' });
+    const j = await resp.json();
+    if (j.ok) {
+      location.reload();
+    } else {
+      alert('删除失败');
+    }
+  } catch(e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+</script>
+{% endblock %}

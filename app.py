@@ -1,4 +1,3 @@
-import re
 import os
 """
 app.py — Zoom 参会监控统一入口
@@ -13,7 +12,6 @@ import hashlib
 import hmac
 import json
 import sys
-import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -106,171 +104,6 @@ def dedup_participants(participants):
             result.append(p)
     return result
 
-
-def build_participant_summary(rows, for_date: str = ""):
-    """按人聚合原始 zoom_participants 记录，返回 participants 页面所需字段
-
-    跨天配对策略：取最近 7 天数据做配对，但只输出今日有活动的人。
-    逻辑复用 /api/v2/summary 的配对方式。
-    当 for_date 指定时（如 "2026-06-01"），统计窗口和配对范围以该日为基准。
-    """
-    from collections import defaultdict
-
-    now_utc = datetime.now(timezone.utc)
-    MYT = timezone(timedelta(hours=8))
-    if for_date:
-        _d = datetime.strptime(for_date, "%Y-%m-%d").replace(tzinfo=MYT)
-        myt_start = _d.replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        now_myt = now_utc.astimezone(MYT)
-        myt_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-    myt_end = myt_start + timedelta(days=1)
-    today_start_utc = myt_start.astimezone(timezone.utc).isoformat()
-    today_end_utc = myt_end.astimezone(timezone.utc).isoformat()
-
-    # 取更多数据做配对（向前 7 天）
-    lookup_start = (myt_start - timedelta(days=7)).astimezone(timezone.utc).isoformat()
-    import sys as _sys
-    conn = db._get_conn()
-    # 如果已传入 rows（含指定日期的数据），直接用；否则查 DB
-    extra_rows = rows if rows else []
-    print("[bps-in] for_date=%s rows_provided=%d extra_rows_type=%s" % (for_date, len(rows) if rows else 0, type(extra_rows).__name__), file=_sys.stderr)
-    today_end_for_db = today_end_utc
-    # 仅在没有传入 rows 时才额外查 DB
-    if not rows:
-        extra_rows = conn.execute(
-            "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
-            (lookup_start, today_end_for_db)
-        ).fetchall()
-    cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
-
-    print("[bps-in] extra_rows_len=%d" % len(extra_rows), file=_sys.stderr)
-    if not extra_rows:
-        return []
-
-    # 按人+会议分组（复用 api summary 逻辑）
-    user_sessions = defaultdict(lambda: {"enters": [], "leaves": []})
-    for r in extra_rows:
-        record = r if isinstance(r, dict) else dict(zip(cols, r))
-        name = record.get("name", "?")
-        resolved = db.resolve_display_name(name)
-        canonical = resolved["display_name"]
-        mid = record.get("meeting_id", "?")
-        action = record.get("action", "")
-        t = record.get("action_time", "")
-        if action == "enter":
-            user_sessions[(canonical, mid)]["enters"].append(t)
-        elif action == "leave":
-            user_sessions[(canonical, mid)]["leaves"].append(t)
-
-    print("[bps-in] user_sessions=%d" % len(user_sessions), file=_sys.stderr)
-    def in_today(t):
-        try:
-            d = datetime.fromisoformat(t.replace("Z", "+00:00"))
-            return today_start_utc <= d.isoformat() < today_end_utc
-        except:
-            return False
-
-    def secs_in_today(start_iso, end_iso):
-        try:
-            s = max(datetime.fromisoformat(start_iso.replace("Z", "+00:00")),
-                    datetime.fromisoformat(today_start_utc.replace("Z", "+00:00")))
-            e = min(datetime.fromisoformat(end_iso.replace("Z", "+00:00")),
-                    datetime.fromisoformat(today_end_utc.replace("Z", "+00:00")))
-            if e > s:
-                return int((e - s).total_seconds())
-        except:
-            pass
-        return 0
-
-    def fmt_minutes(secs):
-        if secs <= 0:
-            return "—"
-        h = secs // 3600
-        m = (secs % 3600) // 60
-        if h > 0:
-            return f"{h}h{m}m"
-        return f"{m}m"
-
-    # 按 canonical_name 汇总 — 状态机配对算法
-    # 每人同一时刻只能有一个 open_enter
-    # 重复 enter 不重复计时
-    # 未配对 enter 只有当前真的在线且在今天才计入
-    person_summary = defaultdict(lambda: {
-        "total_secs": 0, "current_secs": 0,
-        "first_enter": "", "last_active": "",
-        "has_today_activity": False, "is_online": False,
-        "leave_count": 0
-    })
-
-    for (canonical, mid), sess in user_sessions.items():
-        events = []
-        for t in sess["enters"]:
-            events.append((t, "enter"))
-        for t in sess["leaves"]:
-            events.append((t, "leave"))
-        events.sort(key=lambda x: x[0])
-
-        p = person_summary[canonical]
-        open_enter = None
-
-        for t, action in events:
-            if action == "enter":
-                if open_enter is None:
-                    open_enter = t
-                    if not p["first_enter"] or t < p["first_enter"]:
-                        p["first_enter"] = t
-                # 重复 enter，忽略
-            elif action == "leave":
-                p["leave_count"] += 1
-                if in_today(t):
-                    p["has_today_activity"] = True
-                if open_enter is not None:
-                    s = secs_in_today(open_enter, t)
-                    p["total_secs"] += s
-                    open_enter = None
-                # 无 enter 的 leave 不贡献时长
-
-        # 最后活动时间
-        if events:
-            last_t = events[-1][0]
-            if last_t > p["last_active"]:
-                p["last_active"] = last_t
-
-        # 未配对 enter
-        if open_enter is not None:
-            p["is_online"] = True
-            if in_today(open_enter):
-                p["current_secs"] = secs_in_today(open_enter, now_utc.isoformat())
-                p["total_secs"] += p["current_secs"]
-        else:
-            p["is_online"] = False
-
-    print("[bps-in] person_summary=%d" % len(person_summary), file=_sys.stderr)
-    for _cn, _cp in list(person_summary.items())[:3]:
-        print("[bps-in]  %s: has_act=%s is_on=%s lv=%d" % (_cn, _cp["has_today_activity"], _cp["is_online"], _cp["leave_count"]), file=_sys.stderr)
-    # 构建输出，只保留今日有活动的人
-    result = []
-    for canonical, p in person_summary.items():
-        if not p["has_today_activity"]:
-            continue
-
-        result.append({
-            "name": canonical,
-            "status": "在线中" if p["is_online"] else "已离线",
-            "first_enter": p["first_enter"],
-            "current_session": fmt_minutes(p["current_secs"]),
-            "total_duration": fmt_minutes(p["total_secs"]),
-            "leave_count": p.get("leave_count", 0),
-            "last_active": p["last_active"],
-            "is_online": p["is_online"],
-            "action_time": p["first_enter"],  # 兼容模板中 {{ to_myt(p.action_time) }}
-        })
-
-    result.sort(key=lambda x: x.get("last_active", ""), reverse=True)
-    return result
-
-
 BASE_DIR = Path(__file__).parent
 
 with open(BASE_DIR / "brand.json") as _f:
@@ -299,7 +132,7 @@ def build_app() -> "FastAPI":
         return _app
 
     from fastapi import FastAPI, Request, HTTPException
-    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
@@ -308,18 +141,6 @@ def build_app() -> "FastAPI":
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
     tmpl.env.filters["myt"] = to_myt
-
-    # ── LIVE_CACHE: 唯一在线状态缓存（由 /api/v2/live 刷新，dashboard/sharing 只读） ─
-    LIVE_CACHE = {
-        "ts": 0.0,
-        "data": {
-            "total_online": 0,
-            "online_list": [],
-            "online": [],
-            "meetings": [],
-            "participants_summary": [],
-        }
-    }
 
     # ── DB 初始化中间件 ─────────────────────────────────────────────────────
     # ── Alert rules seed ────────────────────────────────────────────────
@@ -433,51 +254,16 @@ def build_app() -> "FastAPI":
         })
 
     @app.get("/participants", response_class=HTMLResponse)
-    async def participants_page(request: Request, date: str = ""):
+    async def participants_page(request: Request):
         if settings.demo_mode:
             participants = _ensure_demo().get_demo_participants()
         else:
-            if date:
-                # 指定日期：查该日 MYT 范围
-                _d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=MYT)
-                _ds, _de = myt_day_range_to_utc(_d)
-                _conn = db._get_conn()
-                _myrows = _conn.execute(
-                    "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
-                    (_ds, _de)
-                ).fetchall()
-                _cols = [c2[1] for c2 in _conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
-                _mydicts = [dict(zip(_cols, r)) for r in _myrows]
-                import sys as _sys
-                print("[participants-debug] date=%s _ds=%s _de=%s rows=%d" % (date, _ds, _de, len(_mydicts)), file=_sys.stderr)
-                participants = build_participant_summary(_mydicts, for_date=date)
-                print("[participants-debug] summary=%d" % len(participants), file=_sys.stderr)
-            else:
-                rows = db.get_today_participants(limit=500)
-                participants = build_participant_summary(rows)
-            # Live API 覆盖在线状态：只有 live 确认在线的人才标记在线，其余全部离线
-            try:
-                import urllib.request, json as _json
-                live_req = urllib.request.Request("http://localhost:8000/api/v2/live", method="GET")
-                with urllib.request.urlopen(live_req, timeout=2) as resp:
-                    live = _json.loads(resp.read())
-                    online_set = set()
-                    for p in live.get("online_list", []):
-                        rn = db.resolve_display_name(p.get("name", ""))
-                        online_set.add(rn["display_name"])
-            except Exception:
-                online_set = set()
-                import logging
-                logging.getLogger("zoom").exception("live API 调用失败，所有参与者标记为离线")
-            for p2 in participants:
-                p2["is_online"] = p2["name"] in online_set
-                p2["status"] = "\u5728\u7ebf\u4e2d" if p2["is_online"] else "\u5df2\u79bb\u7ebf"
+            participants = db.get_today_participants(limit=200)
         return tmpl.TemplateResponse(request, "participants.html", {
             "participants": participants,
             "brand": BRAND,
             "demo_mode": settings.demo_mode,
             "to_myt": to_myt,
-            "selected_date": date,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
@@ -633,6 +419,43 @@ def build_app() -> "FastAPI":
             "bot_username": bot_username,
             "home_chat_id": "7922047310",
         })
+
+    # ── Telegram Rules API ──────────────────────────────────────────────
+
+    @app.get("/api/v3/telegram-rules")
+    async def api_v3_get_telegram_rules():
+        rules = db.get_telegram_rules()
+        return {"ok": True, "rules": rules}
+
+    @app.post("/api/v3/telegram-rules")
+    async def api_v3_create_telegram_rule(request: Request):
+        data = await request.json()
+        event_type = data.get("event_type", "").strip()
+        if not event_type:
+            return {"ok": False, "error": "event_type is required"}
+        rule_id = db.upsert_telegram_rule(event_type, data)
+        return {"ok": True, "id": rule_id}
+
+    @app.put("/api/v3/telegram-rules/{event_type}")
+    async def api_v3_update_telegram_rule(event_type: str, request: Request):
+        data = await request.json()
+        rule_id = db.upsert_telegram_rule(event_type, data)
+        return {"ok": True, "id": rule_id}
+
+    @app.delete("/api/v3/telegram-rules/{event_type}")
+    async def api_v3_delete_telegram_rule(event_type: str):
+        db.delete_telegram_rule(event_type)
+        return {"ok": True}
+
+    @app.get("/settings/telegram-rules", response_class=HTMLResponse)
+    async def settings_telegram_rules_page(request: Request):
+        rules = db.get_telegram_rules()
+        return tmpl.TemplateResponse(request, "settings_telegram_rules.html", {
+            "brand": BRAND,
+            "rules": rules,
+        })
+
+    # ─────────────────────────────────────────────────────────────────────
 
     @app.get("/settings/system", response_class=HTMLResponse)
     async def settings_system_page(request: Request):
@@ -943,9 +766,7 @@ def build_app() -> "FastAPI":
                 push_event = "unknown"
                 push_icon = "ℹ️"
                 push_title = ""
-                if "breakout_room" in event_type:
-                    push_event = "silent_breakout"
-                elif "participant_joined" in event_type and "waiting_room" not in event_type:
+                if "participant_joined" in event_type and "waiting_room" not in event_type:
                     push_event = "participant_joined"
                     push_icon = "📌"
                     push_title = "会议有新人加入"
@@ -977,26 +798,32 @@ def build_app() -> "FastAPI":
                     dedup_key = "webhook:" + push_event + ":" + mid + ":" + user_key + ":" + event_ts[:16]
                     sys.stderr.write("[PUSH] dedup_key=" + dedup_key + "\n")
                     sys.stderr.flush()
-                    already = p_conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)).fetchone()
-                    if already:
-                        sys.stderr.write("[PUSH] duplicate, skipped\n")
+
+                    # Check rule-based gate before sending
+                    if not db.should_send_telegram(push_event):
+                        sys.stderr.write(f"[PUSH] {push_event} blocked by rule (should_send_telegram=False)\n")
                         sys.stderr.flush()
                     else:
-                        content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
-                        extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
-                        text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                        result = send_message(text)
-                        sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
-                        sys.stderr.flush()
-                        if result.get("ok"):
-                            p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
-                                (dedup_key, "webhook_event_push", now_utc.isoformat()))
-                            p_conn.commit()
-                            sys.stderr.write("[PUSH] inserted alert_sent\n")
+                        already = p_conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)).fetchone()
+                        if already:
+                            sys.stderr.write("[PUSH] duplicate, skipped\n")
                             sys.stderr.flush()
                         else:
-                            sys.stderr.write("[PUSH] send failed: " + str(result.get("error", "")) + "\n")
+                            content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
+                            extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
+                            text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
+                            result = send_message(text)
+                            sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
                             sys.stderr.flush()
+                            if result.get("ok"):
+                                p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
+                                    (dedup_key, "webhook_event_push", now_utc.isoformat()))
+                                p_conn.commit()
+                                sys.stderr.write("[PUSH] inserted alert_sent\n")
+                                sys.stderr.flush()
+                            else:
+                                sys.stderr.write("[PUSH] send failed: " + str(result.get("error", "")) + "\n")
+                                sys.stderr.flush()
         except Exception as e:
             sys.stderr.write(f"[WEBHOOK_PUSH] error: {e}\n")
             sys.stderr.flush()
@@ -1129,7 +956,8 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live():
-        """共享状态：合并 LIVE_CACHE 在线集 + sharing_live 表 + webhook 事件"""
+        """共享状态：合并 Metrics API + sharing_live 表 + webhook 事件"""
+        import httpx
         import json as _json
         from datetime import datetime, timezone, timedelta
         MYT = timezone(timedelta(hours=8))
@@ -1155,30 +983,47 @@ def build_app() -> "FastAPI":
         
         conn = db._get_conn()
         merged = {}  # user_id -> sharing_info
-        _online_set = set()  # normalize_identity_name of in_meeting participants
-        sources = {"live_cache": 0, "sharing_live": 0, "webhook": 0}
+        sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
-        # Source 1: LIVE_CACHE（取代原 Metrics API 调用）
-        # 从缓存获取在线列表，构建在线 identity 集合用于后续过滤
-        live_data = LIVE_CACHE.get("data", {})
-        online_list = live_data.get("online_list", []) or live_data.get("online", [])
-        for p in online_list:
-            name = p.get("name", "")
-            if name:
-                _online_set.add(db.normalize_identity_name(name))
-        sources["live_cache"] = len(online_list)
+        # Source 1: Metrics API (most reliable for current state)
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                tr = await c.post("https://zoom.us/oauth/token",
+                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
+                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
+                if tr.status_code == 200:
+                    token = tr.json().get("access_token", "")
+                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
+                        headers={"Authorization": f"Bearer {token}"})
+                    if mr.status_code == 200:
+                        for m in mr.json().get("meetings", []):
+                            mid = str(m.get("id", ""))
+                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
+                                headers={"Authorization": f"Bearer {token}"})
+                            if pr.status_code == 200:
+                                for p in pr.json().get("participants", []):
+                                    if p.get("status") != "in_meeting": continue
+                                    is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
+                                    if not is_sharing: continue
+                                    uid = str(p.get("user_id", ""))
+                                    if not uid or uid in merged: continue
+                                    raw = p.get("user_name", "").strip()
+                                    dn = db.resolve_display_name(raw)["display_name"]
+                                    content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
+                                    jt = p.get("join_time", "")
+                                    merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
+                                                   "content": content, "start_time": jt, "source": "metrics_api"}
+                                    sources["metrics_api"] += 1
+        except: pass
         
         # Source 2: sharing_live table (is_active=1, not stale)
         live_rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE is_active=1 ORDER BY start_time DESC"
+            "SELECT * FROM sharing_live WHERE is_active=1"
         ).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
-        seen_names = set()  # deduplicate by user_name
         for r in live_rows:
             d = dict(zip(live_cols, r))
-            user_name = d.get("user_name", "").strip()
-            if not user_name:
-                continue
+            uid = d.get("user_id", "")
             start_str = d.get("start_time", "")
             # Stale cutoff: >4h old
             if start_str:
@@ -1187,17 +1032,12 @@ def build_app() -> "FastAPI":
                     if (now_utc - sd) > STALE_CUTOFF:
                         continue
                 except: pass
-            # Deduplicate: only keep the latest record per user_name
-            normalized = db.normalize_identity_name(user_name)
-            if normalized in seen_names:
-                continue
-            seen_names.add(normalized)
-            uid = d.get("user_id", "")
-            raw = user_name
-            dn = db.resolve_display_name(raw)["display_name"]
-            merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                           "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
-            sources["sharing_live"] += 1
+            if uid and uid not in merged:
+                raw = d.get("user_name", "")
+                dn = db.resolve_display_name(raw)["display_name"]
+                merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
+                               "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
+                sources["sharing_live"] += 1
         
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
@@ -1250,23 +1090,6 @@ def build_app() -> "FastAPI":
                                "content": info.get("content", ""), "start_time": info.get("start_time", ""),
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
-        # 过滤：只保留在线用户的共享记录。优先用 LIVE_CACHE，其次 Source 1 Metrics API
-        _filter_set = next((lc.get("online_set", set()) for lc_name, lc in globals().items()
-                           if lc_name == "LIVE_CACHE" and isinstance(lc, dict) and lc.get("data", {}).get("online_list")), None)
-        if _filter_set is None:
-            # LIVE_CACHE 不可用，用 Source 1 的 in_meeting 名单
-            _filter_set = _online_set
-        if _filter_set:
-            for uid, info in list(merged.items()):
-                if db.normalize_identity_name(info.get("name", "")) not in _filter_set:
-                    del merged[uid]
-        else:
-            # Fallback: LIVE_CACHE/Source 1 均无在线数据，只保留最近 15 分钟内 active sharing
-            _cutoff = (now_utc - timedelta(minutes=15)).isoformat()
-            for uid, info in list(merged.items()):
-                st = info.get("start_time", "")
-                if st and st < _cutoff:
-                    del merged[uid]
         
         # Build output
         active = []
@@ -1286,10 +1109,12 @@ def build_app() -> "FastAPI":
                 "source": info.get("source", ""),
             })
         
-        return JSONResponse(
-            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-            content={"ok": True, "current": len(active), "active": active, "sources": sources}
-        )
+        return {
+            "ok": True,
+            "current": len(active),
+            "active": active,
+            "sources": sources,
+        }
         
         # Build response
         current_sharing = []
@@ -1833,31 +1658,42 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/live")
     async def api_v3_live():
-        """实时在线数据（从 LIVE_CACHE 读取，不再主动调用 Zoom API）"""
-        live_data = LIVE_CACHE.get("data", {})
-        return {"ok": True, "data": live_data, "cache_ts": LIVE_CACHE["ts"]}
+        """Business Metrics API 实时在线数据（去重）"""
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        data = await zm.get_live()
+        return {"ok": True, "data": data}
 
+
+    async def api_v3_live():
+        """Business Metrics API 实时在线数据（去重）"""
+        from zoom_metrics import ZoomMetrics
+        zm = ZoomMetrics()
+        data = await zm.get_live()
+        return {"ok": True, "data": data}
 
     @app.get("/api/v3/dashboard")
     async def api_v3_dashboard():
-        """Dashboard 概览（读取 LIVE_CACHE，不再主动调用 Zoom API）"""
+        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）"""
         conn = db._get_conn()
         report_start_utc, report_end_utc = myt_day_range_to_utc()
 
-        # 从 LIVE_CACHE 读取在线状态
-        cache_ts = LIVE_CACHE["ts"]
-        cache_age = time.time() - cache_ts
-        live_data = LIVE_CACHE.get("data", {})
-        online_count = live_data.get("total_online", 0)
-        meetings = live_data.get("meetings", [])
-        sharing_list = LIVE_CACHE.get("sharing_list", [])
-        sharing_count = len(sharing_list) if sharing_list else 0
-        # 从 /api/v3/sharing-live 同步实时共享数（不等 LIVE_CACHE 刷新）
+        online_count = 0
+        sharing_count = 0
+        meetings = []
         try:
-            import urllib.request, json as _uj
-            _ur = urllib.request.Request("http://localhost:8000/api/v3/sharing-live", method="GET")
-            with urllib.request.urlopen(_ur, timeout=3) as _us:
-                sharing_count = _uj.loads(_us.read()).get("current", sharing_count)
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            online_count = live_data.get("total_online", 0)
+            meetings = live_data.get("meetings", [])
+        except:
+            pass
+
+        sharing_count = 0
+        try:
+            sr = conn.execute("SELECT COUNT(*) FROM sharing_live WHERE is_active=1").fetchone()[0]
+            sharing_count = sr
         except:
             pass
 
@@ -1876,33 +1712,25 @@ def build_app() -> "FastAPI":
             (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
-        # Dashboard participants = LIVE_CACHE online_list + DB 历史统计合并
-        _ol = LIVE_CACHE.get("data", {}).get("online_list", [])
-        _online_names = {db.normalize_identity_name(p.get("name","")) for p in _ol}
-        # MYT 今日范围查 DB（历史统计）
-        _myt_s, _myt_e = myt_day_range_to_utc()
-        _hrows = conn.execute(
-            "SELECT name, action, action_time FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
-            (_myt_s, _myt_e)
+        participants_rows = conn.execute(
+            "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
+            (report_start_utc, report_end_utc)
         ).fetchall()
-        # MYT 今日的历史聚合
-        _hrows_list = [dict(zip([c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()], r)) for r in _hrows]
-        _hagg = build_participant_summary(_hrows_list)
-        _hmap = {db.normalize_identity_name(p["name"]): p for p in _hagg}
-        participants = []
-        for _p in _ol:
-            _nk = db.normalize_identity_name(_p.get("name",""))
-            _hp = _hmap.get(_nk, {})
-            participants.append({
-                "name": _p.get("name", ""),
-                "raw_name": _p.get("name", ""),
-                "status": "\u5728\u7ebf\u4e2d",
-                "session_duration": _p.get("duration_display", "\u2014"),
-                "today_duration": _hp.get("total_duration") or _p.get("duration_display") or "\u2014",
-                "leave_count": _hp.get("leave_count", 0),
-                "last_active": _p.get("last_active", ""),
-            })
 
+        participants = []
+        seen = set()
+        for r in participants_rows:
+            resolved = db.resolve_display_name(r["name"])
+            canonical = resolved["display_name"]
+            if canonical not in seen:
+                seen.add(canonical)
+                participants.append({
+                    "name": canonical,
+                    "raw_name": r["name"],
+                    "meeting_id": r["meeting_id"],
+                    "last_action": r["action"],
+                    "last_active": r["action_time"],
+                })
 
         return {
             "ok": True,
@@ -2109,8 +1937,12 @@ def build_app() -> "FastAPI":
                                     disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
                                     jtd = jd.astimezone(MYT).strftime("%m-%d %H:%M:%S")
                                 except: pass
-                            # 会议还在进行中，参与者默认在线
                             ol = True
+                            if jt:
+                                try:
+                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                                    if (now_utc - jd).total_seconds() > 600: ol = False
+                                except: pass
                             key = dn.lower().replace(" ", "")
                             top_active[dn] = top_active.get(dn, 0) + 1
                             if key not in participants_summary:
@@ -2131,30 +1963,13 @@ def build_app() -> "FastAPI":
                 except: pass
         ps = list(participants_summary.values())
         ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
-        ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
-        max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
-        ol_list = ps_sorted[:max(max_online, 1)] if max_online > 0 else []
+        ol_list = [p for p in ps if p["is_online"]]
         sl_list = [p for p in ol_list if p.get("is_sharing")]
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
-        # 重建 meetings：保留所有原始会议信息，用 filtered online_count 替代 raw
-        _m_map = {}
-        for _mid, _bm in meetings.items():
-            _m_map[_mid] = {"meeting_id": _mid, "topic": _bm.get("topic", _mid),
-                            "online_count": 0, "raw_online_count": _bm.get("raw_online_count", 0),
-                            "elapsed_minutes": _bm.get("elapsed_minutes", 0),
-                            "start_time": _bm.get("start_time", "")}
-        for _op in ol_list:
-            _mid = _op.get("meeting_id", "")
-            if _mid in _m_map:
-                _m_map[_mid]["online_count"] += 1
-        _raw_count = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
         return {
             "ok": True,
             "total_online": len(ol_list),
-            "meeting_active": bool(meetings) or _raw_count > 0,
-            "raw_online_count": _raw_count,
-            "sharing_list": sl_list,
-            "meetings": list(_m_map.values()),
+            "meetings": list(meetings.values()),
             "participants_summary": ps,
             "online_list": ol_list,
             "sharing_list": sl_list,
@@ -2182,19 +1997,9 @@ def build_app() -> "FastAPI":
                     if mr.status_code == 200:
                         md = mr.json().get("meetings", [])
                         if md:
-                            result = await _build_live_from_metrics(md, token)
-                            LIVE_CACHE["ts"] = time.time()
-                            LIVE_CACHE["data"] = result
-                            LIVE_CACHE["sharing_list"] = result.get("sharing_list", [])
-                            LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in result.get("online_list", [])}
-                            return result
-        except Exception as _live_err:
-            import sys as _sys
-            print("LIVE_API_ERR: %s" % _live_err, file=_sys.stderr)
-            _cached = LIVE_CACHE.get("data", {})
-            if _cached and _cached.get("total_online", -1) >= 0:
-                _cached["cache_stale"] = True
-                return _cached
+                            return await _build_live_from_metrics(md, token)
+        except:
+            pass
         conn = db._get_conn()
         now_utc = datetime.now(timezone.utc)
         rs_utc, re_utc = myt_day_range_to_utc()
@@ -2355,7 +2160,7 @@ def build_app() -> "FastAPI":
             ai_summary_parts.append("整体情况正常。")
         ai_summary = "".join(ai_summary_parts)
 
-        result = {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
+        return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
                 "total_events": total_events, "unique_participants": unique_participants,
                 "unique_online_rate": unique_online_rate,
                 "top_online": top_online, "active_hours": active_hours,
@@ -2363,14 +2168,6 @@ def build_app() -> "FastAPI":
                 "participants_summary": participants_summary,
                 "anomalies": anomalies, "health_level": health_level,
                 "ai_summary": ai_summary}
-        # 写入 LIVE_CACHE（SQL fallback 路径）
-        LIVE_CACHE["ts"] = time.time()
-        # 统一字段名：SQL 路径用 online，Metrics API 路径用 online_list
-        cache_data = dict(result)
-        cache_data["online_list"] = online
-        LIVE_CACHE["data"] = cache_data
-        LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in cache_data.get("online_list", [])}
-        return result
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
