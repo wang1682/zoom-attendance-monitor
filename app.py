@@ -2104,7 +2104,8 @@ def build_app() -> "FastAPI":
             if _mid not in _m_map:
                 _bm = meetings.get(_mid, {})
                 _m_map[_mid] = {"meeting_id": _mid, "topic": _bm.get("topic", _mid),
-                                "online_count": 0, "elapsed_minutes": _bm.get("elapsed_minutes", 0),
+                                "online_count": 0, "raw_online_count": _bm.get("raw_online_count", 0),
+                                "elapsed_minutes": _bm.get("elapsed_minutes", 0),
                                 "start_time": _bm.get("start_time", "")}
             _m_map[_mid]["online_count"] += 1
         return {
