@@ -274,7 +274,7 @@ def build_app() -> "FastAPI":
         return _app
 
     from fastapi import FastAPI, Request, HTTPException
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
@@ -1232,12 +1232,10 @@ def build_app() -> "FastAPI":
                 "source": info.get("source", ""),
             })
         
-        return {
-            "ok": True,
-            "current": len(active),
-            "active": active,
-            "sources": sources,
-        }
+        return JSONResponse(
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+            content={"ok": True, "current": len(active), "active": active, "sources": sources}
+        )
         
         # Build response
         current_sharing = []
