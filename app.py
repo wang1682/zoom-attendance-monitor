@@ -1832,34 +1832,20 @@ def build_app() -> "FastAPI":
             (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
-        rows = db.get_today_participants(limit=500)
-        aggregated = build_participant_summary(rows)
-        # 复用 build_participant_summary 的计算结果，不重复造统计
+        # Dashboard participants = LIVE_CACHE online_list（实时在线，跨 UTC 日边界也不丢）
         participants = []
-        for p in aggregated:
+        _ol = LIVE_CACHE.get("data", {}).get("online_list", [])
+        for _p in _ol:
             participants.append({
-                "name": p["name"],
-                "raw_name": p["name"],
-                "status": p.get("status", "已离线"),
-                "session_duration": p.get("current_session", "\u2014"),
-                "today_duration": p.get("total_duration", "\u2014"),
-                "leave_count": p.get("leave_count", 0),
-                "last_active": p.get("last_active", ""),
+                "name": _p.get("name", ""),
+                "raw_name": _p.get("name", ""),
+                "status": "\u5728\u7ebf\u4e2d",
+                "session_duration": _p.get("duration_display", "\u2014"),
+                "today_duration": "\u2014",
+                "leave_count": 0,
+                "last_active": _p.get("last_active", ""),
             })
-        # LIVE_CACHE 覆盖在线状态
-        _online_names = set()
-        _lc = LIVE_CACHE.get("data", {})
-        for _lp in _lc.get("online_list", []):
-            _resolved = db.resolve_display_name(_lp.get("name", ""))
-            _online_names.add(db.normalize_identity_name(_resolved["display_name"]))
-        for p in participants:
-            _is_online = db.normalize_identity_name(p["name"]) in _online_names
-            p["status"] = "\u5728\u7ebf\u4e2d" if _is_online else "\u5df2\u79bb\u7ebf"
-            if _is_online and (p.get("session_duration") in ("", "\u2014", None)):
-                _lt = parse_utc_iso(p.get("last_active", ""))
-                if _lt:
-                    _diff = int((datetime.now(timezone.utc) - _lt).total_seconds() / 60)
-                    p["session_duration"] = f"{_diff // 60}h{_diff % 60:02d}m" if _diff >= 60 else f"{_diff}m"
+
 
         return {
             "ok": True,
