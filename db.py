@@ -240,27 +240,61 @@ def get_today_participants(limit: int = 200) -> list[dict]:
 
 # ── seen_emails ──────────────────────────────────────────────────────────────
 
+def normalize_identity_name(name: str) -> str:
+    return " ".join((name or "").strip().lower().split())
+
+
 def check_new_email(email: str, name: str, now: datetime) -> bool:
-    """返回 True 表示新人，False 表示已见过"""
-    if not email:
-        return False
+    """返回 True 表示新人，False 表示已见过
+
+    有 email 时按 email 去重；无 email 时 fallback 到规范化姓名。
+    """
+    email = (email or "").strip().lower()
+    name_key = normalize_identity_name(name)
+
     conn = _get_conn()
-    row = conn.execute(
-        "SELECT * FROM seen_emails WHERE email = ?", (email,)
-    ).fetchone()
-    if row:
+
+    if email:
+        row = conn.execute(
+            "SELECT 1 FROM seen_emails WHERE email = ? LIMIT 1", (email,)
+        ).fetchone()
+        if not row:
+            conn.execute(
+                "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+                (email, name, now.isoformat(), now.isoformat()),
+            )
+            conn.commit()
+            return True
         conn.execute(
-            "UPDATE seen_emails SET last_seen = ?, seen_count = seen_count + 1 WHERE email = ?",
-            (now.isoformat(), email),
+            "UPDATE seen_emails SET name = ?, last_seen = ? WHERE email = ?",
+            (name, now.isoformat(), email),
         )
         conn.commit()
         return False
+
+    # fallback：无 email 时按姓名识别
+    if not name_key:
+        return False
+
+    pseudo_email = f"name:{name_key}"
+    row = conn.execute(
+        "SELECT 1 FROM seen_emails WHERE email = ? LIMIT 1", (pseudo_email,)
+    ).fetchone()
+
+    if not row:
+        conn.execute(
+            "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
+            (pseudo_email, name, now.isoformat(), now.isoformat()),
+        )
+        conn.commit()
+        return True
+
     conn.execute(
-        "INSERT INTO seen_emails (email, name, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-        (email, name, now.isoformat(), now.isoformat()),
+        "UPDATE seen_emails SET name = ?, last_seen = ? WHERE email = ?",
+        (name, now.isoformat(), pseudo_email),
     )
     conn.commit()
-    return True
+    return False
 
 
 # ── alerts ───────────────────────────────────────────────────────────────────
