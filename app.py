@@ -2110,6 +2110,7 @@ def build_app() -> "FastAPI":
             "total_online": len(ol_list),
             "meeting_active": bool(meetings) or _raw_count > 0,
             "raw_online_count": _raw_count,
+            "sharing_list": sl_list,
             "meetings": list(_m_map.values()),
             "participants_summary": ps,
             "online_list": ol_list,
@@ -2141,11 +2142,16 @@ def build_app() -> "FastAPI":
                             result = await _build_live_from_metrics(md, token)
                             LIVE_CACHE["ts"] = time.time()
                             LIVE_CACHE["data"] = result
-                            LIVE_CACHE["sharing_list"] = sl_list
+                            LIVE_CACHE["sharing_list"] = result.get("sharing_list", [])
                             LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in result.get("online_list", [])}
                             return result
-        except:
-            pass
+        except Exception as _live_err:
+            import sys as _sys
+            print("LIVE_API_ERR: %s" % _live_err, file=_sys.stderr)
+            _cached = LIVE_CACHE.get("data", {})
+            if _cached and _cached.get("total_online", -1) >= 0:
+                _cached["cache_stale"] = True
+                return _cached
         conn = db._get_conn()
         now_utc = datetime.now(timezone.utc)
         rs_utc, re_utc = myt_day_range_to_utc()
