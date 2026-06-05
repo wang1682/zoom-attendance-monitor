@@ -983,6 +983,7 @@ def build_app() -> "FastAPI":
         
         conn = db._get_conn()
         merged = {}  # user_id -> sharing_info
+        _sharing_online_set = set()  # normalize_identity_name of in_meeting sharers
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
         # Source 1: Metrics API (most reliable for current state)
@@ -1009,6 +1010,7 @@ def build_app() -> "FastAPI":
                                     if not uid or uid in merged: continue
                                     raw = p.get("user_name", "").strip()
                                     dn = db.resolve_display_name(raw)["display_name"]
+                                    _sharing_online_set.add(db.normalize_identity_name(dn))
                                     content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
                                     jt = p.get("join_time", "")
                                     merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
@@ -1091,6 +1093,10 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
+        # 过滤：只保留 Metrics API 确认在线的共享者
+        if _sharing_online_set:
+            merged = {uid: info for uid, info in merged.items()
+                     if db.normalize_identity_name(info.get("name","")) in _sharing_online_set}
         # Build output
         active = []
         for uid, info in merged.items():
