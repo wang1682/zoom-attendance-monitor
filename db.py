@@ -241,7 +241,9 @@ def get_today_participants(limit: int = 200) -> list[dict]:
 # ── seen_emails ──────────────────────────────────────────────────────────────
 
 def normalize_identity_name(name: str) -> str:
-    return " ".join((name or "").strip().lower().split())
+    """归一化姓名：去空格、大小写、连字符"""
+    import re
+    return re.sub(r"[\s\-\._']+", "", (name or "").strip().lower())
 
 
 def check_new_email(email: str, name: str, now: datetime) -> bool:
