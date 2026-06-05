@@ -623,3 +623,9 @@ def log_audit(action: str, entity_type: str = "telegram_alert_rule",
         (action, entity_type, entity_id, details, now),
     )
     conn.commit()
+
+
+def normalize_identity_name(name: str) -> str:
+    """归一化姓名：去空格、大小写、连字符"""
+    import re
+    return re.sub(r"[\s\-\._']+", "", (name or "").strip().lower())

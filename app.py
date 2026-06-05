@@ -1093,10 +1093,19 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
-        # 过滤：只保留 Metrics API 确认在线的共享者
+        # 过滤：有在线数据时按名单过滤；无在线数据时至少去重
         if _sharing_online_set:
             merged = {uid: info for uid, info in merged.items()
                      if db.normalize_identity_name(info.get("name","")) in _sharing_online_set}
+        elif merged:
+            _seen = set()
+            _deduped = {}
+            for uid, info in sorted(merged.items(), key=lambda x: x[1].get("start_time",""), reverse=True):
+                _nk = db.normalize_identity_name(info.get("name",""))
+                if _nk not in _seen:
+                    _seen.add(_nk)
+                    _deduped[uid] = info
+            merged = _deduped
         # Build output
         active = []
         for uid, info in merged.items():
