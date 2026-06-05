@@ -1112,10 +1112,8 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
-        # 共享权威来源 = sharing_live 表，Metrics API 仅 fallback
-        _live_only = {uid: info for uid, info in merged.items() if info.get("source") == "sharing_live"}
-        if _live_only:
-            merged = _live_only
+        # 共享权威来源 = sharing_live 表，Metrics API 仅 fallback（不合并）
+        merged = {uid: info for uid, info in merged.items() if info.get("source") == "sharing_live"}
         # 在线名单过滤：只显示当前在线人员的共享
         if _online_names:
             merged = {uid: info for uid, info in merged.items()
