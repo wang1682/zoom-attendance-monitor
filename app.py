@@ -2091,6 +2091,7 @@ def build_app() -> "FastAPI":
         # 本地 DB 纠偏：最后事件是 leave 标记离线；超过 90 分钟无活动标记 stale
         _conn = db._get_conn()
         _idle_cutoff = (now_utc - timedelta(minutes=90)).isoformat()
+        _stale_list = []
         for _p in ps:
             _row = _conn.execute(
                 "SELECT action, action_time FROM zoom_participants WHERE name = ? ORDER BY action_time DESC LIMIT 1",
@@ -2100,9 +2101,9 @@ def build_app() -> "FastAPI":
                 if _row[0] == "leave":
                     _p["is_online"] = False
                 elif _row[1] < _idle_cutoff:
-                    # enter 但超过 90 分钟无活动，标记 stale
                     _p["is_online"] = False
                     _p["status_hint"] = "stale"
+                    _stale_list.append(_p.get("name", ""))
         ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
         max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
         ol_list = [p for p in ps_sorted if p.get("is_online")][:max(max_online, 1)] if max_online > 0 else []
@@ -2119,9 +2120,14 @@ def build_app() -> "FastAPI":
                                 "elapsed_minutes": _bm.get("elapsed_minutes", 0),
                                 "start_time": _bm.get("start_time", "")}
             _m_map[_mid]["online_count"] += 1
+        _raw_count = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
         return {
             "ok": True,
             "total_online": len(ol_list),
+            "meeting_active": bool(meetings) or _raw_count > 0,
+            "raw_online_count": _raw_count,
+            "stale_count": len(_stale_list),
+            "stale_names": _stale_list,
             "meetings": list(_m_map.values()),
             "participants_summary": ps,
             "online_list": ol_list,
