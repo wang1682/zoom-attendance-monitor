@@ -1223,10 +1223,16 @@ def build_app() -> "FastAPI":
                                "content": info.get("content", ""), "start_time": info.get("start_time", ""),
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
-        # 过滤：只保留在线用户的共享记录（以 Metrics API 的 in_meeting 名单为准）
-        for uid, info in list(merged.items()):
-            if db.normalize_identity_name(info.get("name", "")) not in _online_set:
-                del merged[uid]
+        # 过滤：只保留在线用户的共享记录。优先用 LIVE_CACHE，其次 Source 1 Metrics API
+        _filter_set = next((lc.get("online_set", set()) for lc_name, lc in globals().items()
+                           if lc_name == "LIVE_CACHE" and isinstance(lc, dict) and lc.get("data", {}).get("online_list")), None)
+        if _filter_set is None:
+            # LIVE_CACHE 不可用，用 Source 1 的 in_meeting 名单
+            _filter_set = _online_set
+        if _filter_set:
+            for uid, info in list(merged.items()):
+                if db.normalize_identity_name(info.get("name", "")) not in _filter_set:
+                    del merged[uid]
         
         # Build output
         active = []
@@ -2120,6 +2126,7 @@ def build_app() -> "FastAPI":
                             result = await _build_live_from_metrics(md, token)
                             LIVE_CACHE["ts"] = time.time()
                             LIVE_CACHE["data"] = result
+                            LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in result.get("online_list", [])}
                             return result
         except:
             pass
@@ -2297,6 +2304,7 @@ def build_app() -> "FastAPI":
         cache_data = dict(result)
         cache_data["online_list"] = online
         LIVE_CACHE["data"] = cache_data
+        LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in cache_data.get("online_list", [])}
         return result
 
     @app.get("/api/v2/attendance")
