@@ -35,15 +35,16 @@ async function refreshDashboard(){
 
     // Sharing badge from API
     var badgeS = document.getElementById("badgeSharing");
-    if(badgeS) badgeS.textContent = j.sharing_count + "人";
+    if(badgeS) badgeS.textContent = (j.sharing_count || 0) + "人";
 
     // Sharing banner
     try{
       var srb = await fetch("/api/v3/sharing-live?_=" + Date.now(), {cache:"no-store"});
       var sdb = await srb.json();
+      if(badgeS && sdb.ok && sdb.active) badgeS.textContent = sdb.active.length + "人";
       var ban = document.getElementById("sharingBanner");
       if(ban){
-        if(sdb.ok && sdb.current > 0 && sdb.active && sdb.active.length){
+        if(sdb.ok && sdb.active && sdb.active.length){
           var names = sdb.active.map(function(s){ return s.name || s.raw_name || "-"; }).join("、");
           ban.innerHTML = "<div style=\"background:color-mix(in srgb,var(--da) 12%,transparent);border:1px solid color-mix(in srgb,var(--da) 30%,transparent);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px\">"
             + "<span style=\"font-size:18px\">🖥️</span>"
@@ -63,7 +64,7 @@ async function refreshDashboard(){
       try{
         var scData = await fetch("/api/v3/sharing-live?_=" + Date.now(), {cache:"no-store"});
         var scJson = await scData.json();
-        if(scJson.ok && scJson.current > 0 && scJson.active && scJson.active.length){
+        if(scJson.ok && scJson.active && scJson.active.length){
           sc.innerHTML = scJson.active.map(function(s){
             return "<div style=\"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)\">"
               + "<span style=\"width:8px;height:8px;border-radius:50%;background:var(--in);flex-shrink:0\"></span>"
