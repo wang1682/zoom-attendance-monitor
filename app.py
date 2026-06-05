@@ -1814,7 +1814,7 @@ def build_app() -> "FastAPI":
         live_data = LIVE_CACHE.get("data", {})
         online_count = live_data.get("total_online", 0)
         meetings = live_data.get("meetings", [])
-        sharing_list = live_data.get("sharing_list", [])
+        sharing_list = LIVE_CACHE.get("sharing_list", [])
         sharing_count = len(sharing_list) if sharing_list else 0
 
         participant_count = conn.execute(
@@ -2141,6 +2141,7 @@ def build_app() -> "FastAPI":
                             result = await _build_live_from_metrics(md, token)
                             LIVE_CACHE["ts"] = time.time()
                             LIVE_CACHE["data"] = result
+                            LIVE_CACHE["sharing_list"] = sl_list
                             LIVE_CACHE["online_set"] = {db.normalize_identity_name(db.resolve_display_name(_op.get("name", ""))["display_name"]) for _op in result.get("online_list", [])}
                             return result
         except:
