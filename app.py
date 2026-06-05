@@ -835,7 +835,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/members", response_class=HTMLResponse)
     async def settings_members_page(request: Request):
-        return tmpl.TemplateResponse(request, "settings_members.html", {"brand": BRAND})
+        return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})
 
     @app.get("/api/v3/aliases")
     async def api_v3_aliases():
@@ -1336,6 +1336,141 @@ def build_app() -> "FastAPI":
     async def api_v3_member_display_del(item_id: int):
         conn = db._get_conn()
         conn.execute("DELETE FROM member_display WHERE id=?", (item_id,))
+        conn.commit()
+        return {"ok": True}
+
+    # ── Member Identity Center v3 APIs ──────────────────────────────────────
+
+    @app.get("/api/v3/member-aliases/discover")
+    async def api_v3_member_aliases_discover():
+        """自动发现未映射的 Zoom 用户名
+        从 zoom_participants 和 zoom_events 收集所有出现过的 name，
+        排除已在 member_display 中的 raw_name 和已在 member_aliases 中的 alias_name。"""
+        conn = db._get_conn()
+        from datetime import datetime, timezone, timedelta
+
+        # 1. Collect from zoom_participants
+        rows = conn.execute(
+            "SELECT DISTINCT name FROM zoom_participants WHERE name != '' AND name IS NOT NULL"
+        ).fetchall()
+        names = set()
+        for (name,) in rows:
+            names.add(name.strip())
+
+        # 2. Collect from zoom_events (parse user_name from payload)
+        event_rows = conn.execute(
+            "SELECT payload FROM zoom_events WHERE payload LIKE '%user_name%'"
+        ).fetchall()
+        for (payload_str,) in event_rows:
+            try:
+                payload = json.loads(payload_str)
+                user_name = payload.get("object", {}).get("participant", {}).get("user_name", "")
+                if user_name:
+                    names.add(user_name.strip())
+                # Also check other possible locations
+                user_name2 = payload.get("payload", {}).get("object", {}).get("participant", {}).get("user_name", "")
+                if user_name2:
+                    names.add(user_name2.strip())
+            except:
+                pass
+
+        # 3. Exclude already mapped raw_names
+        raw_rows = conn.execute("SELECT raw_name FROM member_display").fetchall()
+        mapped_raws = set()
+        for (rn,) in raw_rows:
+            mapped_raws.add(rn.strip().lower().replace(" ", ""))
+
+        alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
+        mapped_aliases = set()
+        for (an,) in alias_rows:
+            mapped_aliases.add(an.strip().lower().replace(" ", ""))
+
+        unmapped = []
+        for n in sorted(names):
+            key = n.lower().replace(" ", "")
+            if key in mapped_raws or key in mapped_aliases:
+                continue
+            unmapped.append(n)
+
+        # 4. Get currently online user names
+        online_names = set()
+        try:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            for m in live_data.get("meetings", []):
+                for p in m.get("participants", []):
+                    pn = p.get("name", "").strip()
+                    if pn:
+                        online_names.add(pn)
+        except:
+            pass
+
+        return {"ok": True, "names": unmapped, "online": sorted(online_names)}
+
+    @app.get("/api/v3/members")
+    async def api_v3_members_list():
+        """返回所有 member_display 记录，每个带 aliases 数组"""
+        conn = db._get_conn()
+        rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
+        items = []
+        for r in rows:
+            item = dict(zip(cols, r))
+            try:
+                item["aliases"] = json.loads(item.get("aliases", "[]") or "[]")
+            except:
+                item["aliases"] = []
+            items.append(item)
+        return {"ok": True, "items": items}
+
+    @app.post("/api/v3/members")
+    async def api_v3_members_create(request: Request):
+        """创建或更新 member_display 记录
+        body: {raw_name, display_name, aliases: [...]}
+        如果 raw_name 已存在则更新 display_name 和 aliases。"""
+        data = await request.json()
+        raw_name = data.get("raw_name", "").strip()
+        display_name = data.get("display_name", "").strip()
+        aliases = data.get("aliases", [])
+        if not raw_name or not display_name:
+            return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
+
+        import re as re_mod
+        match_key = re_mod.sub(r'\s+', '', raw_name.lower())
+        aliases_json = json.dumps(aliases, ensure_ascii=False)
+
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+
+        # Check if raw_name exists
+        existing = conn.execute(
+            "SELECT id FROM member_display WHERE raw_name = ?", (raw_name,)
+        ).fetchone()
+
+        try:
+            if existing:
+                conn.execute(
+                    "UPDATE member_display SET display_name=?, match_key=?, aliases=?, updated_at=? WHERE raw_name=?",
+                    (display_name, match_key, aliases_json, now, raw_name)
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO member_display (raw_name, display_name, match_key, aliases, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (raw_name, display_name, match_key, aliases_json, now, now)
+                )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.delete("/api/v3/members/{display_name}")
+    async def api_v3_members_delete(display_name: str):
+        """删除 member_display 记录"""
+        conn = db._get_conn()
+        conn.execute("DELETE FROM member_display WHERE display_name=?", (display_name,))
         conn.commit()
         return {"ok": True}
 
