@@ -2092,10 +2092,13 @@ def build_app() -> "FastAPI":
                 except: pass
         ps = list(participants_summary.values())
         ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
-        # 按 last_active 降序排列，只取 raw_online_count 人（Zoom API 的实时在线数）
+        # 按 last_active 降序排列
         ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
+        # raw_online_count 限制 + 30 分钟无活动过滤
+        _inactive_cutoff = (now_utc - timedelta(minutes=30)).isoformat()
+        ps_sorted = [p for p in ps_sorted if p.get("last_active", "") >= _inactive_cutoff]
         max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
-        ol_list = ps_sorted[:max(max_online, 1)] if max_online > 0 else []  # 至少 1 人防止空会议显示异常
+        ol_list = ps_sorted[:max(max_online, 1)] if max_online > 0 else []
         sl_list = [p for p in ol_list if p.get("is_sharing")]
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
         return {
