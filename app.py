@@ -459,7 +459,7 @@ def build_app() -> "FastAPI":
             try:
                 import urllib.request, json as _json
                 live_req = urllib.request.Request("http://localhost:8000/api/v2/live", method="GET")
-                with urllib.request.urlopen(live_req, timeout=5) as resp:
+                with urllib.request.urlopen(live_req, timeout=2) as resp:
                     live = _json.loads(resp.read())
                     online_set = set()
                     for p in live.get("online_list", []):
