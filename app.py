@@ -1128,12 +1128,15 @@ def build_app() -> "FastAPI":
         
         # Source 2: sharing_live table (is_active=1, not stale)
         live_rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE is_active=1"
+            "SELECT * FROM sharing_live WHERE is_active=1 ORDER BY start_time DESC"
         ).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
+        seen_names = set()  # deduplicate by user_name
         for r in live_rows:
             d = dict(zip(live_cols, r))
-            uid = d.get("user_id", "")
+            user_name = d.get("user_name", "").strip()
+            if not user_name:
+                continue
             start_str = d.get("start_time", "")
             # Stale cutoff: >4h old
             if start_str:
@@ -1142,12 +1145,17 @@ def build_app() -> "FastAPI":
                     if (now_utc - sd) > STALE_CUTOFF:
                         continue
                 except: pass
-            if uid and uid not in merged:
-                raw = d.get("user_name", "")
-                dn = db.resolve_display_name(raw)["display_name"]
-                merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                               "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
-                sources["sharing_live"] += 1
+            # Deduplicate: only keep the latest record per user_name
+            normalized = db.normalize_identity_name(user_name)
+            if normalized in seen_names:
+                continue
+            seen_names.add(normalized)
+            uid = d.get("user_id", "")
+            raw = user_name
+            dn = db.resolve_display_name(raw)["display_name"]
+            merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
+                           "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
+            sources["sharing_live"] += 1
         
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
