@@ -1003,6 +1003,7 @@ def build_app() -> "FastAPI":
                             if pr.status_code == 200:
                                 for p in pr.json().get("participants", []):
                                     if p.get("status") != "in_meeting": continue
+                                    _online_names.add(db.normalize_identity_name((p.get("user_name","")).strip()))
                                     is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
                                     if not is_sharing: continue
                                     uid = str(p.get("user_id", ""))
@@ -1095,6 +1096,18 @@ def build_app() -> "FastAPI":
         _live_only = {uid: info for uid, info in merged.items() if info.get("source") == "sharing_live"}
         if _live_only:
             merged = _live_only
+        # 在线名单过滤：只显示当前在线人员的共享
+        _online_names = set()
+        try:
+            _ol = __import__("sys").modules.get("__main__")
+            _lc = getattr(_ol, "LIVE_CACHE", {}).get("data", {})
+            for _op in _lc.get("online_list", []):
+                _online_names.add(db.normalize_identity_name(_op.get("name","")))
+        except:
+            pass
+        if _online_names:
+            merged = {uid: info for uid, info in merged.items()
+                     if db.normalize_identity_name(info.get("name","")) in _online_names}
         # 去重：同一人只保留最新一条
         _seen = set()
         _deduped = {}
