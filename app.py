@@ -190,24 +190,39 @@ def build_participant_summary(rows):
         enters = sorted(sess["enters"])
         leaves = sorted(sess["leaves"])
         p = person_summary[canonical]
+
+        # 去重：连续重复 enter/leave 只保留第一个边界事件
+        def _strip_consecutive(times):
+            if not times:
+                return []
+            result = [times[0]]
+            for t in times[1:]:
+                if t != result[-1]:
+                    result.append(t)
+            return result
+        enters = _strip_consecutive(enters)
+        leaves = _strip_consecutive(leaves)
+
         p["enter_times"].extend(enters)
         p["leave_times"].extend(leaves)
 
-        # 配对计算时长
-        for i in range(min(len(enters), len(leaves))):
+        # 配对计算时长：先配对再累加
+        paired = min(len(enters), len(leaves))
+        for i in range(paired):
             s = secs_in_today(enters[i], leaves[i])
             p["total_secs"] += s
 
-        # 未配对的 enter（仍在在线）
+        # 未配对的 enter：只有 enter 发生在今日窗口内才计入时长
         if len(enters) > len(leaves):
             p["is_online"] = True
-            p["total_secs"] += secs_in_today(enters[-1], now_utc.isoformat())
+            if in_today(enters[-1]):
+                p["total_secs"] += secs_in_today(enters[-1], now_utc.isoformat())
 
         # 记录 first enter
         if enters and (not p["first_enter"] or enters[0] < p["first_enter"]):
             p["first_enter"] = enters[0]
 
-        # 记录 last active
+        # 记录 last active（去重后的事件）
         for t in enters + leaves:
             if t > p["last_active"]:
                 p["last_active"] = t
@@ -217,13 +232,13 @@ def build_participant_summary(rows):
             if in_today(t):
                 p["has_today_activity"] = True
 
-    # 本次在线时长（最后一次 session）
+    # 本次在线时长（最后一次 session）：只有 enter 在今日窗口内才计
     for canonical, p in person_summary.items():
         enters = sorted(p["enter_times"])
         leaves = sorted(p["leave_times"])
-        if p["is_online"] and enters:
+        if p["is_online"] and enters and in_today(enters[-1]):
             p["current_secs"] = secs_in_today(enters[-1], now_utc.isoformat())
-        elif enters and leaves:
+        elif enters and leaves and in_today(enters[-1]):
             p["current_secs"] = secs_in_today(enters[-1], leaves[-1])
 
     # 构建输出，只保留今日有活动的人
