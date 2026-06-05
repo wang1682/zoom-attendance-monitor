@@ -1819,6 +1819,15 @@ def build_app() -> "FastAPI":
                 "leave_count": p.get("leave_count", 0),
                 "last_active": p.get("last_active", ""),
             })
+        # LIVE_CACHE 覆盖在线状态
+        _online_names = set()
+        _lc = LIVE_CACHE.get("data", {})
+        for _lp in _lc.get("online_list", []):
+            _resolved = db.resolve_display_name(_lp.get("name", ""))
+            _online_names.add(db.normalize_identity_name(_resolved["display_name"]))
+        for p in participants:
+            _is_online = db.normalize_identity_name(p["name"]) in _online_names
+            p["status"] = "\u5728\u7ebf\u4e2d" if _is_online else "\u5df2\u79bb\u7ebf"
 
         return {
             "ok": True,

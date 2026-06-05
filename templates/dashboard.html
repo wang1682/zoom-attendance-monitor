@@ -29,7 +29,7 @@ async function refreshDashboard(){
     if(pb){
       pb.innerHTML = j.participants.length ? j.participants.map(function(p){
         var status = p.status === "在线中" ? "🟢 在线中" : "⚫ 已离线";
-        return "<tr><td class=\"nm\">" + (p.name || "-") + "</td><td>" + status + "</td><td>" + (p.current_session || "—") + "</td><td>" + (p.total_duration || "—") + "</td><td>" + (p.leave_count || 0) + "</td><td class=\"mono\">" + formatMYT(p.last_active) + "</td></tr>";
+        return "<tr><td class=\"nm\">" + (p.name || "-") + "</td><td>" + status + "</td><td>" + (p.current_session || p.session_duration || "—") + "</td><td>" + (p.total_duration || p.today_duration || "—") + "</td><td>" + (p.leave_count || 0) + "</td><td class=\"mono\">" + formatMYT(p.last_active) + "</td></tr>";
       }).join("") : "<tr><td colspan=\"6\" style=\"text-align:center;padding:32px;color:var(--tm)\">暂无数据</td></tr>";
     }
 
