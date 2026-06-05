@@ -107,38 +107,51 @@ def dedup_participants(participants):
     return result
 
 
-def build_participant_summary(rows):
+def build_participant_summary(rows, for_date: str = ""):
     """按人聚合原始 zoom_participants 记录，返回 participants 页面所需字段
 
     跨天配对策略：取最近 7 天数据做配对，但只输出今日有活动的人。
     逻辑复用 /api/v2/summary 的配对方式。
+    当 for_date 指定时（如 "2026-06-01"），统计窗口和配对范围以该日为基准。
     """
     from collections import defaultdict
 
     now_utc = datetime.now(timezone.utc)
     MYT = timezone(timedelta(hours=8))
-    now_myt = now_utc.astimezone(MYT)
-    myt_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if for_date:
+        _d = datetime.strptime(for_date, "%Y-%m-%d").replace(tzinfo=MYT)
+        myt_start = _d.replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        now_myt = now_utc.astimezone(MYT)
+        myt_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
     myt_end = myt_start + timedelta(days=1)
     today_start_utc = myt_start.astimezone(timezone.utc).isoformat()
     today_end_utc = myt_end.astimezone(timezone.utc).isoformat()
 
     # 取更多数据做配对（向前 7 天）
     lookup_start = (myt_start - timedelta(days=7)).astimezone(timezone.utc).isoformat()
+    import sys as _sys
     conn = db._get_conn()
-    extra_rows = conn.execute(
-        "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
-        (lookup_start, today_end_utc)
-    ).fetchall()
+    # 如果已传入 rows（含指定日期的数据），直接用；否则查 DB
+    extra_rows = rows if rows else []
+    print("[bps-in] for_date=%s rows_provided=%d extra_rows_type=%s" % (for_date, len(rows) if rows else 0, type(extra_rows).__name__), file=_sys.stderr)
+    today_end_for_db = today_end_utc
+    # 仅在没有传入 rows 时才额外查 DB
+    if not rows:
+        extra_rows = conn.execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
+            (lookup_start, today_end_for_db)
+        ).fetchall()
     cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
 
+    print("[bps-in] extra_rows_len=%d" % len(extra_rows), file=_sys.stderr)
     if not extra_rows:
         return []
 
     # 按人+会议分组（复用 api summary 逻辑）
     user_sessions = defaultdict(lambda: {"enters": [], "leaves": []})
     for r in extra_rows:
-        record = dict(zip(cols, r))
+        record = r if isinstance(r, dict) else dict(zip(cols, r))
         name = record.get("name", "?")
         resolved = db.resolve_display_name(name)
         canonical = resolved["display_name"]
@@ -150,6 +163,7 @@ def build_participant_summary(rows):
         elif action == "leave":
             user_sessions[(canonical, mid)]["leaves"].append(t)
 
+    print("[bps-in] user_sessions=%d" % len(user_sessions), file=_sys.stderr)
     def in_today(t):
         try:
             d = datetime.fromisoformat(t.replace("Z", "+00:00"))
@@ -232,6 +246,9 @@ def build_participant_summary(rows):
         else:
             p["is_online"] = False
 
+    print("[bps-in] person_summary=%d" % len(person_summary), file=_sys.stderr)
+    for _cn, _cp in list(person_summary.items())[:3]:
+        print("[bps-in]  %s: has_act=%s is_on=%s lv=%d" % (_cn, _cp["has_today_activity"], _cp["is_online"], _cp["leave_count"]), file=_sys.stderr)
     # 构建输出，只保留今日有活动的人
     result = []
     for canonical, p in person_summary.items():
@@ -431,7 +448,10 @@ def build_app() -> "FastAPI":
                 ).fetchall()
                 _cols = [c2[1] for c2 in _conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
                 _mydicts = [dict(zip(_cols, r)) for r in _myrows]
-                participants = build_participant_summary(_mydicts)
+                import sys as _sys
+                print("[participants-debug] date=%s _ds=%s _de=%s rows=%d" % (date, _ds, _de, len(_mydicts)), file=_sys.stderr)
+                participants = build_participant_summary(_mydicts, for_date=date)
+                print("[participants-debug] summary=%d" % len(participants), file=_sys.stderr)
             else:
                 rows = db.get_today_participants(limit=500)
                 participants = build_participant_summary(rows)
