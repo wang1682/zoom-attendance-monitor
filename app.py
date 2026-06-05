@@ -2109,17 +2109,17 @@ def build_app() -> "FastAPI":
         ol_list = [p for p in ps_sorted if p.get("is_online")][:max(max_online, 1)] if max_online > 0 else []
         sl_list = [p for p in ol_list if p.get("is_sharing")]
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
-        # 重建 meetings：用过滤后的 online_list 取代 raw_online_count
+        # 重建 meetings：保留所有原始会议信息，用 filtered online_count 替代 raw
         _m_map = {}
+        for _mid, _bm in meetings.items():
+            _m_map[_mid] = {"meeting_id": _mid, "topic": _bm.get("topic", _mid),
+                            "online_count": 0, "raw_online_count": _bm.get("raw_online_count", 0),
+                            "elapsed_minutes": _bm.get("elapsed_minutes", 0),
+                            "start_time": _bm.get("start_time", "")}
         for _op in ol_list:
             _mid = _op.get("meeting_id", "")
-            if _mid not in _m_map:
-                _bm = meetings.get(_mid, {})
-                _m_map[_mid] = {"meeting_id": _mid, "topic": _bm.get("topic", _mid),
-                                "online_count": 0, "raw_online_count": _bm.get("raw_online_count", 0),
-                                "elapsed_minutes": _bm.get("elapsed_minutes", 0),
-                                "start_time": _bm.get("start_time", "")}
-            _m_map[_mid]["online_count"] += 1
+            if _mid in _m_map:
+                _m_map[_mid]["online_count"] += 1
         _raw_count = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
         return {
             "ok": True,
