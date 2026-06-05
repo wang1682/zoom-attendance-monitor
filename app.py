@@ -2089,12 +2089,19 @@ def build_app() -> "FastAPI":
         ps = list(participants_summary.values())
         ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
         # 按 last_active 降序排列
+        # 本地 DB 纠偏：leave 在 3 分钟内覆盖 Zoom 在线状态
+        _conn = db._get_conn()
+        _leave_grace = (now_utc - timedelta(seconds=180)).isoformat()
+        for _p in ps:
+            _row = _conn.execute(
+                "SELECT action, action_time FROM zoom_participants WHERE name = ? ORDER BY action_time DESC LIMIT 1",
+                (_p.get("name", ""),)
+            ).fetchone()
+            if _row and _row[0] == "leave" and _row[1] >= _leave_grace:
+                _p["is_online"] = False
         ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
-        # raw_online_count 限制 + 30 分钟无活动过滤
-        _inactive_cutoff = (now_utc - timedelta(minutes=30)).isoformat()
-        ps_sorted = [p for p in ps_sorted if p.get("last_active", "") >= _inactive_cutoff]
         max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
-        ol_list = ps_sorted[:max(max_online, 1)] if max_online > 0 else []
+        ol_list = [p for p in ps_sorted if p.get("is_online")][:max(max_online, 1)] if max_online > 0 else []
         sl_list = [p for p in ol_list if p.get("is_sharing")]
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
         # 重建 meetings：用过滤后的 online_list 取代 raw_online_count
