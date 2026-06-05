@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -283,6 +284,18 @@ def build_app() -> "FastAPI":
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
     tmpl.env.filters["myt"] = to_myt
+
+    # ── LIVE_CACHE: 唯一在线状态缓存（由 /api/v2/live 刷新，dashboard/sharing 只读） ─
+    LIVE_CACHE = {
+        "ts": 0.0,
+        "data": {
+            "total_online": 0,
+            "online_list": [],
+            "online": [],
+            "meetings": [],
+            "participants_summary": [],
+        }
+    }
 
     # ── DB 初始化中间件 ─────────────────────────────────────────────────────
     # ── Alert rules seed ────────────────────────────────────────────────
@@ -1073,8 +1086,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live():
-        """共享状态：合并 Metrics API + sharing_live 表 + webhook 事件"""
-        import httpx
+        """共享状态：合并 LIVE_CACHE 在线集 + sharing_live 表 + webhook 事件"""
         import json as _json
         from datetime import datetime, timezone, timedelta
         MYT = timezone(timedelta(hours=8))
@@ -1101,39 +1113,17 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         merged = {}  # user_id -> sharing_info
         _online_set = set()  # normalize_identity_name of in_meeting participants
-        sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
+        sources = {"live_cache": 0, "sharing_live": 0, "webhook": 0}
         
-        # Source 1: Metrics API (most reliable for current state)
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                tr = await c.post("https://zoom.us/oauth/token",
-                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
-                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
-                if tr.status_code == 200:
-                    token = tr.json().get("access_token", "")
-                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
-                        headers={"Authorization": f"Bearer {token}"})
-                    if mr.status_code == 200:
-                        for m in mr.json().get("meetings", []):
-                            mid = str(m.get("id", ""))
-                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
-                                headers={"Authorization": f"Bearer {token}"})
-                            if pr.status_code == 200:
-                                for p in pr.json().get("participants", []):
-                                    if p.get("status") != "in_meeting": continue
-                                    is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
-                                    if not is_sharing: continue
-                                    uid = str(p.get("user_id", ""))
-                                    if not uid or uid in merged: continue
-                                    _online_set.add(db.normalize_identity_name(dn))
-                                    raw = p.get("user_name", "").strip()
-                                    dn = db.resolve_display_name(raw)["display_name"]
-                                    content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
-                                    jt = p.get("join_time", "")
-                                    merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
-                                                   "content": content, "start_time": jt, "source": "metrics_api"}
-                                    sources["metrics_api"] += 1
-        except: pass
+        # Source 1: LIVE_CACHE（取代原 Metrics API 调用）
+        # 从缓存获取在线列表，构建在线 identity 集合用于后续过滤
+        live_data = LIVE_CACHE.get("data", {})
+        online_list = live_data.get("online_list", []) or live_data.get("online", [])
+        for p in online_list:
+            name = p.get("name", "")
+            if name:
+                _online_set.add(db.normalize_identity_name(name))
+        sources["live_cache"] = len(online_list)
         
         # Source 2: sharing_live table (is_active=1, not stale)
         live_rows = conn.execute(
@@ -1779,44 +1769,25 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/live")
     async def api_v3_live():
-        """Business Metrics API 实时在线数据（去重）"""
-        from zoom_metrics import ZoomMetrics
-        zm = ZoomMetrics()
-        data = await zm.get_live()
-        return {"ok": True, "data": data}
+        """实时在线数据（从 LIVE_CACHE 读取，不再主动调用 Zoom API）"""
+        live_data = LIVE_CACHE.get("data", {})
+        return {"ok": True, "data": live_data, "cache_ts": LIVE_CACHE["ts"]}
 
-
-    async def api_v3_live():
-        """Business Metrics API 实时在线数据（去重）"""
-        from zoom_metrics import ZoomMetrics
-        zm = ZoomMetrics()
-        data = await zm.get_live()
-        return {"ok": True, "data": data}
 
     @app.get("/api/v3/dashboard")
     async def api_v3_dashboard():
-        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）"""
+        """Dashboard 概览（读取 LIVE_CACHE，不再主动调用 Zoom API）"""
         conn = db._get_conn()
         report_start_utc, report_end_utc = myt_day_range_to_utc()
 
-        online_count = 0
-        sharing_count = 0
-        meetings = []
-        try:
-            from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics()
-            live_data = await zm.get_live()
-            online_count = live_data.get("total_online", 0)
-            meetings = live_data.get("meetings", [])
-        except:
-            pass
-
-        sharing_count = 0
-        try:
-            sr = conn.execute("SELECT COUNT(*) FROM sharing_live WHERE is_active=1").fetchone()[0]
-            sharing_count = sr
-        except:
-            pass
+        # 从 LIVE_CACHE 读取在线状态
+        cache_ts = LIVE_CACHE["ts"]
+        cache_age = time.time() - cache_ts
+        live_data = LIVE_CACHE.get("data", {})
+        online_count = live_data.get("total_online", 0)
+        meetings = live_data.get("meetings", [])
+        sharing_list = live_data.get("sharing_list", [])
+        sharing_count = len(sharing_list) if sharing_list else 0
 
         participant_count = conn.execute(
             "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",
@@ -2118,7 +2089,10 @@ def build_app() -> "FastAPI":
                     if mr.status_code == 200:
                         md = mr.json().get("meetings", [])
                         if md:
-                            return await _build_live_from_metrics(md, token)
+                            result = await _build_live_from_metrics(md, token)
+                            LIVE_CACHE["ts"] = time.time()
+                            LIVE_CACHE["data"] = result
+                            return result
         except:
             pass
         conn = db._get_conn()
@@ -2281,7 +2255,7 @@ def build_app() -> "FastAPI":
             ai_summary_parts.append("整体情况正常。")
         ai_summary = "".join(ai_summary_parts)
 
-        return {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
+        result = {"ok": True, "online": online, "meetings": meetings_online, "total_online": len(online),
                 "total_events": total_events, "unique_participants": unique_participants,
                 "unique_online_rate": unique_online_rate,
                 "top_online": top_online, "active_hours": active_hours,
@@ -2289,6 +2263,13 @@ def build_app() -> "FastAPI":
                 "participants_summary": participants_summary,
                 "anomalies": anomalies, "health_level": health_level,
                 "ai_summary": ai_summary}
+        # 写入 LIVE_CACHE（SQL fallback 路径）
+        LIVE_CACHE["ts"] = time.time()
+        # 统一字段名：SQL 路径用 online，Metrics API 路径用 online_list
+        cache_data = dict(result)
+        cache_data["online_list"] = online
+        LIVE_CACHE["data"] = cache_data
+        return result
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
