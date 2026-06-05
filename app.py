@@ -962,7 +962,7 @@ def build_app() -> "FastAPI":
         from datetime import datetime, timezone, timedelta
         MYT = timezone(timedelta(hours=8))
         now_utc = datetime.now(timezone.utc)
-        STALE_CUTOFF = timedelta(hours=4)
+        STALE_CUTOFF = timedelta(hours=12)
         
         def to_myt(dt_str):
             if not dt_str: return ""
