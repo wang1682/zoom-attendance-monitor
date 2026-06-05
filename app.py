@@ -1233,6 +1233,13 @@ def build_app() -> "FastAPI":
             for uid, info in list(merged.items()):
                 if db.normalize_identity_name(info.get("name", "")) not in _filter_set:
                     del merged[uid]
+        else:
+            # Fallback: LIVE_CACHE/Source 1 均无在线数据，只保留最近 15 分钟内 active sharing
+            _cutoff = (now_utc - timedelta(minutes=15)).isoformat()
+            for uid, info in list(merged.items()):
+                st = info.get("start_time", "")
+                if st and st < _cutoff:
+                    del merged[uid]
         
         # Build output
         active = []
