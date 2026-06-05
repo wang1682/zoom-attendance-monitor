@@ -1854,7 +1854,7 @@ def build_app() -> "FastAPI":
                 "raw_name": _p.get("name", ""),
                 "status": "\u5728\u7ebf\u4e2d",
                 "session_duration": _p.get("duration_display", "\u2014"),
-                "today_duration": _hp.get("total_duration", "\u2014"),
+                "today_duration": _hp.get("total_duration") or _p.get("duration_display") or "\u2014",
                 "leave_count": _hp.get("leave_count", 0),
                 "last_active": _p.get("last_active", ""),
             })
