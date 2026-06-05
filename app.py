@@ -983,7 +983,6 @@ def build_app() -> "FastAPI":
         
         conn = db._get_conn()
         merged = {}  # user_id -> sharing_info
-        _sharing_online_set = set()  # normalize_identity_name of in_meeting sharers
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
         # Source 1: Metrics API (most reliable for current state)
@@ -1010,7 +1009,6 @@ def build_app() -> "FastAPI":
                                     if not uid or uid in merged: continue
                                     raw = p.get("user_name", "").strip()
                                     dn = db.resolve_display_name(raw)["display_name"]
-                                    _sharing_online_set.add(db.normalize_identity_name(dn))
                                     content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
                                     jt = p.get("join_time", "")
                                     merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
@@ -1093,19 +1091,19 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
-        # 过滤：有在线数据时按名单过滤；无在线数据时至少去重
-        if _sharing_online_set:
-            merged = {uid: info for uid, info in merged.items()
-                     if db.normalize_identity_name(info.get("name","")) in _sharing_online_set}
-        elif merged:
-            _seen = set()
-            _deduped = {}
-            for uid, info in sorted(merged.items(), key=lambda x: x[1].get("start_time",""), reverse=True):
-                _nk = db.normalize_identity_name(info.get("name",""))
-                if _nk not in _seen:
-                    _seen.add(_nk)
-                    _deduped[uid] = info
-            merged = _deduped
+        # 共享权威来源 = sharing_live 表，Metrics API 仅 fallback
+        _live_only = {uid: info for uid, info in merged.items() if info.get("source") == "sharing_live"}
+        if _live_only:
+            merged = _live_only
+        # 去重：同一人只保留最新一条
+        _seen = set()
+        _deduped = {}
+        for uid, info in sorted(merged.items(), key=lambda x: x[1].get("start_time",""), reverse=True):
+            _nk = db.normalize_identity_name(info.get("name",""))
+            if _nk not in _seen:
+                _seen.add(_nk)
+                _deduped[uid] = info
+        merged = _deduped
         # Build output
         active = []
         for uid, info in merged.items():
