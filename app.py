@@ -402,6 +402,23 @@ def build_app() -> "FastAPI":
         else:
             rows = db.get_today_participants(limit=500)
             participants = build_participant_summary(rows)
+            # Live API 覆盖在线状态：只有 live 确认在线的人才标记在线，其余全部离线
+            try:
+                import urllib.request, json as _json
+                live_req = urllib.request.Request("http://localhost:8000/api/v2/live", method="GET")
+                with urllib.request.urlopen(live_req, timeout=5) as resp:
+                    live = _json.loads(resp.read())
+                    online_set = set()
+                    for p in live.get("online_list", []):
+                        rn = db.resolve_display_name(p.get("name", ""))
+                        online_set.add(rn["display_name"])
+            except Exception:
+                online_set = set()
+                import logging
+                logging.getLogger("zoom").exception("live API 调用失败，所有参与者标记为离线")
+            for p2 in participants:
+                p2["is_online"] = p2["name"] in online_set
+                p2["status"] = "\u5728\u7ebf\u4e2d" if p2["is_online"] else "\u5df2\u79bb\u7ebf"
         return tmpl.TemplateResponse(request, "participants.html", {
             "participants": participants,
             "brand": BRAND,
