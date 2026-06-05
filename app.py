@@ -1850,6 +1850,14 @@ def build_app() -> "FastAPI":
         meetings = live_data.get("meetings", [])
         sharing_list = LIVE_CACHE.get("sharing_list", [])
         sharing_count = len(sharing_list) if sharing_list else 0
+        # 从 /api/v3/sharing-live 同步实时共享数（不等 LIVE_CACHE 刷新）
+        try:
+            import urllib.request, json as _uj
+            _ur = urllib.request.Request("http://localhost:8000/api/v3/sharing-live", method="GET")
+            with urllib.request.urlopen(_ur, timeout=3) as _us:
+                sharing_count = _uj.loads(_us.read()).get("current", sharing_count)
+        except:
+            pass
 
         participant_count = conn.execute(
             "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",

@@ -40,7 +40,7 @@ services:
     ports:
       # webhook 需要公网可达，映射到 9443
       # 配合 Cloudflare Tunnel 或反向代理使用
-      - "0.0.0.0:9443:9000"
+      - "127.0.0.1:9443:9000"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
       interval: 30s
