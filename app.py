@@ -2070,12 +2070,8 @@ def build_app() -> "FastAPI":
                                     disp = "{:d}h{:02d}".format(mins // 60, mins % 60) if mins >= 60 else "{}分钟".format(mins)
                                     jtd = jd.astimezone(MYT).strftime("%m-%d %H:%M:%S")
                                 except: pass
+                            # 会议还在进行中，参与者默认在线
                             ol = True
-                            if jt:
-                                try:
-                                    jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                    if (now_utc - jd).total_seconds() > 600: ol = False
-                                except: pass
                             key = dn.lower().replace(" ", "")
                             top_active[dn] = top_active.get(dn, 0) + 1
                             if key not in participants_summary:
