@@ -1832,17 +1832,30 @@ def build_app() -> "FastAPI":
             (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
-        # Dashboard participants = LIVE_CACHE online_list（实时在线，跨 UTC 日边界也不丢）
-        participants = []
+        # Dashboard participants = LIVE_CACHE online_list + DB 历史统计合并
         _ol = LIVE_CACHE.get("data", {}).get("online_list", [])
+        _online_names = {db.normalize_identity_name(p.get("name","")) for p in _ol}
+        # MYT 今日范围查 DB（历史统计）
+        _myt_s, _myt_e = myt_day_range_to_utc()
+        _hrows = conn.execute(
+            "SELECT name, action, action_time FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
+            (_myt_s, _myt_e)
+        ).fetchall()
+        # MYT 今日的历史聚合
+        _hrows_list = [dict(zip([c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()], r)) for r in _hrows]
+        _hagg = build_participant_summary(_hrows_list)
+        _hmap = {db.normalize_identity_name(p["name"]): p for p in _hagg}
+        participants = []
         for _p in _ol:
+            _nk = db.normalize_identity_name(_p.get("name",""))
+            _hp = _hmap.get(_nk, {})
             participants.append({
                 "name": _p.get("name", ""),
                 "raw_name": _p.get("name", ""),
                 "status": "\u5728\u7ebf\u4e2d",
                 "session_duration": _p.get("duration_display", "\u2014"),
-                "today_duration": "\u2014",
-                "leave_count": 0,
+                "today_duration": _hp.get("total_duration", "\u2014"),
+                "leave_count": _hp.get("leave_count", 0),
                 "last_active": _p.get("last_active", ""),
             })
 
