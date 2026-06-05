@@ -1804,25 +1804,20 @@ def build_app() -> "FastAPI":
             (report_start_utc, report_end_utc)
         ).fetchone()[0]
 
-        participants_rows = conn.execute(
-            "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
-            (report_start_utc, report_end_utc)
-        ).fetchall()
-
+        rows = db.get_today_participants(limit=500)
+        aggregated = build_participant_summary(rows)
+        # 复用 build_participant_summary 的计算结果，不重复造统计
         participants = []
-        seen = set()
-        for r in participants_rows:
-            resolved = db.resolve_display_name(r["name"])
-            canonical = resolved["display_name"]
-            if canonical not in seen:
-                seen.add(canonical)
-                participants.append({
-                    "name": canonical,
-                    "raw_name": r["name"],
-                    "meeting_id": r["meeting_id"],
-                    "last_action": r["action"],
-                    "last_active": r["action_time"],
-                })
+        for p in aggregated:
+            participants.append({
+                "name": p["name"],
+                "raw_name": p["name"],
+                "status": p.get("status", "已离线"),
+                "session_duration": p.get("current_session", "\u2014"),
+                "today_duration": p.get("total_duration", "\u2014"),
+                "leave_count": p.get("leave_count", 0),
+                "last_active": p.get("last_active", ""),
+            })
 
         return {
             "ok": True,
