@@ -943,7 +943,9 @@ def build_app() -> "FastAPI":
                 push_event = "unknown"
                 push_icon = "ℹ️"
                 push_title = ""
-                if "participant_joined" in event_type and "waiting_room" not in event_type:
+                if "breakout_room" in event_type:
+                    push_event = "silent_breakout"
+                elif "participant_joined" in event_type and "waiting_room" not in event_type:
                     push_event = "participant_joined"
                     push_icon = "📌"
                     push_title = "会议有新人加入"
