@@ -1855,6 +1855,11 @@ def build_app() -> "FastAPI":
         for p in participants:
             _is_online = db.normalize_identity_name(p["name"]) in _online_names
             p["status"] = "\u5728\u7ebf\u4e2d" if _is_online else "\u5df2\u79bb\u7ebf"
+            if _is_online and (p.get("session_duration") in ("", "\u2014", None)):
+                _lt = parse_utc_iso(p.get("last_active", ""))
+                if _lt:
+                    _diff = int((datetime.now(timezone.utc) - _lt).total_seconds() / 60)
+                    p["session_duration"] = f"{_diff // 60}h{_diff % 60:02d}m" if _diff >= 60 else f"{_diff}m"
 
         return {
             "ok": True,
