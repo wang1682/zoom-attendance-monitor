@@ -2097,10 +2097,20 @@ def build_app() -> "FastAPI":
         ol_list = ps_sorted[:max(max_online, 1)] if max_online > 0 else []
         sl_list = [p for p in ol_list if p.get("is_sharing")]
         sa = sorted(top_active.items(), key=lambda x: -x[1])[:3]
+        # 重建 meetings：用过滤后的 online_list 取代 raw_online_count
+        _m_map = {}
+        for _op in ol_list:
+            _mid = _op.get("meeting_id", "")
+            if _mid not in _m_map:
+                _bm = meetings.get(_mid, {})
+                _m_map[_mid] = {"meeting_id": _mid, "topic": _bm.get("topic", _mid),
+                                "online_count": 0, "elapsed_minutes": _bm.get("elapsed_minutes", 0),
+                                "start_time": _bm.get("start_time", "")}
+            _m_map[_mid]["online_count"] += 1
         return {
             "ok": True,
             "total_online": len(ol_list),
-            "meetings": list(meetings.values()),
+            "meetings": list(_m_map.values()),
             "participants_summary": ps,
             "online_list": ol_list,
             "sharing_list": sl_list,
