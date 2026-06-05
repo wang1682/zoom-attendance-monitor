@@ -982,9 +982,11 @@ def build_app() -> "FastAPI":
             return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
         
         conn = db._get_conn()
+        _today_start = myt_day_range_to_utc()[0]
         merged = {}  # user_id -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
+        _online_names = set()
         # Source 1: Metrics API (most reliable for current state)
         try:
             async with httpx.AsyncClient(timeout=10) as c:
@@ -1018,6 +1020,24 @@ def build_app() -> "FastAPI":
         except: pass
         
         # Source 2: sharing_live table (is_active=1, not stale)
+        # 自动清理：已离线用户的 sharing_live 残留
+        if _online_names:
+            conn.execute(
+                "UPDATE sharing_live SET end_time=?, is_active=0 WHERE is_active=1 AND user_name NOT IN (SELECT name FROM zoom_participants WHERE action='enter' AND action_time >= ? GROUP BY name HAVING MAX(action_time) >= ?)",
+                (now_utc.isoformat(), _today_start, _today_start)
+            )
+            # 简化版：直接用 _online_names 判断
+            _clean_rows = conn.execute(
+                "SELECT id, user_name FROM sharing_live WHERE is_active=1"
+            ).fetchall()
+            for _cr in _clean_rows:
+                _cn = db.normalize_identity_name(_cr[1])
+                if _cn not in _online_names:
+                    conn.execute(
+                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE id=? AND is_active=1",
+                        (now_utc.isoformat(), now_utc.isoformat(), _cr[0])
+                    )
+            conn.commit()
         live_rows = conn.execute(
             "SELECT * FROM sharing_live WHERE is_active=1"
         ).fetchall()
@@ -1097,14 +1117,6 @@ def build_app() -> "FastAPI":
         if _live_only:
             merged = _live_only
         # 在线名单过滤：只显示当前在线人员的共享
-        _online_names = set()
-        try:
-            _ol = __import__("sys").modules.get("__main__")
-            _lc = getattr(_ol, "LIVE_CACHE", {}).get("data", {})
-            for _op in _lc.get("online_list", []):
-                _online_names.add(db.normalize_identity_name(_op.get("name","")))
-        except:
-            pass
         if _online_names:
             merged = {uid: info for uid, info in merged.items()
                      if db.normalize_identity_name(info.get("name","")) in _online_names}
