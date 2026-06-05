@@ -2088,15 +2088,21 @@ def build_app() -> "FastAPI":
                 except: pass
         ps = list(participants_summary.values())
         ps.sort(key=lambda x: (-x["total_actions"], -len(x.get("flags", []))))
-        # 本地 DB 纠偏：最后事件是 leave 且无后续 enter，标记离线
+        # 本地 DB 纠偏：最后事件是 leave 标记离线；超过 90 分钟无活动标记 stale
         _conn = db._get_conn()
+        _idle_cutoff = (now_utc - timedelta(minutes=90)).isoformat()
         for _p in ps:
             _row = _conn.execute(
                 "SELECT action, action_time FROM zoom_participants WHERE name = ? ORDER BY action_time DESC LIMIT 1",
                 (_p.get("name", ""),)
             ).fetchone()
-            if _row and _row[0] == "leave":
-                _p["is_online"] = False
+            if _row:
+                if _row[0] == "leave":
+                    _p["is_online"] = False
+                elif _row[1] < _idle_cutoff:
+                    # enter 但超过 90 分钟无活动，标记 stale
+                    _p["is_online"] = False
+                    _p["status_hint"] = "stale"
         ps_sorted = sorted(ps, key=lambda x: x.get("last_active", ""), reverse=True)
         max_online = max((m.get("raw_online_count", 0) for m in meetings.values()), default=0)
         ol_list = [p for p in ps_sorted if p.get("is_online")][:max(max_online, 1)] if max_online > 0 else []
