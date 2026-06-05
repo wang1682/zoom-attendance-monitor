@@ -194,7 +194,7 @@ async def monitor_loop():
                 parts.append(f"离{len(leaves)}")
             detail = " ".join(parts) if parts else "无新记录"
             detail += f" {'推送' if push_now else '静默'}"
-            sys.stdout.write(f"[{now.strftime('%H:%M')}] {detail}\n")
+            sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
 
         except Exception as e:
