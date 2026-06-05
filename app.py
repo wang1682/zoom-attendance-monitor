@@ -416,12 +416,25 @@ def build_app() -> "FastAPI":
         })
 
     @app.get("/participants", response_class=HTMLResponse)
-    async def participants_page(request: Request):
+    async def participants_page(request: Request, date: str = ""):
         if settings.demo_mode:
             participants = _ensure_demo().get_demo_participants()
         else:
-            rows = db.get_today_participants(limit=500)
-            participants = build_participant_summary(rows)
+            if date:
+                # 指定日期：查该日 MYT 范围
+                _d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=MYT)
+                _ds, _de = myt_day_range_to_utc(_d)
+                _conn = db._get_conn()
+                _myrows = _conn.execute(
+                    "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time",
+                    (_ds, _de)
+                ).fetchall()
+                _cols = [c2[1] for c2 in _conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
+                _mydicts = [dict(zip(_cols, r)) for r in _myrows]
+                participants = build_participant_summary(_mydicts)
+            else:
+                rows = db.get_today_participants(limit=500)
+                participants = build_participant_summary(rows)
             # Live API 覆盖在线状态：只有 live 确认在线的人才标记在线，其余全部离线
             try:
                 import urllib.request, json as _json
@@ -444,6 +457,7 @@ def build_app() -> "FastAPI":
             "brand": BRAND,
             "demo_mode": settings.demo_mode,
             "to_myt": to_myt,
+            "selected_date": date,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
