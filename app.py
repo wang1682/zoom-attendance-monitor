@@ -104,6 +104,148 @@ def dedup_participants(participants):
             result.append(p)
     return result
 
+
+def build_participant_summary(rows):
+    """按人聚合原始 zoom_participants 记录，返回 participants 页面所需字段
+
+    跨天配对策略：取最近 7 天数据做配对，但只输出今日有活动的人。
+    逻辑复用 /api/v2/summary 的配对方式。
+    """
+    from collections import defaultdict
+
+    now_utc = datetime.now(timezone.utc)
+    MYT = timezone(timedelta(hours=8))
+    now_myt = now_utc.astimezone(MYT)
+    myt_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+    myt_end = myt_start + timedelta(days=1)
+    today_start_utc = myt_start.astimezone(timezone.utc).isoformat()
+    today_end_utc = myt_end.astimezone(timezone.utc).isoformat()
+
+    # 取更多数据做配对（向前 7 天）
+    lookup_start = (myt_start - timedelta(days=7)).astimezone(timezone.utc).isoformat()
+    conn = db._get_conn()
+    extra_rows = conn.execute(
+        "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
+        (lookup_start, today_end_utc)
+    ).fetchall()
+    cols = [c[1] for c in conn.execute("PRAGMA table_info(zoom_participants)").fetchall()]
+
+    if not extra_rows:
+        return []
+
+    # 按人+会议分组（复用 api summary 逻辑）
+    user_sessions = defaultdict(lambda: {"enters": [], "leaves": []})
+    for r in extra_rows:
+        record = dict(zip(cols, r))
+        name = record.get("name", "?")
+        resolved = db.resolve_display_name(name)
+        canonical = resolved["display_name"]
+        mid = record.get("meeting_id", "?")
+        action = record.get("action", "")
+        t = record.get("action_time", "")
+        if action == "enter":
+            user_sessions[(canonical, mid)]["enters"].append(t)
+        elif action == "leave":
+            user_sessions[(canonical, mid)]["leaves"].append(t)
+
+    def in_today(t):
+        try:
+            d = datetime.fromisoformat(t.replace("Z", "+00:00"))
+            return today_start_utc <= d.isoformat() < today_end_utc
+        except:
+            return False
+
+    def secs_in_today(start_iso, end_iso):
+        try:
+            s = max(datetime.fromisoformat(start_iso.replace("Z", "+00:00")),
+                    datetime.fromisoformat(today_start_utc.replace("Z", "+00:00")))
+            e = min(datetime.fromisoformat(end_iso.replace("Z", "+00:00")),
+                    datetime.fromisoformat(today_end_utc.replace("Z", "+00:00")))
+            if e > s:
+                return int((e - s).total_seconds())
+        except:
+            pass
+        return 0
+
+    def fmt_minutes(secs):
+        if secs <= 0:
+            return "—"
+        h = secs // 3600
+        m = (secs % 3600) // 60
+        if h > 0:
+            return f"{h}h{m}m"
+        return f"{m}m"
+
+    # 按 canonical_name 汇总
+    person_summary = defaultdict(lambda: {
+        "total_secs": 0, "current_secs": 0,
+        "enter_times": [], "leave_times": [],
+        "first_enter": "", "last_active": "",
+        "has_today_activity": False, "is_online": False
+    })
+
+    for (canonical, mid), sess in user_sessions.items():
+        enters = sorted(sess["enters"])
+        leaves = sorted(sess["leaves"])
+        p = person_summary[canonical]
+        p["enter_times"].extend(enters)
+        p["leave_times"].extend(leaves)
+
+        # 配对计算时长
+        for i in range(min(len(enters), len(leaves))):
+            s = secs_in_today(enters[i], leaves[i])
+            p["total_secs"] += s
+
+        # 未配对的 enter（仍在在线）
+        if len(enters) > len(leaves):
+            p["is_online"] = True
+            p["total_secs"] += secs_in_today(enters[-1], now_utc.isoformat())
+
+        # 记录 first enter
+        if enters and (not p["first_enter"] or enters[0] < p["first_enter"]):
+            p["first_enter"] = enters[0]
+
+        # 记录 last active
+        for t in enters + leaves:
+            if t > p["last_active"]:
+                p["last_active"] = t
+
+        # 今日是否有活动
+        for t in enters + leaves:
+            if in_today(t):
+                p["has_today_activity"] = True
+
+    # 本次在线时长（最后一次 session）
+    for canonical, p in person_summary.items():
+        enters = sorted(p["enter_times"])
+        leaves = sorted(p["leave_times"])
+        if p["is_online"] and enters:
+            p["current_secs"] = secs_in_today(enters[-1], now_utc.isoformat())
+        elif enters and leaves:
+            p["current_secs"] = secs_in_today(enters[-1], leaves[-1])
+
+    # 构建输出，只保留今日有活动的人
+    result = []
+    for canonical, p in person_summary.items():
+        if not p["has_today_activity"]:
+            continue
+
+        result.append({
+            "name": canonical,
+            "status": "在线中" if p["is_online"] else "已离线",
+            "first_enter": p["first_enter"],
+            "current_session": fmt_minutes(p["current_secs"]),
+            "total_duration": fmt_minutes(p["total_secs"]),
+            "leave_count": len(p["leave_times"]),
+            "last_active": p["last_active"],
+            "is_online": p["is_online"],
+            "action_time": p["first_enter"],  # 兼容模板中 {{ to_myt(p.action_time) }}
+        })
+
+    result.sort(key=lambda x: x.get("last_active", ""), reverse=True)
+    return result
+
+
 BASE_DIR = Path(__file__).parent
 
 with open(BASE_DIR / "brand.json") as _f:
@@ -258,7 +400,8 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             participants = _ensure_demo().get_demo_participants()
         else:
-            participants = db.get_today_participants(limit=200)
+            rows = db.get_today_participants(limit=500)
+            participants = build_participant_summary(rows)
         return tmpl.TemplateResponse(request, "participants.html", {
             "participants": participants,
             "brand": BRAND,

@@ -19,8 +19,8 @@
   <tr>
     <td class="td-name">{{ p.name }}</td>
     <td>{% if p.status == '在线中' %}<span class="badge badge-green">在线中</span>{% else %}<span class="badge">已离线</span>{% endif %}</td>
-    <td class="td-mono">{{ to_myt(p.action_time) }}</td>
-    <td class="td-mono">{{ to_myt(p.action_time) }}</td>
+    <td class="td-mono">{{ to_myt(p.first_enter) }}</td>
+    <td class="td-mono">{% if p.is_online %}现在{% else %}{{ to_myt(p.last_active) }}{% endif %}</td>
     <td>{{ p.current_session if p.current_session else '—' }}</td>
     <td>{{ p.total_duration if p.total_duration else '—' }}</td>
     <td>{{ p.leave_count if p.leave_count else 0 }}</td>
