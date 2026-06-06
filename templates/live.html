@@ -73,12 +73,12 @@ async function loadLive(){
     const lt=document.getElementById("liveTable");
     if(online.length){
       lt.innerHTML=online.map(p=>{
-        const name=p.name||p.display_name||p.user_name||"—";
+        const name=p.standard_name||p.name||p.display_name||p.user_name||"—"; const sg=p.group_name?"【"+p.group_name+"】":"";
         const room=p.room||p.meeting_topic||p.meeting_id||"—";
         // join_time_display is already MYT, display directly
         const jt = to_myt(p.join_time) || p.join_time_display || p.last_active_myt || "—";
         const dur=p.duration_display||p.duration_text||p.duration||p.online_duration||(p.online_display||"");
-        return `<tr><td class="td-name">${name}</td><td class="td-mono">${room}</td><td>${jt}</td><td><span class="badge badge-green">${dur}</span></td></tr>`;
+        return `<tr><td class="td-name">${name}${sg}</td><td class="td-mono">${room}</td><td>${jt}</td><td><span class="badge badge-green">${dur}</span></td></tr>`;
       }).join("");
     } else {
       lt.innerHTML='<tr><td colspan="4" class="td-empty">暂无在线</td></tr>';
