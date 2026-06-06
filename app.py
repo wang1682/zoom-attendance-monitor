@@ -949,6 +949,54 @@ def build_app() -> "FastAPI":
     async def settings_members_page(request: Request):
         return tmpl.TemplateResponse(request, "settings_members.html", {"brand": BRAND})
 
+    @app.get("/api/v3/telegram-channels")
+    async def api_v3_get_telegram_channels():
+        channels = db.get_telegram_channels()
+        return {"ok": True, "channels": channels}
+
+    @app.post("/api/v3/telegram-channels")
+    async def api_v3_create_telegram_channel(request: Request):
+        data = await request.json()
+        cid = db.upsert_telegram_channel(data)
+        db.log_audit("create", "telegram_channel", cid, f"Created channel: {data.get('name','')} (chat_id={data.get('chat_id','')})")
+        return {"ok": True, "id": cid}
+
+    @app.put("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_update_telegram_channel(chat_id: str, request: Request):
+        data = await request.json()
+        data["chat_id"] = chat_id
+        cid = db.upsert_telegram_channel(data)
+        db.log_audit("update", "telegram_channel", cid, f"Updated channel: {data.get('name','')}")
+        return {"ok": True, "id": cid}
+
+    @app.delete("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_delete_telegram_channel(chat_id: str):
+        name = db.get_telegram_channel(chat_id)
+        n = name.get("name", "") if name else ""
+        db.delete_telegram_channel(chat_id)
+        db.log_audit("delete", "telegram_channel", chat_id, f"Deleted channel: {n} (chat_id={chat_id})")
+        return {"ok": True}
+
+    @app.post("/api/v3/telegram-channels/{chat_id}/test")
+    async def api_v3_test_telegram_channel(chat_id: str):
+        channel = db.get_telegram_channel(chat_id)
+        if not channel:
+            return {"ok": False, "error": "channel not found"}
+        name = channel.get("name", "")
+        from telegram_push import send_message
+        result = send_message(chat_id=chat_id, text="\u2705 \u8fd9\u662f\u4e00\u6761\u6d4b\u8bd5\u6d88\u606f\n\n\u9891\u9053\uff1a" + name + "\nID\uff1a" + chat_id + "\n\n\u5982\u679c\u6536\u5230\u6b64\u6d88\u606f\uff0c\u8bf4\u660e Telegram \u901a\u77e5\u914d\u7f6e\u6b63\u786e\u3002")
+        ok = result.get("ok", False)
+        db.log_audit("test", "telegram_channel", chat_id, f"Test message sent to channel {name} ({chat_id}): success={ok}")
+        return {"ok": True, "message": "\u6d4b\u8bd5\u6d88\u606f\u53d1\u9001\u6210\u529f"}
+
+    @app.get("/settings/telegram-channels", response_class=HTMLResponse)
+    async def settings_telegram_channels_page(request: Request):
+        channels = db.get_telegram_channels()
+        return tmpl.TemplateResponse(request, "settings_telegram_channels.html", {
+            "brand": BRAND,
+            "channels": channels,
+        })
+
     @app.get("/api/v3/aliases")
     async def api_v3_aliases():
         """获取所有别名配置"""
