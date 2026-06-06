@@ -1038,8 +1038,7 @@ def build_app() -> "FastAPI":
             return {"ok": False, "error": "channel not found"}
         name = channel.get("name", "")
         from telegram_push import send_message
-        result = send_message(
-            "✅ 这是一条测试消息\n\n频道：" + name + "\nID：" + chat_id + "\n\n如果收到此消息，说明 Telegram 通知配置正确。"
+        result = send_message(chat_id=chat_id, text="✅ 这是一条测试消息\n\n频道：" + name + "\nID：" + chat_id + "\n\n如果收到此消息，说明 Telegram 通知配置正确。"
         )
         ok = result.get("ok", False)
         db.log_audit("test", "telegram_channel", chat_id,
