@@ -453,6 +453,66 @@ def build_app() -> "FastAPI":
         return tmpl.TemplateResponse(request, "settings_telegram_rules.html", {
             "brand": BRAND,
             "rules": rules,
+            "rules": rules,
+            "channels": db.get_telegram_channels(),
+        })
+    # ── Telegram Channels API ────────────────────────────────────────────
+
+    @app.get("/api/v3/telegram-channels")
+    async def api_v3_get_telegram_channels():
+        channels = db.get_telegram_channels()
+        return {"ok": True, "channels": channels}
+
+    @app.post("/api/v3/telegram-channels")
+    async def api_v3_create_telegram_channel(request: Request):
+        data = await request.json()
+        name = data.get("name", "").strip()
+        chat_id = data.get("chat_id", "").strip()
+        if not name or not chat_id:
+            return {"ok": False, "error": "name and chat_id are required"}
+        channel_id = db.upsert_telegram_channel(data)
+        return {"ok": True, "id": channel_id}
+
+    @app.put("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_update_telegram_channel(chat_id: str, request: Request):
+        data = await request.json()
+        # Ensure the channel exists
+        existing = db.get_telegram_channel(chat_id)
+        if not existing:
+            return {"ok": False, "error": "Channel not found"}
+        # Preserve the original name so upsert works
+        data["name"] = data.get("name", existing["name"]).strip()
+        data["chat_id"] = chat_id
+        channel_id = db.upsert_telegram_channel(data)
+        return {"ok": True, "id": channel_id}
+
+    @app.delete("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_delete_telegram_channel(chat_id: str):
+        deleted = db.delete_telegram_channel(chat_id)
+        if not deleted:
+            return {"ok": False, "error": "Channel not found"}
+        return {"ok": True}
+
+    @app.post("/api/v3/telegram-channels/{chat_id}/test")
+    async def api_v3_test_telegram_channel(chat_id: str):
+        """Send test message to a specific channel and log audit"""
+        channel = db.get_telegram_channel(chat_id)
+        if not channel:
+            return {"ok": False, "error": "Channel not found"}
+        if not channel["enabled"]:
+            return {"ok": False, "error": "Channel is disabled"}
+        from telegram_push import send_message
+        result = send_message("Telegram 频道测试消息", chat_id=chat_id)
+        db.log_audit("test", "telegram_channel", channel["id"],
+                     f"Test message sent to channel {channel['name']} ({chat_id}): success={result.get('ok')}")
+        return result
+
+    @app.get("/settings/telegram-channels", response_class=HTMLResponse)
+    async def settings_telegram_channels_page(request: Request):
+        channels = db.get_telegram_channels()
+        return tmpl.TemplateResponse(request, "settings_telegram_channels.html", {
+            "brand": BRAND,
+            "channels": channels,
         })
 
     # ─────────────────────────────────────────────────────────────────────
@@ -812,7 +872,32 @@ def build_app() -> "FastAPI":
                             content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                             extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
                             text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                            result = send_message(text)
+                            # Resolve target chat_id: rule.target_chat_id > default channel
+                            target_chat_id = None
+                            try:
+                                rule = db.get_telegram_rule(push_event)
+                                if rule and rule.get("target_chat_id"):
+                                    target_chat_id = rule["target_chat_id"]
+                                    ch = db.get_telegram_channel(target_chat_id)
+                                    if not ch or not ch.get("enabled"):
+                                        sys.stderr.write(f"[PUSH] target_chat_id {target_chat_id} not found or disabled, falling back\n")
+                                        sys.stderr.flush()
+                                        target_chat_id = None
+                                if not target_chat_id:
+                                    default_ch = db.get_default_channel()
+                                    if default_ch and default_ch.get("enabled"):
+                                        target_chat_id = default_ch["chat_id"]
+                                    elif default_ch and not default_ch.get("enabled"):
+                                        sys.stderr.write("[PUSH] default channel is disabled, skipping\n")
+                                        sys.stderr.flush()
+                                        p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
+                                            (dedup_key, "webhook_event_push", now_utc.isoformat()))
+                                        p_conn.commit()
+                                        return
+                            except Exception as e:
+                                sys.stderr.write(f"[PUSH] channel routing error: {e}\n")
+                                sys.stderr.flush()
+                            result = send_message(text, chat_id=target_chat_id)
                             sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
                             sys.stderr.flush()
                             if result.get("ok"):

@@ -192,6 +192,19 @@ def init_db():
 
         "CREATE INDEX IF NOT EXISTS idx_telegram_rules_event ON telegram_alert_rules(event_type)",
 
+        "CREATE TABLE IF NOT EXISTS telegram_channels ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  name TEXT NOT NULL,"
+        "  chat_id TEXT NOT NULL,"
+        "  enabled INTEGER DEFAULT 1,"
+        "  is_default INTEGER DEFAULT 0,"
+        "  notes TEXT DEFAULT '',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_telegram_channels_chat ON telegram_channels(chat_id)",
+
         "CREATE TABLE IF NOT EXISTS audit_logs ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  action TEXT NOT NULL,"
@@ -215,6 +228,9 @@ def init_db():
 
     # seed default telegram alert rules
     seed_telegram_rules()
+
+    # seed default telegram channel
+    _seed_default_telegram_channel()
 
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
@@ -623,6 +639,128 @@ def log_audit(action: str, entity_type: str = "telegram_alert_rule",
         (action, entity_type, entity_id, details, now),
     )
     conn.commit()
+
+
+# ── Telegram Channels ─────────────────────────────────────────────────────
+
+def _seed_default_telegram_channel():
+    """插入默认 Telegram 频道"""
+    conn = _get_conn()
+    existing = conn.execute("SELECT id FROM telegram_channels WHERE name = ?", ("默认",)).fetchone()
+    if not existing:
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO telegram_channels (name, chat_id, enabled, is_default, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("默认", "7922047310", 1, 1, "", now, now),
+        )
+        conn.commit()
+
+
+def get_telegram_channels() -> list[dict]:
+    """获取所有 Telegram 频道"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM telegram_channels ORDER BY is_default DESC, name"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_telegram_channel(chat_id: str) -> dict | None:
+    """获取指定 chat_id 的频道"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_channels WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_default_channel() -> dict | None:
+    """获取默认频道 (is_default=1)"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_channels WHERE is_default = 1 AND enabled = 1 LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def upsert_telegram_channel(data: dict) -> int:
+    """插入或更新频道，如果 name 已存在则 UPDATE，否则 INSERT"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    name = data.get("name", "").strip()
+    chat_id = data.get("chat_id", "").strip()
+
+    if not name or not chat_id:
+        raise ValueError("name and chat_id are required")
+
+    existing = conn.execute(
+        "SELECT id FROM telegram_channels WHERE name = ?",
+        (name,),
+    ).fetchone()
+
+    if existing:
+        # Update
+        fields = []
+        values = []
+        for key in ("chat_id", "enabled", "is_default", "notes"):
+            if key in data:
+                fields.append(f"{key} = ?")
+                values.append(data[key])
+        if fields:
+            fields.append("updated_at = ?")
+            values.append(now)
+            values.append(existing[0])
+            conn.execute(
+                f"UPDATE telegram_channels SET {', '.join(fields)} WHERE id = ?",
+                values,
+            )
+        conn.commit()
+        log_audit("update", "telegram_channel", existing[0],
+                  f"Updated channel: {name} (chat_id={chat_id})")
+        return existing[0]
+    else:
+        # If is_default, unset other defaults
+        if data.get("is_default", 0):
+            conn.execute("UPDATE telegram_channels SET is_default = 0")
+
+        cur = conn.execute(
+            "INSERT INTO telegram_channels (name, chat_id, enabled, is_default, notes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                name,
+                chat_id,
+                data.get("enabled", 1),
+                data.get("is_default", 0),
+                data.get("notes", ""),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        log_audit("create", "telegram_channel", cur.lastrowid,
+                  f"Created channel: {name} (chat_id={chat_id})")
+        return cur.lastrowid
+
+
+def delete_telegram_channel(chat_id: str) -> bool:
+    """删除指定 chat_id 的频道"""
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT id, name FROM telegram_channels WHERE chat_id = ?",
+        (chat_id,),
+    ).fetchone()
+    if not existing:
+        return False
+    conn.execute(
+        "DELETE FROM telegram_channels WHERE chat_id = ?",
+        (chat_id,),
+    )
+    conn.commit()
+    log_audit("delete", "telegram_channel", existing[0],
+              f"Deleted channel: {existing[1]} (chat_id={chat_id})")
+    return True
 
 
 def normalize_identity_name(name: str) -> str:
