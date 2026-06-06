@@ -1240,7 +1240,8 @@ def build_app() -> "FastAPI":
                                     uid = str(p.get("user_id", ""))
                                     if not uid or uid in merged: continue
                                     raw = p.get("user_name", "").strip()
-                                    dn = db.resolve_display_name(raw)["display_name"]
+                                    _rm = resolve_member(raw)
+                                    dn = _rm["standard_name"]
                                     content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
                                     jt = p.get("join_time", "")
                                     merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
@@ -1266,7 +1267,8 @@ def build_app() -> "FastAPI":
                 except: pass
             if uid and uid not in merged:
                 raw = d.get("user_name", "")
-                dn = db.resolve_display_name(raw)["display_name"]
+                _rm = resolve_member(raw)
+                dn = _rm["standard_name"]
                 merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
                                "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
                 sources["sharing_live"] += 1
@@ -1316,7 +1318,8 @@ def build_app() -> "FastAPI":
                     pass
             uid = key[1]
             if uid not in merged:
-                dn = db.resolve_display_name(info["raw_name"])["display_name"]
+                _rm = resolve_member(info["raw_name"])
+                dn = _rm["standard_name"]
                 merged[uid] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
                                "meeting_id": info.get("meeting_id", ""),
                                "content": info.get("content", ""), "start_time": info.get("start_time", ""),
@@ -1593,8 +1596,8 @@ def build_app() -> "FastAPI":
                                     is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
                                     if not is_sharing: continue
                                     name_raw = p.get("user_name", "").strip()
-                                    resolved = db.resolve_display_name(name_raw)
-                                    display_name = resolved["display_name"]
+                                    _rm = resolve_member(name_raw)
+                                    display_name = _rm["standard_name"]
                                     jt = p.get("join_time", "")
                                     mins = 0
                                     if jt:
@@ -1781,8 +1784,8 @@ def build_app() -> "FastAPI":
             record = dict(zip(cols, r))
             name = record.get("name", "?")
             # 统一显示名（alias 归并）
-            resolved = db.resolve_display_name(name)
-            name = resolved["display_name"]
+            _rm = resolve_member(name)
+            name = _rm["standard_name"]
             mid = record.get("meeting_id", "?")
             action = record.get("action", "")
             t = record.get("action_time", "")
@@ -1952,8 +1955,8 @@ def build_app() -> "FastAPI":
         participants = []
         seen = set()
         for r in participants_rows:
-            resolved = db.resolve_display_name(r["name"])
-            canonical = resolved["display_name"]
+            _rm = resolve_member(r["name"])
+            canonical = _rm["standard_name"]
             if canonical not in seen:
                 seen.add(canonical)
                 participants.append({
@@ -2309,12 +2312,14 @@ def build_app() -> "FastAPI":
         participants_summary = []
         anomalies = []  # 异常成员列表
         unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchall()
-        for (name,) in unique_names_rows:
-            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'enter'", (rs_utc, re_utc, name)).fetchone()[0]
-            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'leave'", (rs_utc, re_utc, name)).fetchone()[0]
+        for (raw_name,) in unique_names_rows:
+            _rm = resolve_member(raw_name)
+            name = _rm["standard_name"]
+            enters = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'enter'", (rs_utc, re_utc, raw_name)).fetchone()[0]
+            leaves = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? AND action = 'leave'", (rs_utc, re_utc, raw_name)).fetchone()[0]
             total_actions = enters + leaves
-            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ?", (rs_utc, re_utc, name)).fetchone()[0]
-            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? ORDER BY action_time DESC LIMIT 1", (rs_utc, re_utc, name)).fetchone()
+            last_time = conn.execute("SELECT MAX(action_time) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ?", (rs_utc, re_utc, raw_name)).fetchone()[0]
+            last_action = conn.execute("SELECT action FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND name = ? ORDER BY action_time DESC LIMIT 1", (rs_utc, re_utc, raw_name)).fetchone()
             is_online = last_action and last_action[0] == "enter"
             # 检查是否在10分钟内活跃
             if is_online and last_time:
@@ -2333,7 +2338,7 @@ def build_app() -> "FastAPI":
                 AND e.action = 'enter' AND l.action = 'leave'
                 WHERE e.name = ? AND e.action_time >= ?
                 ORDER BY e.action_time LIMIT 30
-            """, (name, today)).fetchall()
+            """, (raw_name, today)).fetchall()
             total_secs = 0; short_sessions = 0
             for et, lt in pairs:
                 try:
