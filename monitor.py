@@ -211,17 +211,30 @@ async def monitor_loop():
                                     _online_now.add(_n)
                     except:
                         pass
-                if _online_now and push_now:
+                if push_now:
+                    # 从 /api/v2/live 获取实时在线名单
+                    import httpx
+                    _v2_names = []
+                    try:
+                        _v2r = httpx.get("http://localhost:8000/api/v2/live", timeout=10)
+                        if _v2r.status_code == 200:
+                            _v2d = _v2r.json()
+                            _v2_names = [p.get("name", "") for p in _v2d.get("online_list", [])]
+                    except:
+                        pass
                     _lines = [
                         "\U0001f50d \u5f53\u524d\u5728\u7ebf\u53c2\u4e0e\u8005",
                         "",
                         "\u23f0 " + now_myt.strftime("%m-%d %H:%M"),
                         "",
                     ]
-                    for _n in sorted(_online_now):
-                        _lines.append("\u2022 " + _n)
+                    if _v2_names:
+                        for _n in sorted(_v2_names):
+                            _lines.append("\u2022 " + _n)
+                    else:
+                        _lines.append("\u6682\u65e0\u5728\u7ebf\u6210\u5458")
                     _lines.append("")
-                    _lines.append("\U0001f4ca \u5171 " + str(len(_online_now)) + " \u4eba\u5728\u7ebf")
+                    _lines.append("\U0001f4ca \u5171 " + str(len(_v2_names)) + " \u4eba\u5728\u7ebf")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
