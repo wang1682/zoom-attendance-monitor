@@ -67,9 +67,9 @@
           <td>{% if c.is_default %}⭐ 默认{% else %}—{% endif %}</td>
           <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts)">{{ c.notes or "—" }}</td>
           <td>
-            <button class="bt bt-s" onclick="editChannel({{ c.chat_id }})">✏️</button>
-            <button class="bt bt-s" onclick="testChannel({{ c.chat_id }})">📨</button>
-            <button class="bt bt-s bt-d" onclick="deleteChannel({{ c.chat_id }}, {{ c.name }})">🗑️</button>
+            <button class="bt bt-s" onclick="editChannel({{ c.chat_id|tojson }})">✏️</button>
+            <button class="bt bt-s" onclick="testChannel({{ c.chat_id|tojson }})">📨</button>
+            <button class="bt bt-s bt-d" onclick="deleteChannel({{ c.chat_id|tojson }}, {{ c.name|tojson }})">🗑️</button>
           </td>
         </tr>
         {% endfor %}
