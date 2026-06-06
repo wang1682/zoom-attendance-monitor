@@ -52,7 +52,7 @@
   <div class="mg-card">
     <h3><span id="detailTitle">成员列表</span><span class="badge" id="memberCount">0</span></h3>
     <div class="form-row" id="addMemberRow" style="display:none">
-      <input type="text" id="newMemberName" placeholder="成员名称" />
+      <input type="text" id="newMemberName" placeholder="成员名称" list="historyNames" /><datalist id="historyNames"></datalist>
       <button class="btn btn-primary btn-sm" onclick="addMember()">添加</button>
     </div>
     <div id="memberList"><div class="empty-state">请选择一个分组</div></div>
@@ -145,5 +145,23 @@ function escHtml(s) {
 }
 
 renderGroups();
+n// 加载历史用户名
+async function loadHistoryNames() {
+  try {
+    const r = await fetch("/api/v3/member-aliases/discover");
+    const j = await r.json();
+    const dl = document.getElementById("historyNames");
+    if (!dl) return;
+    dl.innerHTML = "";
+    const seen = new Set();
+    if (j.ok) {
+      (j.unmapped || []).concat(j.online || []).forEach(function(n) {
+        if (!seen.has(n)) { seen.add(n); const o = document.createElement("option"); o.value = n; dl.appendChild(o); }
+      });
+    }
+  } catch(e) {}
+}
+loadHistoryNames();
+
 </script>
 {% endblock %}
