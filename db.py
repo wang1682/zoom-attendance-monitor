@@ -457,6 +457,7 @@ DEFAULT_TELEGRAM_RULES = [
     {"event_type": "participant_joined_breakout_room",  "title": "加入分组讨论室",     "enabled": 0},
     {"event_type": "participant_left_breakout_room",    "title": "离开分组讨论室",     "enabled": 0},
     {"event_type": "participant_joined_waiting_room",   "title": "有人在等候室",       "enabled": 1},
+    {"event_type": "frequent_join_leave",                 "title": "短时间频繁进出",     "enabled": 1},
 ]
 
 
@@ -465,11 +466,12 @@ def seed_telegram_rules():
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     for rule in DEFAULT_TELEGRAM_RULES:
+        _cd = 300 if rule["event_type"] in ("participant_joined", "participant_left") else 60
         conn.execute(
             "INSERT OR IGNORE INTO telegram_alert_rules "
             "(event_type, title, enabled, cooldown_seconds, quiet_enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, 60, 0, ?, ?)",
-            (rule["event_type"], rule["title"], rule["enabled"], now, now),
+            "VALUES (?, ?, ?, ?, 0, ?, ?)",
+            (rule["event_type"], rule["title"], rule["enabled"], _cd, now, now),
         )
     conn.commit()
 
