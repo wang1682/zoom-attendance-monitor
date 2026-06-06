@@ -151,7 +151,7 @@ async function loadAll(){
   discoverData = d;
 
   renderMembers(membersData);
-  renderUnmapped(d.names || [], d.online || []);
+  renderUnmapped(d.unmapped || [], d.online || []);
   renderOnline(d.online || []);
 }
 
