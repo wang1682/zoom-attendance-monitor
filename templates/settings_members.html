@@ -1,223 +1,418 @@
-<!-- TEMPLATE: settings_members.html v2 -->
+<!-- TEMPLATE: members.html -- Member Identity Center -->
 {% extends "base.html" %}
-{% block title %}成员别名配置{% endblock %}
+{% block title %}成员身份中心{% endblock %}
 {% block head %}
 <style>
-.ml{display:grid;grid-template-columns:2fr 2fr 3fr;gap:16px;margin-bottom:20px}
-@media(max-width:900px){.ml{grid-template-columns:1fr}}
-.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;max-height:500px;overflow-y:auto}
-.mh{font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--div);display:flex;justify-content:space-between}
+/* Three-column layout */
+.ml{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:1100px){.ml{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.ml{grid-template-columns:1fr}}
+.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;max-height:600px;overflow-y:auto}
+.mh{font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--div);display:flex;justify-content:space-between;align-items:center}
+.mh .mc-title{display:flex;align-items:center;gap:6px}
+.mh .mc-badge{font-size:10px;font-weight:500;color:var(--tm);background:var(--div);padding:2px 8px;border-radius:8px}
 .mi{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-size:13px;transition:background .1s}
 .mi:hover{background:var(--rh)}
 .mi .md{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.mn{flex:1;color:var(--text);font-weight:500}
-.ms{font-size:10px;color:var(--tm);margin-left:4px}
-.mi .ma{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s}
+.mn{flex:1;color:var(--text);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ms{font-size:10px;color:var(--tm);margin-left:4px;white-space:nowrap}
+.mi .ma{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s;border:1px solid var(--cb);background:var(--card);color:var(--ts);white-space:nowrap}
 .mi:hover .ma{opacity:1}
-.mi .ma:hover{background:var(--pr);color:#fff}
-.alias-tree{font-size:13px;color:var(--ts);padding-left:16px;margin:2px 0}
-.alias-tree .at-item{display:flex;align-items:center;gap:6px;padding:2px 0}
-.alias-tree .at-del{font-size:10px;color:var(--da);cursor:pointer;padding:1px 5px;border-radius:3px}
-.alias-tree .at-del:hover{background:var(--da-b)}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100;display:none;align-items:center;justify-content:center}
-.modal{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:24px;min-width:320px;max-width:420px}
+.mi .ma:hover{background:var(--pr);color:#fff;border-color:var(--pr)}
+.mi .ma-del{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s;border:1px solid transparent;background:transparent;color:var(--da);white-space:nowrap}
+.mi:hover .ma-del{opacity:1}
+.mi .ma-del:hover{background:var(--da-b)}
+.mi .ma-edit{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s;border:1px solid transparent;background:transparent;color:var(--in);white-space:nowrap}
+.mi:hover .ma-edit{opacity:1}
+.mi .ma-edit:hover{background:var(--in-b)}
+
+/* Aliases display under member */
+.member-aliases{font-size:11px;color:var(--ts);padding:2px 0 4px 16px;display:flex;flex-wrap:wrap;gap:4px}
+.member-aliases .alias-tag{display:inline-flex;align-items:center;gap:4px;background:var(--div);padding:2px 8px;border-radius:4px;font-size:10px}
+.member-aliases .alias-tag .alias-del{color:var(--tm);cursor:pointer;font-size:9px;padding:0 2px}
+.member-aliases .alias-tag .alias-del:hover{color:var(--da)}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:var(--ov);z-index:100;display:none;align-items:center;justify-content:center}
+.modal{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:24px;min-width:340px;max-width:440px;max-height:80vh;overflow-y:auto}
 .modal h3{font-size:15px;font-weight:600;margin:0 0 12px;color:var(--text)}
-.modal label{font-size:12px;color:var(--ts);display:block;margin-bottom:4px}
-.modal input,.modal select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:10px;box-sizing:border-box}
-.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:4px}
-.online-badge{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}
+.modal label{font-size:12px;color:var(--ts);display:block;margin-bottom:4px;margin-top:8px}
+.modal input,.modal select{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px;margin-bottom:4px;box-sizing:border-box}
+.modal .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.modal .hint{font-size:10px;color:var(--tm);margin-top:2px}
+.modal .alias-input-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.modal .alias-input-row input{flex:1;margin-bottom:0}
+.modal .alias-input-row button{flex-shrink:0}
+.modal .alias-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.modal .alias-item{display:inline-flex;align-items:center;gap:4px;background:var(--div);padding:3px 8px;border-radius:4px;font-size:11px}
+.modal .alias-item .rm-alias{color:var(--tm);cursor:pointer;font-size:10px;margin-left:2px}
+.modal .alias-item .rm-alias:hover{color:var(--da)}
+
+/* Quick map badge */
+.quick-badge{font-size:9px;padding:1px 5px;border-radius:3px}
 </style>
 {% endblock %}
 {% block content %}
 <div class="page-container">
-<div class="page-header"><h1 class="page-title">成员别名配置</h1><p class="page-subtitle">自动发现 Zoom 用户名，映射为标准成员名</p></div>
+<div class="page-header">
+  <h1 class="page-title">成员身份中心</h1>
+  <p class="page-subtitle">统一管理 Zoom 用户名映射 — 自动发现、快速映射、统一归并</p>
+</div>
 
 <div class="ml">
-  <!-- A: 已配置成员 -->
+  <!-- LEFT: Configured Members -->
   <div class="mc">
-    <div class="mh"><span>已配置成员</span><span id="configCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
-    <div id="configList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+    <div class="mh">
+      <span class="mc-title">✅ 已配置成员</span>
+      <span class="mc-badge" id="memberCount">0</span>
+    </div>
+    <div id="memberList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
   </div>
 
-  <!-- B: 未映射用户名 -->
+  <!-- MIDDLE: Unmapped Usernames -->
   <div class="mc">
-    <div class="mh"><span>未映射用户名</span><span id="unmappedCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
-    <div id="unmappedList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+    <div class="mh">
+      <span class="mc-title">🔍 未映射用户名</span>
+      <span class="mc-badge" id="unmappedCount">0</span>
+    </div>
+    <div id="unmappedList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
   </div>
 
-  <!-- C: 当前在线 -->
+  <!-- RIGHT: Currently Online -->
   <div class="mc">
-    <div class="mh"><span>当前在线</span><span id="onlineCount" style="font-weight:400;font-size:11px;color:var(--tm)">0</span></div>
-    <div id="onlineList"><div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">加载中...</div></div>
+    <div class="mh">
+      <span class="mc-title">🟢 当前在线</span>
+      <span class="mc-badge" id="onlineCount">0</span>
+    </div>
+    <div id="onlineList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
   </div>
 </div>
 
-<!-- 映射对话框 -->
-<div class="modal-overlay" id="mapModal" onclick="if(event.target===this)closeMap()">
+<!-- Modal: Map / Edit Member -->
+<div class="modal-overlay" id="memberModal" onclick="if(event.target===this)closeMemberModal()">
   <div class="modal">
-    <h3>映射: <span id="mapZoomName" style="font-weight:400"></span></h3>
-    <label>归属到</label>
-    <select id="mapTarget">
-      <option value="__new__">新建成员</option>
-    </select>
-    <div id="mapNewField" style="display:block">
-      <label>新成员名称</label>
-      <input id="mapNewName" placeholder="输入标准姓名">
+    <h3 id="modalTitle">新建成员映射</h3>
+    <label>Zoom 用户名 (raw_name)</label>
+    <input id="modalRawName" placeholder="Zoom 显示的原始名称">
+    <label>显示名称 (display_name)</label>
+    <input id="modalDisplayName" placeholder="统一的显示名称">
+    <div class="hint">归并后的统一名称，所有别名都会映射到此名称</div>
+    <label>别名 (aliases)</label>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input id="modalAliasInput" placeholder="输入别名回车添加" onkeydown="if(event.key==='Enter')addAlias()">
+      <button class="btn btn-sm" onclick="addAlias()" style="flex-shrink:0">+</button>
     </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <input type="checkbox" id="mapCountEnabled" checked>
-      <label for="mapCountEnabled" style="margin:0;font-size:12px;color:var(--ts)">计入在线人数</label>
+    <div class="alias-list" id="modalAliasList"></div>
+    <label>所属分组</label>
+    <select id="modalGroupId"><option value="">无分组</option></select>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="closeMemberModal()">取消</button>
+      <button class="btn btn-primary btn-sm" onclick="saveMember()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Quick Map (one-click) -->
+<div class="modal-overlay" id="quickMapModal" onclick="if(event.target===this)closeQuickMap()">
+  <div class="modal">
+    <h3>快速映射: <span id="quickMapName" style="font-weight:400"></span></h3>
+    <label>映射到现有成员</label>
+    <select id="quickMapTarget">
+      <option value="__new__">— 新建成员 —</option>
+    </select>
+    <div id="quickMapNewField">
+      <label>新成员显示名称</label>
+      <input id="quickMapNewName" placeholder="输入显示名称">
     </div>
     <div class="modal-actions">
-      <button class="btn btn-sm" onclick="closeMap()">取消</button>
-      <button class="btn btn-primary btn-sm" onclick="doMap()">保存映射</button>
+      <button class="btn btn-sm" onclick="closeQuickMap()">取消</button>
+      <button class="btn btn-primary btn-sm" onclick="doQuickMap()">保存</button>
     </div>
   </div>
 </div>
 
 <script>
-let discoverData = null;
-let aliasesData = null;
-let mappingZoomName = "";
+// ── State ──────────────────────────────────────────────────────────────
+let membersData = [];     // from GET /api/v3/members
+let discoverData = null;  // from GET /api/v3/member-aliases/discover
+let currentModalRawName = "";
+let currentModalMember = null; // {display_name, raw_name, aliases} for editing
+let pendingAliases = [];
+let quickMapName = "";
 
+// ── Load ───────────────────────────────────────────────────────────────
 async function loadAll(){
-  const [d, a] = await Promise.all([
-    fetch("/api/v3/aliases/discover").then(r=>r.json()),
-    fetch("/api/v3/aliases").then(r=>r.json())
+  const [m, d] = await Promise.all([
+    fetch("/api/v3/members").then(r=>r.json()),
+    fetch("/api/v3/member-aliases/discover").then(r=>r.json())
   ]);
-  if(!d.ok||!a.ok)return;
+  if(!m.ok || !d.ok) return;
+  membersData = m.items || [];
   discoverData = d;
-  aliasesData = a;
 
-  // Build configured set
-  const configuredKeys = new Set();
-  const aliasMap = {}; // alias_lower -> canonical
-  const canonicalGroups = {}; // canonical -> [{alias_name, id}]
-  a.aliases.forEach(al => {
-    const key = al.alias_name.trim().toLowerCase().replace(/\\s+/g, "");
-    configuredKeys.add(key);
-    aliasMap[key] = al.canonical_name;
-    if(!canonicalGroups[al.canonical_name]) canonicalGroups[al.canonical_name] = [];
-    canonicalGroups[al.canonical_name].push({alias_name: al.alias_name, id: al.id});
-  });
+  renderMembers(membersData);
+  renderUnmapped(d.names || [], d.online || []);
+  renderOnline(d.online || []);
+}
 
-  // A: Config list
-  const configDiv = document.getElementById("configList");
-  const cans = Object.keys(canonicalGroups).sort();
-  document.getElementById("configCount").textContent = cans.length;
-  if(cans.length){
-    configDiv.innerHTML = cans.map(can => {
-      const aliases = canonicalGroups[can];
-      const first = aliases[0];
-      // Check if count_enabled (from first alias record)
-      const cntEnabled = a.aliases.find(al => al.canonical_name === can)?.count_enabled !== 0;
-      return `<div style="margin-bottom:8px">
-        <div class="mi" style="cursor:default">
-          <span class="md" style="background:${cntEnabled?'var(--sc)':'var(--tm)'}"></span>
-          <span class="mn">${can}</span>
-          <span class="ms">${cntEnabled?'✓':'✗不计入'}</span>
-        </div>
-        <div class="alias-tree">${aliases.map(al => `<div class="at-item"><span>${al.alias_name}</span><span class="at-del" onclick="delAlias(${al.id})">✕</span></div>`).join("")}</div>
-      </div>`;
-    }).join("");
-  } else {
-    configDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无配置</div>';
+// ── Left: Configured Members ───────────────────────────────────────────
+function renderMembers(members){
+  const div = document.getElementById("memberList");
+  document.getElementById("memberCount").textContent = members.length;
+  if(!members.length){
+    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">暂无配置</div>';
+    return;
   }
+  div.innerHTML = members.map(m => {
+    const aliasTags = (m.aliases || []).map(a =>
+      `<span class="alias-tag">${a}</span>`
+    ).join("");
+    return `<div style="margin-bottom:4px">
+      <div class="mi" style="cursor:default">
+        <span class="md" style="background:${m.count_enabled ? 'var(--sc)' : 'var(--tm)'}"></span>
+        <span class="mn">${esc(m.display_name)}</span>
+        <span class="ms">← ${esc(m.raw_name)}</span>
+        <button class="ma-edit" onclick="editMember('${esc(m.display_name)}')">编辑</button>
+        <button class="ma-del" onclick="deleteMember('${esc(m.display_name)}')">✕</button>
+      </div>
+      ${aliasTags ? `<div class="member-aliases">${aliasTags}</div>` : ''}
+    </div>`;
+  }).join("");
+}
 
-  // B: Unmapped names
-  const unmappedDiv = document.getElementById("unmappedList");
-  const unmapped = d.names.filter(n => !configuredKeys.has(n.name.toLowerCase().replace(/\\s+/g, "")));
-  document.getElementById("unmappedCount").textContent = unmapped.length;
-  if(unmapped.length){
-    unmappedDiv.innerHTML = unmapped.map(n => {
-      const isOnline = n.is_online ? '<span class="online-badge" style="background:var(--sc)"></span>' : '';
-      const timeAgo = n.last_seen ? n.last_seen.slice(11,16) : '';
-      return `<div class="mi" onclick="openMap('${n.name.replace(/'/g, "\\'")}')">
-        ${isOnline}<span class="mn">${n.name}</span><span class="ms">${n.count}次 ${timeAgo}</span><span class="ma">映射</span>
-      </div>`;
-    }).join("");
-  } else {
-    unmappedDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">✅ 全部已映射</div>';
+// ── Middle: Unmapped ───────────────────────────────────────────────────
+function renderUnmapped(unmappedNames, onlineNames){
+  const div = document.getElementById("unmappedList");
+  document.getElementById("unmappedCount").textContent = unmappedNames.length;
+  if(!unmappedNames.length){
+    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">✅ 全部已映射</div>';
+    return;
   }
+  const onlineSet = new Set(onlineNames);
+  div.innerHTML = unmappedNames.map(n => {
+    const isOnline = onlineSet.has(n);
+    const dot = isOnline ? '<span class="online-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--sc);margin-right:4px"></span>' : '';
+    return `<div class="mi" onclick="openMapModal('${esc(n)}')">
+      ${dot}<span class="mn">${esc(n)}</span>
+      <button class="ma">映射</button>
+    </div>`;
+  }).join("");
+}
 
-  // C: Online
-  const onlineDiv = document.getElementById("onlineList");
-  const v3 = await fetch("/api/v3/live").then(r=>r.json());
-  const onlineParts = [];
-  if(v3.ok && v3.data){
-    for(const m of v3.data.meetings||[]){
-      for(const p of m.participants||[]){
-        onlineParts.push(p);
-      }
+// ── Right: Online ────────────────────────────────────────────────────
+function renderOnline(onlineNames){
+  const div = document.getElementById("onlineList");
+  document.getElementById("onlineCount").textContent = onlineNames.length;
+  if(!onlineNames.length){
+    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">暂无在线</div>';
+    return;
+  }
+  // Check which are already mapped
+  const mappedRaws = new Set(membersData.map(m => m.raw_name.toLowerCase().replace(/\\s+/g, '')));
+  div.innerHTML = onlineNames.map(n => {
+    const key = n.toLowerCase().replace(/\\s+/g, '');
+    const isMapped = mappedRaws.has(key);
+    if(isMapped){
+      // Find display name
+      const member = membersData.find(m => m.raw_name.toLowerCase().replace(/\\s+/g, '') === key);
+      const dn = member ? member.display_name : n;
+      return `<div class="mi" style="cursor:default">
+        <span class="md" style="background:var(--sc)"></span>
+        <span class="mn">${esc(dn)}</span>
+        <span class="ms">✅</span>
+      </div>`;
+    } else {
+      return `<div class="mi" onclick="openQuickMap('${esc(n)}')">
+        <span class="md" style="background:var(--wa)"></span>
+        <span class="mn">${esc(n)}</span>
+        <button class="ma">快速映射</button>
+      </div>`;
     }
-  }
-  document.getElementById("onlineCount").textContent = v3.data?.total_online || 0;
-  if(onlineParts.length){
-    onlineDiv.innerHTML = onlineParts.map(p => {
-      const cnt = p.count_enabled !== false ? '' : '<span class="ms" style="color:var(--wa)">不计入</span>';
-      return `<div class="mi" style="cursor:default"><span class="md" style="background:var(--sc)"></span><span class="mn">${p.name}</span><span class="ms">${p.online_display||''}</span>${cnt}</div>`;
-    }).join("");
-  } else {
-    onlineDiv.innerHTML = '<div style="text-align:center;padding:16px;color:var(--tm);font-size:12px">暂无在线</div>';
-  }
+  }).join("");
 }
 
-function openMap(name){
-  mappingZoomName = name;
-  document.getElementById("mapZoomName").textContent = name;
-  document.getElementById("mapNewName").value = name; // default to same name
-  
-  // Populate existing members
-  const sel = document.getElementById("mapTarget");
-  sel.innerHTML = '<option value="__new__">新建成员</option>';
-  if(aliasesData && aliasesData.aliases){
-    const cans = [...new Set(aliasesData.aliases.map(a => a.canonical_name))].sort();
-    cans.forEach(c => {
-      const opt = document.createElement("option");
-      opt.value = c;
-      opt.textContent = c;
-      sel.appendChild(opt);
-    });
+// ── Main Modal: Create / Edit Member ─────────────────────────────────
+function openMapModal(rawName){
+  currentModalRawName = rawName;
+  currentModalMember = null;
+  document.getElementById("modalTitle").textContent = "新建成员映射";
+  document.getElementById("modalRawName").value = rawName;
+  document.getElementById("modalRawName").readOnly = true;
+  document.getElementById("modalDisplayName").value = rawName;
+  pendingAliases = [];
+  renderPendingAliases();
+  document.getElementById("memberModal").style.display = "flex";
+  document.getElementById("modalDisplayName").focus();
+}
+
+function editMember(displayName){
+  const member = membersData.find(m => m.display_name === displayName);
+  if(!member) return;
+  currentModalRawName = member.raw_name;
+  currentModalMember = member;
+  document.getElementById("modalTitle").textContent = "编辑成员: " + displayName;
+  document.getElementById("modalRawName").value = member.raw_name;
+  document.getElementById("modalRawName").readOnly = false;
+  document.getElementById("modalDisplayName").value = member.display_name;
+  pendingAliases = [...(member.aliases || [])];
+  renderPendingAliases();
+  document.getElementById("memberModal").style.display = "flex";
+}
+
+function closeMemberModal(){
+  document.getElementById("memberModal").style.display = "none";
+}
+
+function addAlias(){
+  const input = document.getElementById("modalAliasInput");
+  const val = input.value.trim();
+  if(!val) return;
+  if(pendingAliases.includes(val)){
+    input.value = "";
+    return;
   }
-  sel.value = "__new__";
-  document.getElementById("mapNewField").style.display = "block";
-  document.getElementById("mapModal").style.display = "flex";
+  pendingAliases.push(val);
+  input.value = "";
+  renderPendingAliases();
 }
 
-function closeMap(){
-  document.getElementById("mapModal").style.display = "none";
+function removeAlias(idx){
+  pendingAliases.splice(idx, 1);
+  renderPendingAliases();
 }
 
-document.getElementById("mapTarget").addEventListener("change", function(){
-  document.getElementById("mapNewField").style.display = this.value === "__new__" ? "block" : "none";
-});
+function renderPendingAliases(){
+  const div = document.getElementById("modalAliasList");
+  if(!pendingAliases.length){
+    div.innerHTML = '<span style="font-size:10px;color:var(--tm)">暂无别名</span>';
+    return;
+  }
+  div.innerHTML = pendingAliases.map((a, i) =>
+    `<span class="alias-item">${esc(a)}<span class="rm-alias" onclick="removeAlias(${i})">✕</span></span>`
+  ).join("");
+}
 
-async function doMap(){
-  const target = document.getElementById("mapTarget").value;
-  const canonical = target === "__new__" ? document.getElementById("mapNewName").value.trim() : target;
-  const countEnabled = document.getElementById("mapCountEnabled").checked ? 1 : 0;
-  if(!canonical) return alert("请输入成员名称");
-  
-  const r = await fetch("/api/v3/aliases/map", {
+async function saveMember(){
+  const rawName = document.getElementById("modalRawName").value.trim();
+  const displayName = document.getElementById("modalDisplayName").value.trim();
+  if(!rawName || !displayName) return alert("请填写完整");
+  const r = await fetch("/api/v3/members", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({zoom_name: mappingZoomName, canonical_name: canonical, count_enabled: countEnabled})
+    body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: pendingAliases})
   });
   const d = await r.json();
   if(d.ok){
-    closeMap();
+    closeMemberModal();
     loadAll();
   } else {
-    alert(d.error || "映射失败");
+    alert(d.error || "保存失败");
   }
 }
 
-async function delAlias(id){
-  if(!confirm("删除此别名？")) return;
-  await fetch("/api/v3/aliases/"+id, {method: "DELETE"});
-  loadAll();
+async function deleteMember(displayName){
+  if(!confirm("确定删除成员「" + displayName + "」？此操作不可撤销。")) return;
+  const r = await fetch("/api/v3/members/" + encodeURIComponent(displayName), {method: "DELETE"});
+  const d = await r.json();
+  if(d.ok){
+    loadAll();
+  } else {
+    alert(d.error || "删除失败");
+  }
 }
 
+// ── Quick Map Modal ──────────────────────────────────────────────────
+function openQuickMap(name){
+  quickMapName = name;
+  document.getElementById("quickMapName").textContent = name;
+  document.getElementById("quickMapNewName").value = name;
+  // Populate existing members
+  const sel = document.getElementById("quickMapTarget");
+  sel.innerHTML = '<option value="__new__">— 新建成员 —</option>';
+  membersData.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m.display_name;
+    opt.textContent = m.display_name + " (" + m.raw_name + ")";
+    sel.appendChild(opt);
+  });
+  sel.value = "__new__";
+  document.getElementById("quickMapNewField").style.display = "block";
+  document.getElementById("quickMapModal").style.display = "flex";
+}
+
+function closeQuickMap(){
+  document.getElementById("quickMapModal").style.display = "none";
+}
+
+document.addEventListener("change", function(e){
+  if(e.target.id === "quickMapTarget"){
+    document.getElementById("quickMapNewField").style.display =
+      e.target.value === "__new__" ? "block" : "none";
+  }
+});
+
+async function doQuickMap(){
+  const target = document.getElementById("quickMapTarget").value;
+  let rawName, displayName;
+  if(target === "__new__"){
+    displayName = document.getElementById("quickMapNewName").value.trim();
+    if(!displayName) return alert("请输入成员名称");
+    rawName = quickMapName;
+  } else {
+    // Find existing member by display_name
+    const member = membersData.find(m => m.display_name === target);
+    if(!member) return alert("未找到成员");
+    // Create a new entry with this online name as raw_name pointing to existing display_name
+    rawName = quickMapName;
+    displayName = member.display_name;
+    // Also add quickMapName as an alias to the existing member
+    const existingAliases = member.aliases || [];
+    if(!existingAliases.includes(quickMapName)){
+      existingAliases.push(quickMapName);
+    }
+    // Update the existing member to include this alias
+    const r = await fetch("/api/v3/members", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        raw_name: member.raw_name,
+        display_name: member.display_name,
+        aliases: existingAliases
+      })
+    });
+    const d = await r.json();
+    if(d.ok){
+      closeQuickMap();
+      loadAll();
+    } else {
+      alert(d.error || "映射失败");
+    }
+    return;
+  }
+
+  // New member
+  const r = await fetch("/api/v3/members", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: []})
+  });
+  const d = await r.json();
+  if(d.ok){
+    closeQuickMap();
+    loadAll();
+  } else {
+    alert(d.error || "保存失败");
+  }
+}
+
+// ── Utilities ────────────────────────────────────────────────────────
+function esc(s){
+  if(!s) return "";
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// ── Init ─────────────────────────────────────────────────────────────
 loadAll();
 </script>
 {% endblock %}
