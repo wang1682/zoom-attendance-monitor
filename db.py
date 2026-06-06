@@ -212,6 +212,27 @@ def init_db(readonly: bool = False):
 
         "CREATE INDEX IF NOT EXISTS idx_telegram_channels_chat ON telegram_channels(chat_id)",
 
+
+        "CREATE TABLE IF NOT EXISTS member_groups ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  name TEXT NOT NULL UNIQUE,"
+        "  description TEXT DEFAULT '',"
+        "  created_at TEXT,"
+        "  updated_at TEXT"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_member_groups_name ON member_groups(name)",
+
+        "CREATE TABLE IF NOT EXISTS member_group_members ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  group_id INTEGER NOT NULL REFERENCES member_groups(id),"
+        "  member_name TEXT NOT NULL,"
+        "  created_at TEXT,"
+        "  UNIQUE(group_id, member_name)"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_mgm_group ON member_group_members(group_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mgm_member ON member_group_members(member_name)",
         "CREATE TABLE IF NOT EXISTS audit_logs ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
         "  action TEXT NOT NULL,"
@@ -241,6 +262,7 @@ def init_db(readonly: bool = False):
 
     # seed default telegram alert rules
     if not readonly: seed_telegram_rules()
+    if not readonly: seed_member_groups()
 
     # seed default telegram channel
     _seed_default_telegram_channel()
@@ -789,6 +811,115 @@ def delete_telegram_channel(chat_id: str) -> bool:
               f"Deleted channel: {existing[1]} (chat_id={chat_id})")
     return True
 
+
+
+
+# ── Member Groups ─────────────────────────────────────────────────────────
+
+DEFAULT_MEMBER_GROUPS = [
+    {"name": "核销", "description": "核销组成员"},
+    {"name": "推进", "description": "推进组成员"},
+]
+
+
+def seed_member_groups():
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    for g in DEFAULT_MEMBER_GROUPS:
+        conn.execute(
+            "INSERT OR IGNORE INTO member_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (g["name"], g["description"], now, now),
+        )
+    conn.commit()
+
+
+def get_member_group(member_name: str) -> str | None:
+    if not member_name:
+        return None
+    conn = _get_conn()
+    name = member_name.strip().lower().replace(" ", "")
+    row = conn.execute(
+        "SELECT g.name FROM member_groups g "
+        "JOIN member_group_members m ON m.group_id = g.id "
+        "WHERE REPLACE(LOWER(TRIM(m.member_name)), ' ', '') = ?",
+        (name,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def get_all_groups() -> list[dict]:
+    conn = _get_conn()
+    groups = conn.execute(
+        "SELECT * FROM member_groups ORDER BY name"
+    ).fetchall()
+    result = []
+    for g in groups:
+        gd = dict(g)
+        members = conn.execute(
+            "SELECT member_name FROM member_group_members WHERE group_id = ? ORDER BY member_name",
+            (gd["id"],),
+        ).fetchall()
+        gd["members"] = [m[0] for m in members]
+        result.append(gd)
+    return result
+
+
+def add_member_to_group(group_id: int, member_name: str) -> bool:
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO member_group_members (group_id, member_name, created_at) VALUES (?, ?, ?)",
+            (group_id, member_name.strip(), now),
+        )
+        conn.commit()
+        log_audit("create", "member_group_member", group_id,
+                  f"Added member {member_name} to group {group_id}")
+        return True
+    except Exception:
+        return False
+
+
+def remove_member_from_group(group_id: int, member_name: str) -> bool:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "DELETE FROM member_group_members WHERE group_id = ? AND member_name = ?",
+            (group_id, member_name.strip()),
+        )
+        conn.commit()
+        log_audit("delete", "member_group_member", group_id,
+                  f"Removed member {member_name} from group {group_id}")
+        return True
+    except Exception:
+        return False
+
+
+def delete_member_group(group_id: int) -> bool:
+    conn = _get_conn()
+    try:
+        conn.execute("DELETE FROM member_group_members WHERE group_id = ?", (group_id,))
+        conn.execute("DELETE FROM member_groups WHERE id = ?", (group_id,))
+        conn.commit()
+        log_audit("delete", "member_group", group_id, "Deleted group")
+        return True
+    except Exception:
+        return False
+
+
+def update_member_group(group_id: int, name: str, description: str = "") -> bool:
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "UPDATE member_groups SET name = ?, description = ?, updated_at = ? WHERE id = ?",
+            (name, description, now, group_id),
+        )
+        conn.commit()
+        log_audit("update", "member_group", group_id, f"Updated group: {name}")
+        return True
+    except Exception:
+        return False
 
 def normalize_identity_name(name: str) -> str:
     """归一化姓名：去空格、大小写、连字符"""

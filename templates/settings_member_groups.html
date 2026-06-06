@@ -1,0 +1,149 @@
+<!-- TEMPLATE: settings_member_groups.html -->
+{% extends "base.html" %}
+{% block title %}成员分组管理{% endblock %}
+{% block head %}
+<style>
+.mg-container{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+@media(max-width:800px){.mg-container{grid-template-columns:1fr}}
+.mg-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px}
+.mg-card h3{font-size:14px;font-weight:600;margin:0 0 12px;color:var(--text);display:flex;align-items:center;justify-content:space-between}
+.mg-card h3 .badge{font-size:11px;font-weight:400;color:var(--tm);background:var(--bg);padding:2px 8px;border-radius:10px}
+.mg-group-item{padding:8px 10px;margin-bottom:6px;border-radius:8px;border:1px solid var(--cb);background:var(--bg);cursor:pointer;transition:background .1s}
+.mg-group-item:hover{background:var(--rh)}
+.mg-group-item .g-name{font-size:13px;font-weight:500;color:var(--text)}
+.mg-group-item .g-desc{font-size:11px;color:var(--tm);margin-top:2px}
+.mg-group-item .g-count{font-size:11px;color:var(--ts);margin-top:2px}
+.mg-member-item{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;border-radius:4px;font-size:13px}
+.mg-member-item:hover{background:var(--rh)}
+.mg-member-item .del-btn{font-size:10px;color:var(--da);cursor:pointer;padding:2px 6px;border-radius:3px;opacity:0;transition:opacity .1s}
+.mg-member-item:hover .del-btn{opacity:1}
+.mg-member-item .del-btn:hover{background:var(--da-b)}
+.form-row{display:flex;gap:8px;margin-bottom:8px}
+.form-row input{flex:1;padding:7px 10px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--text);font-size:13px}
+.btn{padding:7px 14px;border-radius:6px;border:none;font-size:13px;cursor:pointer;font-weight:500}
+.btn-primary{background:var(--pr);color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-sm{padding:4px 10px;font-size:11px}
+.btn-danger{background:var(--da);color:#fff}
+.btn-ghost{background:transparent;color:var(--ts);border:1px solid var(--cb)}
+.btn-ghost:hover{background:var(--rh)}
+.mg-detail{margin-top:8px;padding:8px;background:var(--bg);border-radius:8px;border:1px solid var(--cb);display:none}
+.mg-detail.open{display:block}
+.empty-state{text-align:center;padding:20px;color:var(--tm);font-size:12px}
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-container">
+<div class="page-header"><h1 class="page-title">成员分组管理</h1><p class="page-subtitle">管理分组讨论室中的成员分组</p></div>
+
+<div class="mg-container">
+  <!-- Left: Groups list -->
+  <div class="mg-card">
+    <h3><span>分组列表</span><span class="badge" id="groupCount">0</span></h3>
+    <div class="form-row">
+      <input type="text" id="newGroupName" placeholder="分组名称" />
+      <input type="text" id="newGroupDesc" placeholder="描述（可选）" />
+      <button class="btn btn-primary btn-sm" onclick="createGroup()">创建</button>
+    </div>
+    <div id="groupList"><div class="empty-state">加载中...</div></div>
+  </div>
+
+  <!-- Right: Selected group members -->
+  <div class="mg-card">
+    <h3><span id="detailTitle">成员列表</span><span class="badge" id="memberCount">0</span></h3>
+    <div class="form-row" id="addMemberRow" style="display:none">
+      <input type="text" id="newMemberName" placeholder="成员名称" />
+      <button class="btn btn-primary btn-sm" onclick="addMember()">添加</button>
+    </div>
+    <div id="memberList"><div class="empty-state">请选择一个分组</div></div>
+  </div>
+</div>
+</div>
+
+<script>
+let groups = {{ groups|tojson|safe }};
+let selectedGroupId = null;
+
+function renderGroups() {
+  const el = document.getElementById('groupList');
+  document.getElementById('groupCount').textContent = groups.length;
+  if (groups.length === 0) {
+    el.innerHTML = '<div class="empty-state">暂无分组，请创建</div>';
+    return;
+  }
+  el.innerHTML = groups.map(g => `
+    <div class="mg-group-item ${selectedGroupId === g.id ? 'mg-selected' : ''}" onclick="selectGroup(${g.id})">
+      <div class="g-name">${escHtml(g.name)}</div>
+      ${g.description ? `<div class="g-desc">${escHtml(g.description)}</div>` : ''}
+      <div class="g-count">${g.members ? g.members.length : 0} 名成员</div>
+    </div>
+  `).join('');
+  if (selectedGroupId) selectGroup(selectedGroupId);
+}
+
+function selectGroup(id) {
+  selectedGroupId = id;
+  const g = groups.find(x => x.id === id);
+  if (!g) return;
+  document.getElementById('detailTitle').textContent = `${escHtml(g.name)} - 成员`;
+  document.getElementById('memberCount').textContent = g.members ? g.members.length : 0;
+  document.getElementById('addMemberRow').style.display = 'flex';
+  const ml = document.getElementById('memberList');
+  if (!g.members || g.members.length === 0) {
+    ml.innerHTML = '<div class="empty-state">暂无成员</div>';
+  } else {
+    ml.innerHTML = g.members.map(m => `
+      <div class="mg-member-item">
+        <span>${escHtml(m)}</span>
+        <span class="del-btn" onclick="removeMember(${g.id}, '${escHtml(m)}')">✕ 移除</span>
+      </div>
+    `).join('');
+  }
+  renderGroups();
+}
+
+async function createGroup() {
+  const name = document.getElementById('newGroupName').value.trim();
+  if (!name) return alert('请输入分组名称');
+  const desc = document.getElementById('newGroupDesc').value.trim();
+  const r = await fetch('/api/v3/member-groups', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, description: desc})});
+  const d = await r.json();
+  if (!d.ok) return alert('创建失败: ' + (d.error || ''));
+  document.getElementById('newGroupName').value = '';
+  document.getElementById('newGroupDesc').value = '';
+  await refreshGroups();
+}
+
+async function refreshGroups() {
+  const r = await fetch('/api/v3/member-groups');
+  const d = await r.json();
+  if (d.ok) { groups = d.groups; renderGroups(); }
+}
+
+async function addMember() {
+  if (!selectedGroupId) return;
+  const name = document.getElementById('newMemberName').value.trim();
+  if (!name) return alert('请输入成员名称');
+  const r = await fetch(`/api/v3/member-groups/${selectedGroupId}/members`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({member_name: name})});
+  const d = await r.json();
+  if (!d.ok) return alert('添加失败: ' + (d.error || ''));
+  document.getElementById('newMemberName').value = '';
+  await refreshGroups();
+}
+
+async function removeMember(gid, name) {
+  if (!confirm(`确定移除 "${name}"？`)) return;
+  const r = await fetch(`/api/v3/member-groups/${gid}/members/${encodeURIComponent(name)}`, {method:'DELETE'});
+  const d = await r.json();
+  if (!d.ok) return alert('移除失败');
+  await refreshGroups();
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+renderGroups();
+</script>
+{% endblock %}

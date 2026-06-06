@@ -170,7 +170,7 @@ def build_app() -> "FastAPI":
             if settings.demo_mode:
                 _ensure_demo().seed_demo_data()
             else:
-                db.init_db(os.environ.get("DB_READONLY") == "true")
+                db.init_db()
             DB_INITED = True
         response = await call_next(request)
         return response
@@ -469,18 +469,12 @@ def build_app() -> "FastAPI":
 
         discovered = []
         for (event_type,) in rows:
-            # 去除 meeting. 前缀（规则表存的是不带前缀的）
             if event_type in existing:
                 continue
-            _short = event_type.split(".", 1)[-1] if event_type.startswith("meeting.") else event_type
-            if _short in existing:
+            # 排除测试事件
+            if event_type in ("concurrent_test",) or event_type.startswith("test.") or event_type.startswith("test_"):
                 continue
-            # 排除测试事件和已覆盖的子事件
-            if event_type.startswith("concurrent_test") or event_type.startswith("test.") or event_type.startswith("test_"):
-                continue
-            if "breakout_room_sharing" in event_type:
-                continue
-            title = title_map.get(event_type, _short)
+            title = title_map.get(event_type, event_type.rsplit(".", 1)[-1])
             discovered.append({"event_type": event_type, "title": title})
 
         return {"ok": True, "discovered": discovered}
@@ -491,6 +485,75 @@ def build_app() -> "FastAPI":
         return tmpl.TemplateResponse(request, "settings_telegram_rules.html", {
             "brand": BRAND,
             "rules": rules,
+        })
+
+    # ── Member Groups API ─────────────────────────────────────────────────
+
+    @app.get("/api/v3/member-groups")
+    async def api_v3_get_member_groups():
+        """获取所有成员分组"""
+        groups = db.get_all_groups()
+        return {"ok": True, "groups": groups}
+
+    @app.post("/api/v3/member-groups")
+    async def api_v3_create_member_group(request: Request):
+        """创建成员分组"""
+        data = await request.json()
+        name = data.get("name", "").strip()
+        description = data.get("description", "").strip()
+        if not name:
+            return {"ok": False, "error": "name is required"}
+        conn = db._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        cur = conn.execute(
+            "INSERT INTO member_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (name, description, now, now),
+        )
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+
+    @app.put("/api/v3/member-groups/{group_id}")
+    async def api_v3_update_member_group(group_id: int, request: Request):
+        """更新成员分组"""
+        data = await request.json()
+        name = data.get("name", "").strip()
+        description = data.get("description", "").strip()
+        if not name:
+            return {"ok": False, "error": "name is required"}
+        ok = db.update_member_group(group_id, name, description)
+        return {"ok": ok}
+
+    @app.delete("/api/v3/member-groups/{group_id}")
+    async def api_v3_delete_member_group(group_id: int):
+        """删除成员分组"""
+        ok = db.delete_member_group(group_id)
+        return {"ok": ok}
+
+    @app.post("/api/v3/member-groups/{group_id}/members")
+    async def api_v3_add_member(group_id: int, request: Request):
+        """向分组添加成员"""
+        data = await request.json()
+        member_name = data.get("member_name", "").strip()
+        if not member_name:
+            return {"ok": False, "error": "member_name is required"}
+        ok = db.add_member_to_group(group_id, member_name)
+        return {"ok": ok}
+
+    @app.delete("/api/v3/member-groups/{group_id}/members/{member_name}")
+    async def api_v3_remove_member(group_id: int, member_name: str):
+        """从分组移除成员"""
+        import urllib.parse
+        member_name = urllib.parse.unquote(member_name)
+        ok = db.remove_member_from_group(group_id, member_name)
+        return {"ok": ok}
+
+    @app.get("/settings/member-groups", response_class=HTMLResponse)
+    async def settings_member_groups_page(request: Request):
+        """成员分组配置页面"""
+        groups = db.get_all_groups()
+        return tmpl.TemplateResponse(request, "settings_member_groups.html", {
+            "brand": BRAND,
+            "groups": groups,
         })
 
     # ─────────────────────────────────────────────────────────────────────
@@ -804,10 +867,21 @@ def build_app() -> "FastAPI":
                 push_event = "unknown"
                 push_icon = "ℹ️"
                 push_title = ""
-                if "participant_joined" in event_type and "waiting_room" not in event_type:
+                if "breakout_room" in event_type:
+                    # Check for breakout room events first
+                    group_name = db.get_member_group(ename)
+                    if "participant_joined" in event_type:
+                        push_event = "participant_joined_breakout_room"
+                        push_icon = "📌"
+                        push_title = f"加入【{group_name}】分组讨论室" if group_name else "加入分组讨论室"
+                    elif "participant_left" in event_type:
+                        push_event = "participant_left_breakout_room"
+                        push_icon = "🚪"
+                        push_title = f"离开【{group_name}】分组讨论室" if group_name else "离开分组讨论室"
+                elif "participant_joined" in event_type and "waiting_room" not in event_type:
                     push_event = "participant_joined"
                     push_icon = "📌"
-                    push_title = "会议有新人加入"
+                    push_title = "进入主会议"
                 elif "participant_left" in event_type:
                     push_event = "participant_left"
                     push_icon = "🚪"
@@ -850,23 +924,7 @@ def build_app() -> "FastAPI":
                             content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                             extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
                             text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                            # Resolve target channel from rule target_channel_id
-                            target_chat_id = None
-                            try:
-                                rule = p_conn.execute(
-                                    "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
-                                    (push_event,)
-                                ).fetchone()
-                                if rule:
-                                    rule = dict(rule)
-                                    tc_id = rule.get("target_channel_id")
-                                    if tc_id is not None:
-                                        ch = db.get_telegram_channel_by_id(tc_id)
-                                        if ch and ch.get("enabled"):
-                                            target_chat_id = ch["chat_id"]
-                            except Exception:
-                                pass
-                            result = send_message(text, chat_id=target_chat_id)
+                            result = send_message(text)
                             sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
                             sys.stderr.flush()
                             if result.get("ok"):
@@ -1006,52 +1064,7 @@ def build_app() -> "FastAPI":
         conn.commit()
         return {"ok": True}
 
-    # --- Telegram Channels API ---
 
-    @app.get("/api/v3/telegram-channels")
-    async def api_v3_get_telegram_channels():
-        channels = db.get_telegram_channels()
-        return {"ok": True, "channels": channels}
-
-    @app.post("/api/v3/telegram-channels")
-    async def api_v3_create_telegram_channel(request: Request):
-        data = await request.json()
-        channel_id = db.upsert_telegram_channel(data)
-        return {"ok": True, "id": channel_id}
-
-    @app.put("/api/v3/telegram-channels/{chat_id}")
-    async def api_v3_update_telegram_channel(chat_id: str, request: Request):
-        data = await request.json()
-        data["chat_id"] = chat_id
-        channel_id = db.upsert_telegram_channel(data)
-        return {"ok": True, "id": channel_id}
-
-    @app.delete("/api/v3/telegram-channels/{chat_id}")
-    async def api_v3_delete_telegram_channel(chat_id: str):
-        db.delete_telegram_channel(chat_id)
-        return {"ok": True}
-
-    @app.post("/api/v3/telegram-channels/{chat_id}/test")
-    async def api_v3_test_telegram_channel(chat_id: str):
-        channel = db.get_telegram_channel(chat_id)
-        if not channel:
-            return {"ok": False, "error": "channel not found"}
-        name = channel.get("name", "")
-        from telegram_push import send_message
-        result = send_message(chat_id=chat_id, text="✅ 这是一条测试消息\n\n频道：" + name + "\nID：" + chat_id + "\n\n如果收到此消息，说明 Telegram 通知配置正确。"
-        )
-        ok = result.get("ok", False)
-        db.log_audit("test", "telegram_channel", chat_id,
-                      f"Test message sent to channel {name} ({chat_id}): success={ok}")
-        return {"ok": True, "message": "测试消息发送成功"}
-
-    @app.get("/settings/telegram-channels", response_class=HTMLResponse)
-    async def settings_telegram_channels_page(request: Request):
-        channels = db.get_telegram_channels()
-        return tmpl.TemplateResponse(request, "settings_telegram_channels.html", {
-            "brand": BRAND,
-            "channels": channels,
-        })
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live():
@@ -2474,7 +2487,7 @@ def start_monitor():
             sys.stdout.flush()
         return
     settings.validate_required()
-    db.init_db(os.environ.get("DB_READONLY") == "true")
+    db.init_db()
     from monitor import monitor_loop
     asyncio.run(monitor_loop())
 
