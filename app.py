@@ -551,10 +551,12 @@ def build_app() -> "FastAPI":
     async def settings_member_groups_page(request: Request):
         """成员分组配置页面"""
         groups = db.get_all_groups()
-        return tmpl.TemplateResponse(request, "settings_member_groups.html", {
+        rendered = tmpl.TemplateResponse(request, "settings_member_groups.html", {
             "brand": BRAND,
             "groups": groups,
         })
+        rendered.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        return rendered
 
     # ─────────────────────────────────────────────────────────────────────
 
