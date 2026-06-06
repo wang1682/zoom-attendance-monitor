@@ -148,7 +148,7 @@ renderGroups();
 n// 加载历史用户名
 async function loadHistoryNames() {
   try {
-    const r = await fetch("/api/v3/member-aliases/discover");
+    const r = await fetch("/api/v3/member-names");
     const j = await r.json();
     const dl = document.getElementById("historyNames");
     if (!dl) return;

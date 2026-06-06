@@ -1029,6 +1029,14 @@ def build_app() -> "FastAPI":
 
 
 
+    @app.get("/api/v3/member-names")
+    async def api_v3_member_names():
+        """返回所有历史用户名（去重）"""
+        conn = db._get_conn()
+        rows = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
+        names = [r[0] for r in rows]
+        return {"ok": True, "names": names}
+
     @app.get("/api/v3/aliases/discover")
     async def api_v3_discover():
         """自动发现历史 Zoom 用户名，统计出现次数和是否在线"""
@@ -1053,9 +1061,16 @@ def build_app() -> "FastAPI":
             configured_aliases.add(alias_name.strip().lower().replace(" ", ""))
         
         # 当前在线（来自 v3）
+        unmapped_set = set()
         from zoom_metrics import ZoomMetrics
         zm = ZoomMetrics()
         live_data = await zm.get_live()
+        # 补充来源：所有 zoom_participants 中出现过的用户名
+        _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
+        for (an,) in _all_names:
+            _ak = an.strip().lower().replace(" ", "")
+            if _ak not in configured_aliases:
+                unmapped_set.add(an)
         online_names = set()
         for m in live_data.get("meetings", []):
             for p in m.get("participants", []):
