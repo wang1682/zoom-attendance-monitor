@@ -990,7 +990,53 @@ def build_app() -> "FastAPI":
         conn.commit()
         return {"ok": True}
 
+    # --- Telegram Channels API ---
 
+    @app.get("/api/v3/telegram-channels")
+    async def api_v3_get_telegram_channels():
+        channels = db.get_telegram_channels()
+        return {"ok": True, "channels": channels}
+
+    @app.post("/api/v3/telegram-channels")
+    async def api_v3_create_telegram_channel(request: Request):
+        data = await request.json()
+        channel_id = db.upsert_telegram_channel(data)
+        return {"ok": True, "id": channel_id}
+
+    @app.put("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_update_telegram_channel(chat_id: str, request: Request):
+        data = await request.json()
+        data["chat_id"] = chat_id
+        channel_id = db.upsert_telegram_channel(data)
+        return {"ok": True, "id": channel_id}
+
+    @app.delete("/api/v3/telegram-channels/{chat_id}")
+    async def api_v3_delete_telegram_channel(chat_id: str):
+        db.delete_telegram_channel(chat_id)
+        return {"ok": True}
+
+    @app.post("/api/v3/telegram-channels/{chat_id}/test")
+    async def api_v3_test_telegram_channel(chat_id: str):
+        channel = db.get_telegram_channel(chat_id)
+        if not channel:
+            return {"ok": False, "error": "channel not found"}
+        name = channel.get("name", "")
+        from telegram_push import send_message
+        result = send_message(
+            "✅ 这是一条测试消息\n\n频道：" + name + "\nID：" + chat_id + "\n\n如果收到此消息，说明 Telegram 通知配置正确。"
+        )
+        ok = result.get("ok", False)
+        db.log_audit("test", "telegram_channel", chat_id,
+                      f"Test message sent to channel {name} ({chat_id}): success={ok}")
+        return {"ok": True, "message": "测试消息发送成功"}
+
+    @app.get("/settings/telegram-channels", response_class=HTMLResponse)
+    async def settings_telegram_channels_page(request: Request):
+        channels = db.get_telegram_channels()
+        return tmpl.TemplateResponse(request, "settings_telegram_channels.html", {
+            "brand": BRAND,
+            "channels": channels,
+        })
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live():
