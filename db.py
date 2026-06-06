@@ -260,6 +260,42 @@ def init_db(readonly: bool = False):
     except Exception:
         pass
 
+    # migrate: add group_id column to member_display
+    try:
+        conn.execute("ALTER TABLE member_display ADD COLUMN group_id INTEGER DEFAULT NULL")
+    except Exception:
+        pass
+
+    # migrate: move member_group_members data to member_display.group_id
+    try:
+        rows = conn.execute(
+            "SELECT mgm.group_id, mgm.member_name FROM member_group_members mgm "
+            "LEFT JOIN member_display md ON md.raw_name = mgm.member_name "
+            "WHERE md.id IS NOT NULL"
+        ).fetchall()
+        for gid, mname in rows:
+            conn.execute(
+                "UPDATE member_display SET group_id = ? WHERE raw_name = ? AND (group_id IS NULL OR group_id != ?)",
+                (gid, mname, gid),
+            )
+        # For members not yet in member_display, create placeholder entries
+        rows2 = conn.execute(
+            "SELECT mgm.group_id, mgm.member_name FROM member_group_members mgm "
+            "LEFT JOIN member_display md ON md.raw_name = mgm.member_name "
+            "WHERE md.id IS NULL"
+        ).fetchall()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        for gid, mname in rows2:
+            match_key = mname.strip().lower().replace(" ", "")
+            conn.execute(
+                "INSERT OR IGNORE INTO member_display (raw_name, display_name, match_key, group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (mname, mname, match_key, gid, now, now),
+            )
+        conn.commit()
+    except Exception:
+        pass
+
     # seed default telegram alert rules
     if not readonly: seed_telegram_rules()
     if not readonly: seed_member_groups()
@@ -838,6 +874,18 @@ def get_member_group(member_name: str) -> str | None:
         return None
     conn = _get_conn()
     name = member_name.strip().lower().replace(" ", "")
+    # 优先从 member_display.group_id 读取（新方式）
+    row = conn.execute(
+        "SELECT g.name FROM member_groups g "
+        "JOIN member_display md ON md.group_id = g.id "
+        "WHERE (REPLACE(LOWER(TRIM(md.raw_name)), ' ', '') = ? "
+        "   OR REPLACE(LOWER(TRIM(md.display_name)), ' ', '') = ?) "
+        "AND md.group_id IS NOT NULL",
+        (name, name),
+    ).fetchone()
+    if row:
+        return row[0]
+    # 回退：兼容旧 member_group_members 表数据
     row = conn.execute(
         "SELECT g.name FROM member_groups g "
         "JOIN member_group_members m ON m.group_id = g.id "
@@ -868,6 +916,24 @@ def add_member_to_group(group_id: int, member_name: str) -> bool:
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     try:
+        # 新方式：写入 member_display.group_id
+        # 先确保 member_display 中有该成员
+        existing = conn.execute(
+            "SELECT id FROM member_display WHERE raw_name = ?",
+            (member_name.strip(),),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE member_display SET group_id = ?, updated_at = ? WHERE id = ?",
+                (group_id, now, existing[0]),
+            )
+        else:
+            match_key = member_name.strip().lower().replace(" ", "")
+            conn.execute(
+                "INSERT INTO member_display (raw_name, display_name, match_key, group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (member_name.strip(), member_name.strip(), match_key, group_id, now, now),
+            )
+        # 旧方式：同时写入 member_group_members 保持兼容
         conn.execute(
             "INSERT OR IGNORE INTO member_group_members (group_id, member_name, created_at) VALUES (?, ?, ?)",
             (group_id, member_name.strip(), now),

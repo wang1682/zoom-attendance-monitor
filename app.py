@@ -558,7 +558,13 @@ def build_app() -> "FastAPI":
         rendered.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         return rendered
 
-    # ─────────────────────────────────────────────────────────────────────
+
+    @app.get("/settings/groups", response_class=HTMLResponse)
+    async def settings_groups_page(request: Request):
+        """分组名称管理"""
+        return tmpl.TemplateResponse(request, "settings_groups.html", {
+            "brand": BRAND,
+        })
 
     @app.get("/settings/system", response_class=HTMLResponse)
     async def settings_system_page(request: Request):
