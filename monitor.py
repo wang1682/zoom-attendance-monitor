@@ -235,6 +235,7 @@ async def monitor_loop():
                         _lines.append("\u6682\u65e0\u5728\u7ebf\u6210\u5458")
                     _lines.append("")
                     _lines.append("\U0001f4ca \u5171 " + str(len(_v2_names)) + " \u4eba\u5728\u7ebf")
+                    _lines.append("#source: api_v2_live")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
