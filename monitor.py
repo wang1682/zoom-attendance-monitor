@@ -216,7 +216,7 @@ async def monitor_loop():
                     import httpx
                     _v2_names = []
                     try:
-                        _v2r = httpx.get("http://localhost:8000/api/v2/live", timeout=10)
+                        _v2r = httpx.get("http://zoom-api:8000/api/v2/live", timeout=10)
                         if _v2r.status_code == 200:
                             _v2d = _v2r.json()
                             _v2_names = [p.get("name", "") for p in _v2d.get("online_list", [])]
