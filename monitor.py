@@ -211,12 +211,12 @@ async def monitor_loop():
                                     _online_now.add(_n)
                     except:
                         pass
-                if push_now:
+                if push_now and db.should_send_telegram("periodic_online_report"):
                     # 从 /api/v2/live 获取实时在线名单
                     import httpx
                     _v2_names = []
                     try:
-                        _v2r = httpx.get("http://zoom-api:8000/api/v2/live", timeout=10)
+                        _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
                         if _v2r.status_code == 200:
                             _v2d = _v2r.json()
                             _v2_names = [p.get("name", "") for p in _v2d.get("online_list", [])]
@@ -235,7 +235,6 @@ async def monitor_loop():
                         _lines.append("\u6682\u65e0\u5728\u7ebf\u6210\u5458")
                     _lines.append("")
                     _lines.append("\U0001f4ca \u5171 " + str(len(_v2_names)) + " \u4eba\u5728\u7ebf")
-                    _lines.append("#source: api_v2_live")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()

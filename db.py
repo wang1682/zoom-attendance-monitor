@@ -458,6 +458,7 @@ DEFAULT_TELEGRAM_RULES = [
     {"event_type": "participant_left_breakout_room",    "title": "离开分组讨论室",     "enabled": 0},
     {"event_type": "participant_joined_waiting_room",   "title": "有人在等候室",       "enabled": 1},
     {"event_type": "frequent_join_leave",                 "title": "短时间频繁进出",     "enabled": 1},
+    {"event_type": "periodic_online_report",                 "title": "定时在线报告（每3小时）", "enabled": 1},
 ]
 
 
