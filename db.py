@@ -109,6 +109,12 @@ def init_db():
         "  updated_at TEXT"
         ")",
 
+        "CREATE TABLE IF NOT EXISTS meeting_topics ("
+        "  meeting_id TEXT PRIMARY KEY,"
+        "  topic TEXT NOT NULL DEFAULT '',"
+        "  updated_at TEXT"
+        ")",
+
         "CREATE INDEX IF NOT EXISTS idx_alerts_type          ON alerts(alert_type)",
         "CREATE INDEX IF NOT EXISTS idx_alerts_created       ON alerts(created_at)",
         "CREATE TABLE IF NOT EXISTS member_aliases ("
@@ -182,6 +188,7 @@ def init_db():
         "  title TEXT NOT NULL DEFAULT '',"
         "  enabled INTEGER NOT NULL DEFAULT 1,"
         "  target_chat_id TEXT DEFAULT '',"
+        "  target_channel_id INTEGER DEFAULT NULL,"
         "  cooldown_seconds INTEGER DEFAULT 0,"
         "  quiet_enabled INTEGER DEFAULT 0,"
         "  quiet_start TEXT DEFAULT '00:00',"
@@ -225,6 +232,12 @@ def init_db():
             else:
                 raise
     conn.commit()
+
+    # migrate: add target_channel_id column if not exists (SQLite compat)
+    try:
+        conn.execute("ALTER TABLE telegram_alert_rules ADD COLUMN target_channel_id INTEGER DEFAULT NULL")
+    except Exception:
+        pass
 
     # seed default telegram alert rules
     seed_telegram_rules()
@@ -494,7 +507,7 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
     if existing:
         fields = []
         values = []
-        for key in ("title", "enabled", "target_chat_id", "cooldown_seconds",
+        for key in ("title", "enabled", "target_chat_id", "target_channel_id", "cooldown_seconds",
                      "quiet_enabled", "quiet_start", "quiet_end"):
             if key in data:
                 fields.append(f"{key} = ?")
@@ -513,14 +526,15 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
     else:
         cur = conn.execute(
             "INSERT INTO telegram_alert_rules "
-            "(event_type, title, enabled, target_chat_id, cooldown_seconds, "
+            "(event_type, title, enabled, target_chat_id, target_channel_id, cooldown_seconds, "
             " quiet_enabled, quiet_start, quiet_end, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event_type,
                 data.get("title", ""),
                 data.get("enabled", 1),
                 data.get("target_chat_id", ""),
+                data.get("target_channel_id", None),
                 data.get("cooldown_seconds", 60),
                 data.get("quiet_enabled", 0),
                 data.get("quiet_start", "00:00"),
@@ -672,6 +686,16 @@ def get_telegram_channel(chat_id: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM telegram_channels WHERE chat_id = ?",
         (chat_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_telegram_channel_by_id(channel_id: int) -> dict | None:
+    """获取指定 id 的频道"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_channels WHERE id = ?",
+        (channel_id,),
     ).fetchone()
     return dict(row) if row else None
 

@@ -39,8 +39,10 @@
         <input id="fCooldown" class="ipt" style="width:100%" type="number" value="0" min="0">
       </div>
       <div>
-        <label style="font-size:12px;color:var(--ts)">目标 Chat ID</label>
-        <input id="fChatId" class="ipt" style="width:100%" placeholder="默认">
+        <label style="font-size:12px;color:var(--ts)">推送到</label>
+        <select id="fTargetChannelId" class="ipt" style="width:100%">
+          <option value="">默认频道</option>
+        </select>
       </div>
       <div>
         <label style="font-size:12px;color:var(--ts)">静默时段启用</label>
@@ -73,6 +75,7 @@
           <th>状态</th>
           <th>冷却(秒)</th>
           <th>静默时段</th>
+          <th>推送目标</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -91,6 +94,7 @@
               —
             {% endif %}
           </td>
+          <td><span class="channel-name" data-channel-id="{{ r.target_channel_id }}">{{ r.target_channel_id or "默认" }}</span></td>
           <td>
             <button class="bt bt-s" onclick="editRule('{{ r.event_type }}')">✏️</button>
             <button class="bt bt-s bt-d" onclick="deleteRule('{{ r.event_type }}')">🗑️</button>
@@ -126,7 +130,7 @@ function showCreateForm() {
   document.getElementById('fTitle').value = '';
   document.getElementById('fEnabled').value = '1';
   document.getElementById('fCooldown').value = '0';
-  document.getElementById('fChatId').value = '';
+  document.getElementById('fTargetChannelId').value = '';
   document.getElementById('fQuietEnabled').value = '0';
   document.getElementById('fQuietStart').value = '00:00';
   document.getElementById('fQuietEnd').value = '08:00';
@@ -147,7 +151,7 @@ function editRule(eventType) {
   document.getElementById('fTitle').value = r.title || '';
   document.getElementById('fEnabled').value = r.enabled ? '1' : '0';
   document.getElementById('fCooldown').value = r.cooldown_seconds || 0;
-  document.getElementById('fChatId').value = r.target_chat_id || '';
+  document.getElementById('fTargetChannelId').value = r.target_channel_id || '';
   document.getElementById('fQuietEnabled').value = r.quiet_enabled ? '1' : '0';
   document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
   document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
@@ -162,7 +166,8 @@ async function saveRule() {
     title: document.getElementById('fTitle').value.trim(),
     enabled: parseInt(document.getElementById('fEnabled').value),
     cooldown_seconds: parseInt(document.getElementById('fCooldown').value) || 0,
-    target_chat_id: document.getElementById('fChatId').value.trim() || null,
+    target_chat_id: null,
+    target_channel_id: parseInt(document.getElementById('fTargetChannelId').value) || null,
     quiet_enabled: parseInt(document.getElementById('fQuietEnabled').value),
     quiet_start: document.getElementById('fQuietStart').value,
     quiet_end: document.getElementById('fQuietEnd').value,
@@ -226,5 +231,48 @@ async function addDiscoveredRule(eventType) {
   await fetch("/api/v3/telegram-rules", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({event_type: eventType, enabled: 0, cooldown_seconds: 60})});
   location.reload();
 }
+
+// Load channels for the dropdown and channel name display
+async function loadChannels() {
+  try {
+    const resp = await fetch('/api/v3/telegram-channels');
+    const j = await resp.json();
+    if (j.ok && j.channels) {
+      const sel = document.getElementById('fTargetChannelId');
+      // Keep the first option "默认频道"
+      sel.innerHTML = '<option value="">默认频道</option>';
+      j.channels.forEach(function(ch) {
+        const opt = document.createElement('option');
+        opt.value = ch.id;
+        opt.textContent = ch.name + (ch.is_default ? ' (默认)' : '');
+        sel.appendChild(opt);
+      });
+      // Update display names in the table
+      const channelMap = {};
+      j.channels.forEach(function(ch) { channelMap[ch.id] = ch.name; });
+      document.querySelectorAll('.channel-name').forEach(function(el) {
+        const cid = el.getAttribute('data-channel-id');
+        if (cid && channelMap[cid]) {
+          el.textContent = channelMap[cid];
+        } else if (!cid || cid === '') {
+          el.textContent = '默认';
+        }
+      });
+    }
+  } catch(e) {
+    console.error('Load channels failed:', e);
+  }
+}
+
+// Override editRule to also load channels and then populate
+const _origEditRule = editRule;
+editRule = function(eventType) {
+  loadChannels().then(function() {
+    _origEditRule(eventType);
+  });
+};
+
+// On page load, load channels
+document.addEventListener('DOMContentLoaded', loadChannels);
 </script>
 {% endblock %}

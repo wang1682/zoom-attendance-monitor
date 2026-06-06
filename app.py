@@ -850,7 +850,23 @@ def build_app() -> "FastAPI":
                             content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                             extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
                             text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                            result = send_message(text)
+                            # Resolve target channel from rule target_channel_id
+                            target_chat_id = None
+                            try:
+                                rule = p_conn.execute(
+                                    "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+                                    (push_event,)
+                                ).fetchone()
+                                if rule:
+                                    rule = dict(rule)
+                                    tc_id = rule.get("target_channel_id")
+                                    if tc_id is not None:
+                                        ch = db.get_telegram_channel_by_id(tc_id)
+                                        if ch and ch.get("enabled"):
+                                            target_chat_id = ch["chat_id"]
+                            except Exception:
+                                pass
+                            result = send_message(text, chat_id=target_chat_id)
                             sys.stderr.write("[PUSH] send result: " + str(result) + "\n")
                             sys.stderr.flush()
                             if result.get("ok"):
