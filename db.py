@@ -48,7 +48,7 @@ def _get_conn() -> sqlite3.Connection:
     return _local.conn
 
 
-def init_db():
+def init_db(readonly: bool = False):
     """建表（幂等，并发安全 — 逐语句执行 + WAL busy_timeout）"""
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = _get_conn()
@@ -240,7 +240,7 @@ def init_db():
         pass
 
     # seed default telegram alert rules
-    seed_telegram_rules()
+    if not readonly: seed_telegram_rules()
 
     # seed default telegram channel
     _seed_default_telegram_channel()

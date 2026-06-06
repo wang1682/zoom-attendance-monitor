@@ -170,7 +170,7 @@ def build_app() -> "FastAPI":
             if settings.demo_mode:
                 _ensure_demo().seed_demo_data()
             else:
-                db.init_db()
+                db.init_db(os.environ.get("DB_READONLY") == "true")
             DB_INITED = True
         response = await call_next(request)
         return response
@@ -2474,7 +2474,7 @@ def start_monitor():
             sys.stdout.flush()
         return
     settings.validate_required()
-    db.init_db()
+    db.init_db(os.environ.get("DB_READONLY") == "true")
     from monitor import monitor_loop
     asyncio.run(monitor_loop())
 

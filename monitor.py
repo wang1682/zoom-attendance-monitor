@@ -194,6 +194,29 @@ async def monitor_loop():
                 parts.append(f"离{len(leaves)}")
             detail = " ".join(parts) if parts else "无新记录"
             detail += f" {'推送' if push_now else '静默'}"
+
+            # Periodic online report every 3 hours
+            if not hasattr(__import__("sys").modules["__main__"], "_LAST_ONLINE_REPORT"):
+                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = 0
+            _nr = time.time()
+            if _nr - __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT >= 10800:
+                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = _nr
+                _online_now = set()
+                for mid in all_ids:
+                    try:
+                        for _p in await zoom.get_participants(mid):
+                            if _p.get("status") == "in_meeting":
+                                _n = _p.get("user_name", "").strip()
+                                if _n:
+                                    _online_now.add(_n)
+                    except:
+                        pass
+                if _online_now and push_now:
+                    _header = chr(128269) + " Current Online Participants\n" + now_myt.strftime("%m-%d %H:%M")
+                    _lines = [_header]
+                    for _n in sorted(_online_now):
+                        _lines.append(chr(8226) + " " + _n)
+                    await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
 
