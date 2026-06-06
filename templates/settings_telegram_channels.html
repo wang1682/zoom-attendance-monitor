@@ -2,7 +2,7 @@
 {% block title %}Telegram 群组设置{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1>📢 Telegram 群组设置</h1><p>管理 Telegram 推送频道/群组</p></div>
+  <div class="page-header"><h1>📢 Telegram 群组设置</h1><p>管理 Telegram 推送频道/群组</p><p style="font-size:12px;color:var(--tm);margin-top:4px">创建群组后，可在 <a href="/settings/telegram-rules" style="color:var(--pr)">推送规则</a> 中为每条规则选择推送目标</p></div>
 
   <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="bt bt-p bt-s" onclick="showCreateForm()">➕ 新建频道</button>
@@ -67,9 +67,9 @@
           <td>{% if c.is_default %}⭐ 默认{% else %}—{% endif %}</td>
           <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts)">{{ c.notes or "—" }}</td>
           <td>
-            <button class="bt bt-s" onclick="editChannel({{ c.chat_id|tojson }})">✏️</button>
-            <button class="bt bt-s" onclick="testChannel({{ c.chat_id|tojson }})">📨</button>
-            <button class="bt bt-s bt-d" onclick="deleteChannel({{ c.chat_id|tojson }}, {{ c.name|tojson }})">🗑️</button>
+            <button class="bt bt-s" data-chat="{{ c.chat_id }}" data-name="{{ c.name }}" onclick="editChannel(this.dataset.chat)">✏️</button>
+            <button class="bt bt-s" data-chat="{{ c.chat_id }}" onclick="testChannel(this.dataset.chat)">📨</button>
+            <button class="bt bt-s bt-d" data-chat="{{ c.chat_id }}" data-name="{{ c.name }}" onclick="deleteChannel(this.dataset.chat, this.dataset.name)">🗑️</button>
           </td>
         </tr>
         {% endfor %}
