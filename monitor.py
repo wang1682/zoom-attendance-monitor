@@ -212,10 +212,16 @@ async def monitor_loop():
                     except:
                         pass
                 if _online_now and push_now:
-                    _header = chr(128269) + " Current Online Participants\n" + now_myt.strftime("%m-%d %H:%M")
-                    _lines = [_header]
+                    _lines = [
+                        "\U0001f50d \u5f53\u524d\u5728\u7ebf\u53c2\u4e0e\u8005",
+                        "",
+                        "\u23f0 " + now_myt.strftime("%m-%d %H:%M"),
+                        "",
+                    ]
                     for _n in sorted(_online_now):
-                        _lines.append(chr(8226) + " " + _n)
+                        _lines.append("\u2022 " + _n)
+                    _lines.append("")
+                    _lines.append("\U0001f4ca \u5171 " + str(len(_online_now)) + " \u4eba\u5728\u7ebf")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
