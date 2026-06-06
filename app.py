@@ -1072,6 +1072,31 @@ def build_app() -> "FastAPI":
 
 
 
+    @app.get("/api/v3/member-aliases/discover")
+    async def api_v3_member_aliases_discover_alias():
+        """别名：/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
+        conn = db._get_conn()
+        from datetime import datetime, timezone, timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        now_str = datetime.now(timezone.utc).isoformat()
+        rows = conn.execute("""SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC""", (cutoff, now_str)).fetchall()
+        alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
+        configured_aliases = set()
+        for (alias_name,) in alias_rows:
+            configured_aliases.add(alias_name.strip().lower().replace(" ", ""))
+        display_rows = conn.execute("SELECT raw_name, aliases FROM member_display").fetchall()
+        for r in display_rows:
+            try:
+                for a in json.loads(r["aliases"] or "[]"):
+                    configured_aliases.add(a.strip().lower().replace(" ", ""))
+            except: pass
+        unmapped = []
+        for r in rows:
+            key = r["name"].strip().lower().replace(" ", "")
+            if key not in configured_aliases:
+                unmapped.append(r["name"])
+        return {"ok": True, "unmapped": list(set(unmapped)), "online": []}
+
     @app.get("/api/v3/member-names")
     async def api_v3_member_names():
         """返回所有历史用户名（去重）"""
@@ -1498,6 +1523,14 @@ def build_app() -> "FastAPI":
                 "last_seen_display": to_myt_display(last_seen),
             })
         return {"ok": True, "names": results}
+
+    @app.get("/api/v3/members")
+    async def api_v3_members_alias():
+        """别名：/api/v3/members -> 同 /api/v3/member-display"""
+        conn = db._get_conn()
+        rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
+        return {"ok": True, "items": [dict(zip(cols, r)) for r in rows]}
 
     @app.get("/api/v3/member-display")
     async def api_v3_member_display_list():
