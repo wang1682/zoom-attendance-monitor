@@ -125,6 +125,15 @@ def _ensure_demo():
     return _DEMO_MODULE
 
 
+def resolve_member(raw_name: str) -> dict:
+    """解析原始 Zoom 用户名：返回标准名、分组和是否经过映射"""
+    resolved = db.resolve_display_name(raw_name)
+    standard = resolved["display_name"]
+    group_name = db.get_member_group(standard) or db.get_member_group(raw_name)
+    is_mapped = standard != raw_name
+    return {"raw_name": raw_name, "standard_name": standard, "group_name": group_name, "is_mapped": is_mapped}
+
+
 def build_app() -> "FastAPI":
     """创建并配置完整的 FastAPI 应用（只在 api/webhook 模式下调用）"""
     global _app
@@ -875,21 +884,37 @@ def build_app() -> "FastAPI":
                 push_event = "unknown"
                 push_icon = "ℹ️"
                 push_title = ""
+                _rm = resolve_member(ename)
+                standard_name = _rm["standard_name"]
+                group_name = _rm["group_name"]
+                is_mapped = _rm["is_mapped"]
                 if "breakout_room" in event_type:
                     # Check for breakout room events first
-                    group_name = db.get_member_group(ename)
                     if "participant_joined" in event_type:
                         push_event = "participant_joined_breakout_room"
                         push_icon = "📌"
-                        push_title = f"加入【{group_name}】分组讨论室" if group_name else "加入分组讨论室"
+                        if group_name:
+                            push_title = f"加入【{group_name}】分组讨论室"
+                        elif is_mapped:
+                            push_title = "加入分组讨论室"
+                        else:
+                            push_title = f"未配置成员 {standard_name} 加入分组讨论室"
                     elif "participant_left" in event_type:
                         push_event = "participant_left_breakout_room"
                         push_icon = "🚪"
-                        push_title = f"离开【{group_name}】分组讨论室" if group_name else "离开分组讨论室"
+                        if group_name:
+                            push_title = f"离开【{group_name}】分组讨论室"
+                        elif is_mapped:
+                            push_title = "离开分组讨论室"
+                        else:
+                            push_title = f"未配置成员 {standard_name} 离开分组讨论室"
                 elif "participant_joined" in event_type and "waiting_room" not in event_type:
                     push_event = "participant_joined"
                     push_icon = "📌"
-                    push_title = "进入主会议"
+                    if group_name:
+                        push_title = f"{standard_name} 进入【{group_name}】主会议"
+                    else:
+                        push_title = "进入主会议"
                 elif "participant_left" in event_type:
                     push_event = "participant_left"
                     push_icon = "🚪"
@@ -914,7 +939,7 @@ def build_app() -> "FastAPI":
                 if push_title and ename:
                     mid = str(obj.get("id", ""))
                     event_ts = sdt or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    user_key = pid or ename.strip().lower().replace(" ", "")
+                    user_key = pid or standard_name.strip().lower().replace(" ", "")
                     dedup_key = "webhook:" + push_event + ":" + mid + ":" + user_key + ":" + event_ts[:16]
                     sys.stderr.write("[PUSH] dedup_key=" + dedup_key + "\n")
                     sys.stderr.flush()
@@ -931,7 +956,7 @@ def build_app() -> "FastAPI":
                         else:
                             content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                             extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
-                            text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + ename + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
+                            text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + standard_name + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
                             # 解析 target channel
                             _target_chat_id = None
                             try:
@@ -1072,11 +1097,25 @@ def build_app() -> "FastAPI":
             ORDER BY cnt DESC
         """, (cutoff, now_str)).fetchall()
         
-        # 加载已配置的别名
+        # 加载已配置的别名（来自 member_aliases 表）
         alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
         configured_aliases = set()
         for (alias_name,) in alias_rows:
             configured_aliases.add(alias_name.strip().lower().replace(" ", ""))
+        
+        # 补充：也排除 member_display 中 aliases JSON 字段里的别名
+        md_rows = conn.execute("SELECT aliases FROM member_display").fetchall()
+        for (aliases_json,) in md_rows:
+            if not aliases_json:
+                continue
+            try:
+                aliases_list = json.loads(aliases_json)
+                if isinstance(aliases_list, list):
+                    for a in aliases_list:
+                        if a and isinstance(a, str):
+                            configured_aliases.add(a.strip().lower().replace(" ", ""))
+            except:
+                pass
         
         # 当前在线（来自 v3）
         unmapped_set = set()
@@ -2115,13 +2154,11 @@ def build_app() -> "FastAPI":
                         for p in pr.json().get("participants", []):
                             name = p.get("user_name", "").strip()
                             if not name: continue
+                            _rm = resolve_member(name)
+                            name = _rm["standard_name"]
                             jt = p.get("join_time", "")
                             is_sh = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
                             sc = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else ("whiteboard" if p.get("share_whiteboard") else ""))
-                            try:
-                                r = db.resolve_display_name(name)
-                                dn = r["display_name"]
-                            except: dn = name
                             mins = 0; disp = ""; jtd = ""
                             if jt:
                                 try:
@@ -2136,14 +2173,17 @@ def build_app() -> "FastAPI":
                                     jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
                                     if (now_utc - jd).total_seconds() > 600: ol = False
                                 except: pass
-                            key = dn.lower().replace(" ", "")
-                            top_active[dn] = top_active.get(dn, 0) + 1
+                            key = name.lower().replace(" ", "")
+                            top_active[name] = top_active.get(name, 0) + 1
                             if key not in participants_summary:
-                                participants_summary[key] = {"name": dn, "is_online": ol,
+                                participants_summary[key] = {"name": name, "is_online": ol,
                                     "last_active": jt, "last_active_display": jtd,
                                     "total_actions": 0, "duration_display": disp, "flags": [],
                                     "email": p.get("email", ""), "meeting_id": mid,
-                                    "is_sharing": is_sh, "share_content": sc}
+                                    "is_sharing": is_sh, "share_content": sc,
+                                    "standard_name": _rm["standard_name"],
+                                    "group_name": _rm["group_name"],
+                                    "is_mapped": _rm["is_mapped"]}
                             else:
                                 participants_summary[key]["total_actions"] += 1
                                 if jt and (not participants_summary[key]["last_active"] or jt > participants_summary[key]["last_active"]):
