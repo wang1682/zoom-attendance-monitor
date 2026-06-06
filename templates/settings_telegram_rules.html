@@ -105,6 +105,16 @@
   </div>
 </div>
 
+<div class="card" style="margin-top:16px">
+  <div class="card-header"><h2>📡 发现新规则</h2></div>
+  <div class="cp">
+    <div id="discoverArea">
+      <button class="bt" onclick="discoverRules()">扫描新事件类型</button>
+      <div id="discoverResult" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
 <script>
 const rulesData = {{ rules | tojson | safe }};
 
@@ -191,6 +201,30 @@ async function deleteRule(eventType) {
   } catch(e) {
     alert('请求失败: ' + e.message);
   }
+}
+
+async function discoverRules() {
+  const btn = event.target;
+  btn.disabled = true;
+  const r = await fetch("/api/v3/telegram-rules/discover");
+  const j = await r.json();
+  if(j.ok && j.discovered && j.discovered.length) {
+    let html = '<table class="data-table"><tr><th>事件类型</th><th>标题</th><th>操作</th></tr>';
+    j.discovered.forEach(function(item) {
+      var safeType = item.event_type.replace(/'/g, "\\'");
+      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="bt bt-s" onclick="addDiscoveredRule(\'' + safeType + '\')">添加</button></td></tr>';
+    });
+    html += '</table>';
+    document.getElementById("discoverResult").innerHTML = html;
+  } else {
+    document.getElementById("discoverResult").textContent = "✅ 所有已知事件类型已配置";
+  }
+  btn.disabled = false;
+}
+
+async function addDiscoveredRule(eventType) {
+  await fetch("/api/v3/telegram-rules", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({event_type: eventType, enabled: 0, cooldown_seconds: 60})});
+  location.reload();
 }
 </script>
 {% endblock %}
