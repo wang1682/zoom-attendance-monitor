@@ -215,26 +215,44 @@ async def monitor_loop():
                     # 从 /api/v2/live 获取实时在线名单
                     import httpx
                     _v2_names = []
+                    _v2_participants = []
                     try:
                         _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
                         if _v2r.status_code == 200:
                             _v2d = _v2r.json()
-                            _v2_names = [p.get("name", "") for p in _v2d.get("online_list", [])]
+                            _v2_participants = []
+                            for _m in _v2d.get("data", {}).get("meetings", []):
+                                _room = _m.get("meeting_topic", "")
+                                for _p in _m.get("participants", []):
+                                    _name = _p.get("name", "")
+                                    _v2_names.append(_name)
+                                    _join = _p.get("join_time", "")
+                                    _enter = _join[11:19] if len(_join) > 11 else "?"
+                                    _mins = _p.get("online_minutes", 0)
+                                    if _mins < 60:
+                                        _dur = f"{_mins}分钟"
+                                    else:
+                                        _dur = f"{_mins // 60}h{_mins % 60:02d}"
+                                    _v2_participants.append((_name, _room, _enter, _dur))
                     except:
                         pass
                     _lines = [
-                        "\U0001f50d \u5f53\u524d\u5728\u7ebf\u53c2\u4e0e\u8005",
+                        "\U0001f50d 实时在线",
+                        "",
+                        "当前在线参会者",
                         "",
                         "\u23f0 " + now_myt.strftime("%m-%d %H:%M"),
                         "",
                     ]
-                    if _v2_names:
-                        for _n in sorted(_v2_names):
-                            _lines.append("\u2022 " + _n)
+                    if _v2_participants:
+                        _lines.append(f"在线人数 {len(_v2_participants)}")
+                        _lines.append("")
+                        for _n, _r, _e, _d in _v2_participants:
+                            _lines.append(f"• {_n}  {_e}  {_d}")
                     else:
-                        _lines.append("\u6682\u65e0\u5728\u7ebf\u6210\u5458")
+                        _lines.append("当前无人在线")
                     _lines.append("")
-                    _lines.append("\U0001f4ca \u5171 " + str(len(_v2_names)) + " \u4eba\u5728\u7ebf")
+                    _lines.append(f"\U0001f4ca 共 {len(_v2_names)} 人在线")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
