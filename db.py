@@ -446,6 +446,14 @@ def get_bot_state(key: str, default: str = "0") -> str:
     return get_setting(key, default)
 
 
+def is_push_enabled() -> bool:
+    return get_bot_state("push_enabled", "1") == "1"
+
+
+def is_quiet_mode() -> bool:
+    return get_bot_state("quiet_mode", "0") == "1"
+
+
 def set_bot_state(key: str, value: str):
     set_setting(key, value)
 

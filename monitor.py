@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from config import settings
-from db import save_participant, check_new_email, create_alert
+from db import save_participant, check_new_email, create_alert, should_send_telegram
 from alerts import TelegramNotifier
 from zoom_api import ZoomAPI
 import templates as tmpl
@@ -211,7 +211,7 @@ async def monitor_loop():
                                     _online_now.add(_n)
                     except:
                         pass
-                if push_now and db.should_send_telegram("periodic_online_report"):
+                if push_now and should_send_telegram("periodic_online_report"):
                     # 从 /api/v2/live 获取实时在线名单
                     import httpx
                     _v2_names = []
