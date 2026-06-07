@@ -53,6 +53,18 @@
 
 /* Quick map badge */
 .quick-badge{font-size:9px;padding:1px 5px;border-radius:3px}
+
+/* Group badges — colored per group name */
+.group-badge{font-size:10px;padding:1px 8px;border-radius:4px;margin-right:6px;font-weight:500;white-space:nowrap}
+.group-badge-推进{background:#e8f5e9;color:#2e7d32}
+.group-badge-核销{background:#e3f2fd;color:#1565c0}
+.group-badge-其他{background:#f3e5f5;color:#7b1fa2}
+
+/* Stats bar */
+.stats-bar{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.stat-item{background:var(--card);border:1px solid var(--cb);border-radius:10px;padding:10px 16px;flex:1;min-width:120px;text-align:center}
+.stat-item .stat-num{font-size:20px;font-weight:700;color:var(--text)}
+.stat-item .stat-label{font-size:11px;color:var(--tm);margin-top:2px}
 </style>
 {% endblock %}
 {% block content %}
@@ -60,6 +72,14 @@
 <div class="page-header">
   <h1 class="page-title">成员身份中心</h1>
   <p class="page-subtitle">统一管理 Zoom 用户名映射 — 自动发现、快速映射、统一归并</p>
+</div>
+
+<!-- Stats Bar -->
+<div class="stats-bar" id="statsBar">
+  <div class="stat-item"><div class="stat-num" id="statTotal">0</div><div class="stat-label">已配置成员</div></div>
+  <div class="stat-item"><div class="stat-num" id="statOnline">0</div><div class="stat-label">当前在线</div></div>
+  <div class="stat-item"><div class="stat-num" id="statUnmapped">0</div><div class="stat-label">未映射</div></div>
+  <div class="stat-item" id="statGroupTemplate" style="display:none"><div class="stat-num">0</div><div class="stat-label"></div></div>
 </div>
 
 <div class="ml">
@@ -159,6 +179,7 @@ async function loadAll(){
   renderMembers(membersData);
   renderUnmapped(d.names || [], d.online || []);
   renderOnline(d.online || []);
+  renderStats(membersData, d.online || [], d.names || []);
   populateGroupSelect();
 }
 
@@ -169,6 +190,41 @@ function groupName(gid){
   return g ? g.name : "";
 }
 
+function groupBadgeHtml(gid){
+  if(!gid) return "";
+  const gn = groupName(gid);
+  if(!gn) return "";
+  const cls = "group-badge group-badge-" + esc(gn);
+  return `<span class="${cls}">${esc(gn)}</span>`;
+}
+
+// ── Stats bar ──────────────────────────────────────────────────────────
+function renderStats(members, onlineNames, unmappedNames){
+  document.getElementById("statTotal").textContent = members.length;
+  document.getElementById("statOnline").textContent = onlineNames.length;
+  document.getElementById("statUnmapped").textContent = unmappedNames.length;
+
+  // Group counts
+  const bar = document.getElementById("statsBar");
+  // Remove old group stat items (keep first 3 static ones)
+  let kids = bar.children;
+  for(let i = kids.length - 1; i >= 3; i--){
+    if(kids[i].id !== "statGroupTemplate") kids[i].remove();
+  }
+
+  const template = document.getElementById("statGroupTemplate");
+  groupsData.forEach(g => {
+    const count = members.filter(m => m.group_id === g.id).length;
+    if(count === 0) return;
+    const el = template.cloneNode(true);
+    el.id = "";
+    el.style.display = "";
+    el.querySelector(".stat-num").textContent = count;
+    el.querySelector(".stat-label").textContent = g.name;
+    bar.insertBefore(el, template);
+  });
+}
+
 function renderMembers(members){
   const div = document.getElementById("memberList");
   document.getElementById("memberCount").textContent = members.length;
@@ -176,35 +232,33 @@ function renderMembers(members){
     div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">暂无配置</div>';
     return;
   }
+  // 预构建分组选项 HTML
+  const groupOptsAll = groupsData.map(g =>
+    `<option value="${g.id}">${esc(g.name)}</option>`
+  ).join("");
+
   div.innerHTML = members.map(m => {
     const aliasTags = (m.aliases || []).map(a =>
       `<span class="alias-tag">${a}</span>`
     ).join("");
-    const gn = groupName(m.group_id);
-    const groupTag = gn ? `<span class="group-badge" style="font-size:10px;background:var(--div);color:var(--ts);padding:1px 6px;border-radius:4px;margin-right:4px">${esc(gn)}</span>` : '';
+    const badge = groupBadgeHtml(m.group_id);
+    const curVal = m.group_id ? m.group_id : "";
+    const curLabel = m.group_id ? esc(groupName(m.group_id)) : "分组";
     return `<div style="margin-bottom:4px">
       <div class="mi" style="cursor:default">
         <span class="md" style="background:${m.count_enabled ? 'var(--sc)' : 'var(--tm)'}"></span>
-        <span class="mn">${groupTag}${esc(m.display_name)}</span>
+        <span class="mn">${badge}${esc(m.display_name)}</span>
         <span class="ms">← ${esc(m.raw_name)}</span>
         <button class="ma-edit" onclick="editMember('${esc(m.display_name)}')">编辑</button>
-        <select class="ma-group" onchange="changeGroup('${esc(m.display_name)}', this.value)" onfocus="populateGroupDropdown(this, ${m.group_id || 'null'})"><option value="">分组</option></select>
+        <select class="ma-group" onchange="changeGroup('${esc(m.display_name)}', this.value)">
+          <option value="${curVal}">${curLabel}</option>
+          ${groupOptsAll}
+        </select>
         <button class="ma-del" onclick="deleteMember('${esc(m.display_name)}')">✕</button>
       </div>
       ${aliasTags ? `<div class="member-aliases">${aliasTags}</div>` : ''}
     </div>`;
   }).join("");
-}
-
-function populateGroupDropdown(sel, currentId){
-  sel.innerHTML = '<option value="">— 无分组 —</option>';
-  groupsData.forEach(g => {
-    const opt = document.createElement("option");
-    opt.value = g.id;
-    opt.textContent = g.name;
-    if(currentId && g.id === currentId) opt.selected = true;
-    sel.appendChild(opt);
-  });
 }
 
 async function changeGroup(displayName, groupId){
@@ -219,6 +273,7 @@ async function changeGroup(displayName, groupId){
   else alert(d.error || "分组失败");
 }
 
+// ── Modal functions ───────────────────────────────────────────────────
 function populateGroupSelect(){
   const sel = document.getElementById("modalGroupId");
   sel.innerHTML = '<option value="">无分组</option>';
@@ -231,6 +286,28 @@ function populateGroupSelect(){
 }
 
 // ── Middle: Unmapped ───────────────────────────────────────────────────
+function findBestMatch(name){
+  if(!name || !membersData.length) return null;
+  const nameLower = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Try exact match on raw_name first
+  let best = null, bestScore = 0;
+  membersData.forEach(m => {
+    const raw = (m.raw_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const disp = (m.display_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const aliases = (m.aliases || []).map(a => a.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const allNames = [raw, disp, ...aliases];
+    allNames.forEach(n => {
+      if(!n) return;
+      // Score: exact > contains > prefix > word-overlap
+      if(n === nameLower){ best = m; bestScore = 100; return; }
+      if(bestScore >= 100) return;
+      if(n.includes(nameLower) || nameLower.includes(n)){ best = m; bestScore = 80; return; }
+      if(nameLower.startsWith(n) || n.startsWith(nameLower)){ if(bestScore < 60){ best = m; bestScore = 60; } }
+    });
+  });
+  return best;
+}
+
 function renderUnmapped(unmappedNames, onlineNames){
   const div = document.getElementById("unmappedList");
   document.getElementById("unmappedCount").textContent = unmappedNames.length;
@@ -242,8 +319,12 @@ function renderUnmapped(unmappedNames, onlineNames){
   div.innerHTML = unmappedNames.map(n => {
     const isOnline = onlineSet.has(n);
     const dot = isOnline ? '<span class="online-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--sc);margin-right:4px"></span>' : '';
+    const match = findBestMatch(n);
+    const suggest = match
+      ? `<span class="quick-badge" style="background:var(--div);color:var(--ts);cursor:pointer;margin-left:4px" onclick="openMapModal('${esc(n)}')">推荐→ ${esc(match.display_name)}${groupBadgeHtml(match.group_id)}</span>`
+      : '';
     return `<div class="mi" onclick="openMapModal('${esc(n)}')">
-      ${dot}<span class="mn">${esc(n)}</span>
+      ${dot}<span class="mn">${esc(n)}</span>${suggest}
       <button class="ma">映射</button>
     </div>`;
   }).join("");
@@ -266,9 +347,10 @@ function renderOnline(onlineNames){
       // Find display name
       const member = membersData.find(m => m.raw_name.toLowerCase().replace(/\\s+/g, '') === key);
       const dn = member ? member.display_name : n;
+      const badge = member ? groupBadgeHtml(member.group_id) : '';
       return `<div class="mi" style="cursor:default">
         <span class="md" style="background:var(--sc)"></span>
-        <span class="mn">${esc(dn)}</span>
+        <span class="mn">${badge}${esc(dn)}</span>
         <span class="ms">✅</span>
       </div>`;
     } else {
