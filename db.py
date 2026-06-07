@@ -911,10 +911,17 @@ def get_all_groups() -> list[dict]:
     result = []
     for g in groups:
         gd = dict(g)
+        # 新方式优先：从 member_display.group_id 读取
         members = conn.execute(
-            "SELECT member_name FROM member_group_members WHERE group_id = ? ORDER BY member_name",
+            "SELECT display_name FROM member_display WHERE group_id = ? ORDER BY display_name",
             (gd["id"],),
         ).fetchall()
+        if not members:
+            # 回退旧表
+            members = conn.execute(
+                "SELECT member_name FROM member_group_members WHERE group_id = ? ORDER BY member_name",
+                (gd["id"],),
+            ).fetchall()
         gd["members"] = [m[0] for m in members]
         result.append(gd)
     return result
