@@ -876,6 +876,14 @@ def build_app() -> "FastAPI":
                             push_title = "离开分组讨论室"
                         else:
                             push_title = f"未配置成员 {standard_name} 离开分组讨论室"
+                    elif "sharing_started" in event_type:
+                        push_event = "sharing_started"
+                        push_icon = "🖥"
+                        push_title = "分组讨论室开始共享屏幕"
+                    elif "sharing_ended" in event_type:
+                        push_event = "sharing_ended"
+                        push_icon = "🖥"
+                        push_title = "分组讨论室结束共享屏幕"
                 elif "participant_joined" in event_type and "waiting_room" not in event_type:
                     push_event = "participant_joined"
                     push_icon = "📌"
