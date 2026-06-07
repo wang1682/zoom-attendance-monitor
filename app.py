@@ -1600,6 +1600,14 @@ def build_app() -> "FastAPI":
         conn.commit()
         return {"ok": True}
 
+    @app.delete("/api/v3/members/{display_name}")
+    async def api_v3_members_del_by_name(display_name: str):
+        """按 display_name 删除成员映射（JS 前端调用）"""
+        conn = db._get_conn()
+        conn.execute("DELETE FROM member_display WHERE display_name=?", (display_name,))
+        conn.commit()
+        return {"ok": True}
+
     @app.get("/members", response_class=HTMLResponse)
     async def members_page(request: Request):
         return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})
