@@ -25,6 +25,9 @@
 .mi .ma-edit{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s;border:1px solid transparent;background:transparent;color:var(--in);white-space:nowrap}
 .mi:hover .ma-edit{opacity:1}
 .mi .ma-edit:hover{background:var(--in-b)}
+.mi .ma-group{font-size:10px;padding:1px 4px;border-radius:4px;border:1px solid var(--cb);background:var(--card);color:var(--ts);cursor:pointer;opacity:0;transition:opacity .15s}
+.mi:hover .ma-group{opacity:1}
+.mi .ma-group:hover{background:var(--pr);color:#fff;border-color:var(--pr)}
 
 /* Aliases display under member */
 .member-aliases{font-size:11px;color:var(--ts);padding:2px 0 4px 16px;display:flex;flex-wrap:wrap;gap:4px}
@@ -135,6 +138,7 @@
 // ── State ──────────────────────────────────────────────────────────────
 let membersData = [];     // from GET /api/v3/members
 let discoverData = null;  // from GET /api/v3/member-aliases/discover
+let groupsData = [];      // from GET /api/v3/member-groups
 let currentModalRawName = "";
 let currentModalMember = null; // {display_name, raw_name, aliases} for editing
 let pendingAliases = [];
@@ -142,20 +146,29 @@ let quickMapName = "";
 
 // ── Load ───────────────────────────────────────────────────────────────
 async function loadAll(){
-  const [m, d] = await Promise.all([
+  const [m, d, g] = await Promise.all([
     fetch("/api/v3/members").then(r=>r.json()),
-    fetch("/api/v3/member-aliases/discover").then(r=>r.json())
+    fetch("/api/v3/member-aliases/discover").then(r=>r.json()),
+    fetch("/api/v3/member-groups").then(r=>r.json())
   ]);
-  if(!m.ok || !d.ok) return;
+  if(!m.ok || !d.ok || !g.ok) return;
   membersData = m.items || [];
   discoverData = d;
+  groupsData = g.groups || [];
 
   renderMembers(membersData);
   renderUnmapped(d.names || [], d.online || []);
   renderOnline(d.online || []);
+  populateGroupSelect();
 }
 
 // ── Left: Configured Members ───────────────────────────────────────────
+function groupName(gid){
+  if(!gid) return "";
+  const g = groupsData.find(x => x.id === gid);
+  return g ? g.name : "";
+}
+
 function renderMembers(members){
   const div = document.getElementById("memberList");
   document.getElementById("memberCount").textContent = members.length;
@@ -167,17 +180,54 @@ function renderMembers(members){
     const aliasTags = (m.aliases || []).map(a =>
       `<span class="alias-tag">${a}</span>`
     ).join("");
+    const gn = groupName(m.group_id);
+    const groupTag = gn ? `<span class="group-badge" style="font-size:10px;background:var(--div);color:var(--ts);padding:1px 6px;border-radius:4px;margin-right:4px">${esc(gn)}</span>` : '';
     return `<div style="margin-bottom:4px">
       <div class="mi" style="cursor:default">
         <span class="md" style="background:${m.count_enabled ? 'var(--sc)' : 'var(--tm)'}"></span>
-        <span class="mn">${esc(m.display_name)}</span>
+        <span class="mn">${groupTag}${esc(m.display_name)}</span>
         <span class="ms">← ${esc(m.raw_name)}</span>
         <button class="ma-edit" onclick="editMember('${esc(m.display_name)}')">编辑</button>
+        <select class="ma-group" onchange="changeGroup('${esc(m.display_name)}', this.value)" onfocus="populateGroupDropdown(this, ${m.group_id || 'null'})"><option value="">分组</option></select>
         <button class="ma-del" onclick="deleteMember('${esc(m.display_name)}')">✕</button>
       </div>
       ${aliasTags ? `<div class="member-aliases">${aliasTags}</div>` : ''}
     </div>`;
   }).join("");
+}
+
+function populateGroupDropdown(sel, currentId){
+  sel.innerHTML = '<option value="">— 无分组 —</option>';
+  groupsData.forEach(g => {
+    const opt = document.createElement("option");
+    opt.value = g.id;
+    opt.textContent = g.name;
+    if(currentId && g.id === currentId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+async function changeGroup(displayName, groupId){
+  if(groupId === "") groupId = null;
+  const r = await fetch(`/api/v3/members/${encodeURIComponent(displayName)}/group`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({group_id: groupId})
+  });
+  const d = await r.json();
+  if(d.ok) loadAll();
+  else alert(d.error || "分组失败");
+}
+
+function populateGroupSelect(){
+  const sel = document.getElementById("modalGroupId");
+  sel.innerHTML = '<option value="">无分组</option>';
+  groupsData.forEach(g => {
+    const opt = document.createElement("option");
+    opt.value = g.id;
+    opt.textContent = g.name;
+    sel.appendChild(opt);
+  });
 }
 
 // ── Middle: Unmapped ───────────────────────────────────────────────────
@@ -239,6 +289,7 @@ function openMapModal(rawName){
   document.getElementById("modalRawName").value = rawName;
   document.getElementById("modalRawName").readOnly = true;
   document.getElementById("modalDisplayName").value = rawName;
+  document.getElementById("modalGroupId").value = "";
   pendingAliases = [];
   renderPendingAliases();
   document.getElementById("memberModal").style.display = "flex";
@@ -254,6 +305,7 @@ function editMember(displayName){
   document.getElementById("modalRawName").value = member.raw_name;
   document.getElementById("modalRawName").readOnly = false;
   document.getElementById("modalDisplayName").value = member.display_name;
+  document.getElementById("modalGroupId").value = member.group_id || "";
   pendingAliases = [...(member.aliases || [])];
   renderPendingAliases();
   document.getElementById("memberModal").style.display = "flex";
@@ -295,11 +347,12 @@ function renderPendingAliases(){
 async function saveMember(){
   const rawName = document.getElementById("modalRawName").value.trim();
   const displayName = document.getElementById("modalDisplayName").value.trim();
+  const groupId = document.getElementById("modalGroupId").value || null;
   if(!rawName || !displayName) return alert("请填写完整");
   const r = await fetch("/api/v3/members", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: pendingAliases})
+    body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: pendingAliases, group_id: groupId})
   });
   const d = await r.json();
   if(d.ok){

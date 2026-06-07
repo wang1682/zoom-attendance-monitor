@@ -1552,6 +1552,44 @@ def build_app() -> "FastAPI":
             items.append(item)
         return {"ok": True, "items": items}
 
+    @app.post("/api/v3/members")
+    async def api_v3_members_add(request: Request):
+        """POST /api/v3/members — 创建/更新成员（前端JS调用）"""
+        data = await request.json()
+        raw_name = data.get("raw_name", "").strip()
+        display_name = data.get("display_name", "").strip()
+        aliases = data.get("aliases", [])
+        group_id = data.get("group_id", None)
+        if not raw_name or not display_name:
+            return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
+        import re
+        match_key = re.sub(r'\s+', '', raw_name.lower())
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+        try:
+            # Check if existing record
+            existing = conn.execute(
+                "SELECT id FROM member_display WHERE display_name=? OR raw_name=?",
+                (display_name, raw_name)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE member_display SET raw_name=?, match_key=?, aliases=?, group_id=?, updated_at=?
+                       WHERE id=?""",
+                    (raw_name, match_key, json.dumps(aliases), group_id, now, existing[0])
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO member_display (raw_name, display_name, match_key, aliases, group_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (raw_name, display_name, match_key, json.dumps(aliases), group_id, now, now)
+                )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     @app.get("/api/v3/member-display")
     async def api_v3_member_display_list():
         """所有显示名映射"""
@@ -1576,6 +1614,8 @@ def build_app() -> "FastAPI":
         display_name = data.get("display_name", "").strip()
         count_enabled = data.get("count_enabled", 1)
         note = data.get("note", "")
+        group_id = data.get("group_id", None)  # 分组 ID
+        aliases = data.get("aliases", [])
         if not raw_name or not display_name:
             return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
         import re
@@ -1585,8 +1625,25 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         try:
             conn.execute(
-                "INSERT OR REPLACE INTO member_display (raw_name, display_name, match_key, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (raw_name, display_name, match_key, int(count_enabled), note, now, now)
+                "INSERT OR REPLACE INTO member_display (raw_name, display_name, match_key, count_enabled, note, group_id, aliases, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (raw_name, display_name, match_key, int(count_enabled), note, group_id, json.dumps(aliases), now, now)
+            )
+            conn.commit()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.post("/api/v3/members/{display_name}/group")
+    async def api_v3_set_member_group(display_name: str, request: Request):
+        """设置成员的所属分组"""
+        data = await request.json()
+        group_id = data.get("group_id", None)
+        conn = db._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        try:
+            conn.execute(
+                "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ?",
+                (group_id, now, display_name)
             )
             conn.commit()
             return {"ok": True}
