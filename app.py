@@ -1095,7 +1095,18 @@ def build_app() -> "FastAPI":
             key = r["name"].strip().lower().replace(" ", "")
             if key not in configured_aliases:
                 unmapped.append(r["name"])
-        return {"ok": True, "unmapped": list(set(unmapped)), "online": []}
+        # 获取当前在线名单
+        online_names = []
+        try:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            for m in live_data.get("meetings", []):
+                for p in m.get("participants", []):
+                    online_names.append(p.get("name", ""))
+        except:
+            pass
+        return {"ok": True, "unmapped": list(set(unmapped)), "online": online_names}
 
     @app.get("/api/v3/member-names")
     async def api_v3_member_names():
