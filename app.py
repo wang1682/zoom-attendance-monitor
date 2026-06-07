@@ -1541,7 +1541,16 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
-        return {"ok": True, "items": [dict(zip(cols, r)) for r in rows]}
+        items = []
+        for r in rows:
+            item = dict(zip(cols, r))
+            if isinstance(item.get("aliases"), str):
+                try:
+                    item["aliases"] = json.loads(item["aliases"])
+                except:
+                    item["aliases"] = []
+            items.append(item)
+        return {"ok": True, "items": items}
 
     @app.get("/api/v3/member-display")
     async def api_v3_member_display_list():
@@ -1549,7 +1558,16 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
-        return {"ok": True, "items": [dict(zip(cols, r)) for r in rows]}
+        items = []
+        for r in rows:
+            item = dict(zip(cols, r))
+            if isinstance(item.get("aliases"), str):
+                try:
+                    item["aliases"] = json.loads(item["aliases"])
+                except:
+                    item["aliases"] = []
+            items.append(item)
+        return {"ok": True, "items": items}
 
     @app.post("/api/v3/member-display")
     async def api_v3_member_display_add(request: Request):
