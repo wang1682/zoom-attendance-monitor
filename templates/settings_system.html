@@ -2,27 +2,99 @@
 {% block title %}系统设置{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1>🎛️ 系统设置</h1><p>系统状态 v0.8.0</p></div>
+  <div class="page-header"><h1>🎛️ 系统设置</h1><p>系统状态、Zoom 凭证、Telegram Bot 一体化管理</p></div>
+
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    <!-- 健康检查 -->
     <div class="card cp" style="grid-column:1/-1"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🏥 健康检查</h2>
       <button class="bt bt-p bt-s" onclick="health()" id="hBtn">刷新</button>
       <div id="hResults" style="margin-top:12px"></div>
     </div>
+
+    <!-- 容器 -->
     <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🐳 容器</h2>
       <table class="data-table"><tbody>{% for n,s in docker_status.items() %}
         <tr><td>{{ n }}</td><td><span class="bg {{ 'bg-g' if s=='running' else 'bg-r' }}">{{ s }}</span></td></tr>{% endfor %}
       </tbody></table>
     </div>
+
+    <!-- 快捷链接 -->
     <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">⚡ 快捷</h2>
       <a href="/api/v2/health" target="_blank" class="bt bt-s">API 健康</a>
       <a href="/api/v2/auth/status" target="_blank" class="bt bt-s">OAuth 状态</a>
     </div>
+
+    <!-- Zoom 凭证 -->
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔑 Zoom 凭证</h2>
+      <table class="data-table"><tbody>
+        <tr><td style="color:var(--ts)">主持人</td><td>{{ host_email or "未配置" }}</td></tr>
+        <tr><td style="color:var(--ts)">PMI</td><td class="mono">{{ pmi_id or "未配置" }}</td></tr>
+        <tr><td style="color:var(--ts)">轮询间隔</td><td>{{ monitor_interval }}秒</td></tr>
+        <tr><td style="color:var(--ts)">Webhook</td><td><span class="bg {{ 'bg-g' if webhook_status=='运行中' else 'bg-r' }}">{{ webhook_status }}</span></td></tr>
+      </tbody></table>
+    </div>
+
+    <!-- 当前账号 -->
+    <div class="card cp">
+      <h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🔗 当前账号</h2>
+      <div style="text-align:center;padding:24px;color:var(--tm);font-size:13px">
+        <div style="font-size:40px;margin-bottom:8px">✅</div>
+        <div style="font-weight:500;color:var(--text)">marieonn27@gmail.com</div>
+        <div style="margin-top:4px">超级管理员</div>
+      </div>
+    </div>
+
+    <!-- Telegram Bot 状态 -->
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🤖 Telegram Bot</h2>
+      <table class="data-table"><tbody>
+        <tr><td style="color:var(--ts)">状态</td><td><span class="bg {{ 'bg-g' if bot_ok else 'bg-r' }}">{{ "🟢 在线" if bot_ok else "🔴 离线" }}</span></td></tr>
+        <tr><td style="color:var(--ts)">用户名</td><td>{% if bot_ok %}@{{ bot_username }}{% else %}—{% endif %}</td></tr>
+        <tr><td style="color:var(--ts)">通知 Chat ID</td><td class="mono">{{ home_chat_id }}</td></tr>
+      </tbody></table>
+    </div>
+
+    <!-- 测试推送 -->
+    <div class="card cp"><h2 style="font-size:14px;font-weight:600;margin-bottom:12px">🧪 测试推送</h2>
+      <button class="bt bt-p bt-s" onclick="testPush()" id="testBtn">📨 发送测试消息</button>
+      <div id="testResult" style="margin-top:8px;font-size:12px"></div>
+    </div>
   </div>
 </div>
+
 <script>
-async function health(){const b=document.getElementById("hBtn");const e=document.getElementById("hResults");b.disabled=true;b.textContent="⏳";
-try{const j=await(await fetch("/api/health-check")).json();const items=[{l:"Zoom API",k:"zoom_api"},{l:"Webhook",k:"webhook",s:j.webhook_status,e:j.webhook_last_event,a:j.webhook_last_event_age_text},{l:"Telegram",k:"telegram"},{l:"AI",k:"sub2api"},{l:"数据库",k:"database"}];
-e.innerHTML=items.map(i=>{const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");let extra="";if(i.s){const c=i.s==="healthy"?"bg-g":i.s==="warning"?"bg-y":"bg-r";extra=` <span class="${c}" style="font-size:10px;padding:1px 6px;border-radius:4px">${i.s}</span>`;if(i.e)extra+=` <span style="font-size:10px;color:var(--tm)">${i.e}</span>`;if(i.a)extra+=` <span style="font-size:9px;color:var(--tm)">${i.a}</span>`}return'<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+(ok?'✅':'❌')+" "+v+extra+"</span></div>"}).join("")}catch(e){e.innerHTML="失败"}
-b.disabled=false;b.textContent="↻ 刷新"}
+async function health(){
+  const b=document.getElementById("hBtn");const e=document.getElementById("hResults");b.disabled=true;b.textContent="⏳";
+  try{
+    const j=await(await fetch("/api/health-check")).json();
+    const items=[
+      {l:"Zoom API",k:"zoom_api"},
+      {l:"Webhook",k:"webhook",s:j.webhook_status,e:j.webhook_last_event,a:j.webhook_last_event_age_text},
+      {l:"Telegram",k:"telegram"},
+      {l:"AI",k:"sub2api"},
+      {l:"数据库",k:"database"}
+    ];
+    e.innerHTML=items.map(i=>{
+      const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");
+      let extra="";
+      if(i.s){
+        const c=i.s==="healthy"?"bg-g":i.s==="warning"?"bg-y":"bg-r";
+        extra=` <span class="${c}" style="font-size:10px;padding:1px 6px;border-radius:4px">${i.s}</span>`;
+        if(i.e)extra+=` <span style="font-size:10px;color:var(--tm)">${i.e}</span>`;
+        if(i.a)extra+=` <span style="font-size:9px;color:var(--tm)">${i.a}</span>`
+      }
+      return '<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+(ok?'✅':'❌')+" "+v+extra+"</span></div>"
+    }).join("")
+  }catch(e){e.innerHTML="失败"}
+  b.disabled=false;b.textContent="↻ 刷新"
+}
+
+async function testPush(){
+  const b=document.getElementById("testBtn");const r=document.getElementById("testResult");b.disabled=true;b.textContent="⏳";
+  try{
+    const j=await(await fetch("/api/tg/send-test",{method:"POST"})).json();
+    r.innerHTML=j.ok?'<span style="color:var(--sc)">✅ 已发送</span>':'<span style="color:var(--da)">❌ 失败</span>'
+  }catch(e){r.innerHTML='<span style="color:var(--da)">❌ 请求失败</span>'}
+  b.disabled=false;b.textContent="📨 发送测试消息"
+}
 </script>
 {% endblock %}

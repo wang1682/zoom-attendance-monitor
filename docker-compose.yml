@@ -20,8 +20,13 @@ services:
   zoom-api:
     <<: *common
     container_name: zoom-api
+    group_add:
+      - "110"
     environment:
       APP_MODE: api
+    volumes:
+      - zoom_data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       # 容器内 8000，宿主机绑定 localhost（sub2api 已占 8080，用 8082）
       - "127.0.0.1:8082:8000"

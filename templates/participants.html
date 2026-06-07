@@ -2,41 +2,199 @@
 {% block title %}参会明细{% endblock %}
 {% block content %}
 <div class="page-container">
-<div class="page-header">
-  <h1 class="page-title">参会明细</h1>
-  <p class="page-subtitle">{{ selected_date if selected_date else "今日" }}成员汇总</p>
-  <div style="margin-bottom:12px">
-    <form method="get" action="/participants" style="display:flex;align-items:center;gap:8px">
-      <input type="date" name="date" value="{{ selected_date }}" style="padding:4px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--card);color:var(--text);font-size:13px">
-      <button type="submit" class="bt bt-s">查询</button>
-      {% if selected_date %}<a href="/participants" class="bt bt-s">回到今天</a>{% endif %}
-    </form>
+  <div class="page-header">
+    <h1 class="page-title">参会明细</h1>
+    <p class="page-subtitle" id="subtitle">加载中...</p>
   </div>
-  <div class="page-header-actions">
-    <a href="/download/participants.csv" class="bt bt-s">下载 CSV</a>
-    <a href="/download/participants.xlsx" class="bt bt-s">下载 Excel</a>
+
+  <!-- KPI 汇总卡片 -->
+  <div class="kg" id="kpiBar" style="display:none">
+    <div class="kc">
+      <div class="kr"><div class="ki" style="background:var(--in-b);color:var(--in)">🧑</div><span class="kv" id="kpiTotal">—</span></div>
+      <div class="kl">今日参会人数</div>
+    </div>
+    <div class="kc">
+      <div class="kr"><div class="ki" style="background:var(--sc-b);color:var(--sc)">🟢</div><span class="kv" id="kpiOnline">—</span></div>
+      <div class="kl">当前在线</div>
+    </div>
+    <div class="kc">
+      <div class="kr"><div class="ki" style="background:var(--pr);color:#fff">⏱️</div><span class="kv" id="kpiDuration">—</span></div>
+      <div class="kl">累计在线时长</div>
+    </div>
+    <div class="kc">
+      <div class="kr"><div class="ki" style="background:var(--wa-b);color:var(--wa)">📊</div><span class="kv" id="kpiAvg">—</span></div>
+      <div class="kl">平均在线时长</div>
+    </div>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div class="card" style="margin-bottom:16px;padding:12px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="display:flex;gap:6px">
+      <button class="bt bt-s filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
+      <button class="bt bt-s filter-btn" data-filter="online" onclick="setFilter('online')">🟢 在线</button>
+      <button class="bt bt-s filter-btn" data-filter="offline" onclick="setFilter('offline')">⚪ 离线</button>
+    </div>
+    <input type="text" id="searchInput" placeholder="搜索成员..." oninput="renderTable()"
+      style="flex:1;min-width:160px;padding:6px 12px;border:1px solid var(--cb);border-radius:6px;background:var(--card);color:var(--text);font-size:13px">
+    <span style="font-size:12px;color:var(--tm)" id="countBadge">—</span>
+  </div>
+
+  <!-- 参会表格 -->
+  <div class="card" id="tableCard">
+    <div class="empty-state" id="loadingState">
+      <div class="es-icon">⏳</div>
+      <div class="es-title">加载中</div>
+      <div class="es-desc">获取参会数据...</div>
+    </div>
+    <div style="display:none" id="tableWrap">
+      <table class="data-table" id="memberTable">
+        <thead><tr>
+          <th style="width:32px">#</th>
+          <th>成员</th>
+          <th>分组</th>
+          <th>状态</th>
+          <th>首次进入</th>
+          <th>今日累计</th>
+          <th>进入次数</th>
+          <th>离开次数</th>
+          <th>最后活动</th>
+        </tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="empty-state" id="emptyState" style="display:none">
+      <div class="es-icon">📭</div>
+      <div class="es-title">暂无数据</div>
+      <div class="es-desc" id="emptyDesc">今天还没有参会记录</div>
+    </div>
   </div>
 </div>
-<div class="card">
-  {% if participants %}
-  <table class="data-table"><thead><tr>
-    <th>成员</th><th>状态</th><th>首次进入</th><th>本次进入</th><th>本次在线</th><th>今日累计</th><th>离开次数</th><th>最后活动</th>
-  </tr></thead><tbody>
-  {% for p in participants %}
-  <tr>
-    <td class="td-name">{{ p.name }}</td>
-    <td>{% if p.status == '在线中' %}<span class="badge badge-green">在线中</span>{% else %}<span class="badge">已离线</span>{% endif %}</td>
-    <td class="td-mono">{{ to_myt(p.first_enter) }}</td>
-    <td class="td-mono">{% if p.is_online %}现在{% else %}{{ to_myt(p.last_active) }}{% endif %}</td>
-    <td>{{ p.current_session if p.current_session else '—' }}</td>
-    <td>{{ p.total_duration if p.total_duration else '—' }}</td>
-    <td>{{ p.leave_count if p.leave_count else 0 }}</td>
-    <td class="td-mono">{% if p.is_online %}现在{% else %}{{ to_myt(p.last_active) }}{% endif %}</td>
-  </tr>
-  {% endfor %}</tbody></table>
-  {% else %}
-  <div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无数据</div><div class="es-desc">今天还没有参会记录</div></div>
-  {% endif %}
-</div>
-</div>
+
+<style>
+.filter-btn.active{background:var(--pr);color:#fff;border-color:var(--pr)}
+td .expand-toggle{cursor:pointer;font-size:11px;color:var(--in);user-select:none;margin-left:4px}
+td .expand-toggle:hover{text-decoration:underline}
+tr.expand-row td{padding:0}
+tr.expand-row .event-list{background:var(--rh);padding:12px 16px 12px 48px;font-size:12px;color:var(--ts)}
+tr.expand-row .event-list .el-item{padding:2px 0;display:flex;align-items:center;gap:8px}
+tr.expand-row .event-list .el-item .el-act{font-weight:500}
+tr.expand-row .event-list .el-item .el-act.enter{color:var(--sc)}
+tr.expand-row .event-list .el-item .el-act.leave{color:var(--da)}
+tr.expand-row .event-list .el-item .el-time{font-family:'SF Mono','Fira Code',monospace;color:var(--tm);font-size:11px}
+.status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
+.status-dot.online{background:var(--sc)}
+.status-dot.offline{background:var(--tm)}
+</style>
+
+<script>
+let data = null;
+let currentFilter = 'all';
+
+async function loadData() {
+  try {
+    const r = await fetch('/api/v3/attendance-summary');
+    data = await r.json();
+    if (!data.ok) { showError(data.error || '请求失败'); return; }
+    document.getElementById('subtitle').textContent = data.date + ' 成员参会汇总';
+    document.getElementById('kpiBar').style.display = 'grid';
+    document.getElementById('kpiTotal').textContent = data.total_members;
+    document.getElementById('kpiOnline').textContent = data.online_count;
+    document.getElementById('kpiDuration').textContent = data.total_duration;
+    document.getElementById('kpiAvg').textContent = data.avg_duration;
+    document.getElementById('loadingState').style.display = 'none';
+    renderTable();
+  } catch(e) {
+    showError(e.message);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('loadingState').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'block';
+  document.getElementById('emptyDesc').textContent = '加载失败：' + msg;
+}
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+  renderTable();
+}
+
+function renderTable() {
+  if (!data || !data.members) return;
+  const search = document.getElementById('searchInput').value.trim().toLowerCase();
+
+  let filtered = data.members.filter(m => {
+    if (currentFilter === 'online' && m.status !== 'online') return false;
+    if (currentFilter === 'offline' && m.status !== 'offline') return false;
+    if (search && !m.standard_name.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  document.getElementById('countBadge').textContent = filtered.length + ' / ' + data.members.length;
+
+  if (filtered.length === 0) {
+    document.getElementById('tableWrap').style.display = 'none';
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('emptyDesc').textContent = search ? '没有匹配的成员' : '今天还没有参会记录';
+    return;
+  }
+
+  document.getElementById('tableWrap').style.display = '';
+  document.getElementById('emptyState').style.display = 'none';
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = filtered.map((m, i) => {
+    const isOnline = m.status === 'online';
+    const statusHtml = isOnline
+      ? '<span class="badge badge-green"><span class="status-dot online"></span>🟢 在线</span>'
+      : '<span class="badge" style="color:var(--tm);border-color:var(--cb)"><span class="status-dot offline"></span>⚪ 离线</span>';
+
+    return `<tr onclick="toggleExpand(${i})" style="cursor:pointer">
+      <td class="td-num">${i + 1}</td>
+      <td class="td-name">${escHtml(m.standard_name)}</td>
+      <td style="color:var(--ts);font-size:12px">${escHtml(m.group_name) || '<span style="color:var(--tm)">—</span>'}</td>
+      <td>${statusHtml}</td>
+      <td class="td-mono">${m.first_join_display || '—'}</td>
+      <td><strong>${m.today_total_duration}</strong></td>
+      <td>${m.join_count}</td>
+      <td>${m.leave_count}</td>
+      <td class="td-mono">${m.last_activity_display || '—'}</td>
+    </tr>
+    <tr class="expand-row" id="expand_${i}" style="display:none">
+      <td colspan="9"><div class="event-list">${buildEventList(m.raw_events)}</div></td>
+    </tr>`;
+  }).join('');
+
+  // Store filtered data for expand
+  window._filtered = filtered;
+}
+
+function buildEventList(events) {
+  if (!events || events.length === 0) return '<div style="color:var(--tm)">暂无记录</div>';
+  return events.map(e => {
+    const act = e.action === 'enter' || e.action === 'joined' ? 'enter' : 'leave';
+    const actCn = act === 'enter' ? '进入' : '离开';
+    return `<div class="el-item">
+      <span class="el-act ${act}">● ${actCn}</span>
+      <span class="el-time">${escHtml(e.action_time_display || '')}</span>
+      <span style="color:var(--tm);font-size:10px">${escHtml(e.meeting_id || '')}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleExpand(idx) {
+  const row = document.getElementById('expand_' + idx);
+  if (!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? '' : 'none';
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadData();
+</script>
 {% endblock %}

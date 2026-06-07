@@ -229,7 +229,11 @@ async def monitor_loop():
                                     _std = _rm["standard_name"]
                                     _grp = _rm.get("group_name") or "未分组"
                                     _join = _p.get("join_time", "")
-                                    _enter = _join[11:16] if len(_join) > 11 else "??:??"
+                                    try:
+                                        _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
+                                        _enter = _join_dt.astimezone(MYT).strftime("%H:%M")
+                                    except Exception:
+                                        _enter = _join[11:16] if len(_join) > 11 else "??:??"
                                     _mins = _p.get("online_minutes", 0)
                                     _h, _m = _mins // 60, _mins % 60
                                     _dur = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
@@ -257,19 +261,36 @@ async def monitor_loop():
                     ]
                     if _v2_participants:
                         _g_emoji = {"核销": "\U0001f535", "推进": "\U0001f7e3"}
+                        _idx = 0
                         for _g, _members in _ordered:
                             _emoji = _g_emoji.get(_g, "\u26aa")
                             _lines.append(f"{_emoji}\u3010{_g}\u3011")
                             for _std, _ent, _dur in _members:
-                                _lines.append(f"\u2022 {_std}")
+                                _idx += 1
+                                _lines.append(f"{_idx}. **{_std}**")
                                 _lines.append(f"  \u21b3 加入：{_ent}")
                                 _lines.append(f"  \u21b3 在线：{_dur}")
                             _lines.append("")
                     else:
                         _lines.append("当前无人在线")
                         _lines.append("")
-                    _lines.append(f"\U0001f4ca 共{len(_v2_participants)}人在线")
-                    await tg.send("\n".join(_lines), group=True)
+                    _lines.append(f"📊 共{len(_v2_participants)}人在线")
+                    # 读取推送规则的 target channel
+                    import db as _db
+                    _conn = _db._get_conn()
+                    _rule_row = _conn.execute(
+                        "SELECT target_channel_id FROM telegram_alert_rules WHERE event_type='periodic_online_report'"
+                    ).fetchone()
+                    _target_chat_id = ""
+                    if _rule_row and _rule_row[0]:
+                        _ch_row = _conn.execute(
+                            "SELECT chat_id FROM telegram_channels WHERE id=?", (_rule_row[0],)
+                        ).fetchone()
+                        if _ch_row and _ch_row[0]:
+                            _target_chat_id = _ch_row[0]
+                    sys.stdout.write(f"[PERIODIC REPORT] sending to chat_id={_target_chat_id or 'private'}\n")
+                    sys.stdout.flush()
+                    await tg.send("\n".join(_lines), chat_id=_target_chat_id)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
 

@@ -184,21 +184,11 @@ a{color:var(--pr);text-decoration:none}
       <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
         <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
       </div></div>
-      <div class="st-label">AI REPORTS</div>
-      <div class="ng"><div class="nh" onclick="tN('ai',this)"><i data-lucide="sparkles" style="width:14px;height:14px"></i><span style="flex:1">AI 报告</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="ai">
-        <a href="/ai/daily" class="ni {% if request.url.path == '/ai/daily' %}act{% endif %}"><i data-lucide="sun" class="ic"></i><span>AI 日报</span></a>
-        <a href="/ai/weekly" class="ni {% if request.url.path == '/ai/weekly' %}act{% endif %}"><i data-lucide="calendar" class="ic"></i><span>AI 周报</span></a>
-        <a href="/ai/monthly" class="ni {% if request.url.path == '/ai/monthly' %}act{% endif %}"><i data-lucide="calendar-range" class="ic"></i><span>AI 月报</span></a>
-      </div></div>
       <div class="st-label">SETTINGS</div>
       <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
-        <a href="/settings/zoom" class="ni {% if request.url.path == '/settings/zoom' %}act{% endif %}"><i data-lucide="video" class="ic"></i><span>Zoom 配置</span></a>
-        <a href="/settings/telegram" class="ni {% if request.url.path == '/settings/telegram' %}act{% endif %}"><i data-lucide="send" class="ic"></i><span>Telegram 配置</span></a>
         <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}act{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>
-        <a href="/settings/telegram-rules" class="ni {% if request.url.path == "/settings/telegram-rules" %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>Telegram 推送规则</span></a>
-        <a href="/settings/telegram-channels" class="ni {% if request.url.path == "/settings/telegram-channels" %}act{% endif %}"><i data-lucide="message-circle" class="ic"></i><span>Telegram 群组设置</span></a>
+        <a href="/settings/telegram-rules" class="ni {% if request.url.path == "/settings/telegram-rules" %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>推送设置</span></a>
         <a href="/settings/members" class="ni {% if request.url.path == '/settings/members' %}act{% endif %}"><i data-lucide="users" class="ic"></i><span>成员别名</span></a>
-        <a href="/settings/groups" class="ni {% if request.url.path == "/settings/groups" %}act{% endif %}"><i data-lucide="layers" class="ic"></i><span>分组管理</span></a>
       </div></div>
     </div>
   </aside>

@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -264,15 +265,9 @@ def build_app() -> "FastAPI":
 
     @app.get("/participants", response_class=HTMLResponse)
     async def participants_page(request: Request):
-        if settings.demo_mode:
-            participants = _ensure_demo().get_demo_participants()
-        else:
-            participants = db.get_today_participants(limit=200)
         return tmpl.TemplateResponse(request, "participants.html", {
-            "participants": participants,
             "brand": BRAND,
             "demo_mode": settings.demo_mode,
-            "to_myt": to_myt,
         })
 
     @app.get("/alerts", response_class=HTMLResponse)
@@ -338,96 +333,13 @@ def build_app() -> "FastAPI":
     async def attendance_page(request: Request):
         return tmpl.TemplateResponse(request, "attendance.html", {"brand": BRAND})
 
-    # ── AI 报告 ────────────────────────────────────────────────────────────
-    @app.get("/ai/daily", response_class=HTMLResponse)
-    async def ai_daily_page(request: Request):
-        return tmpl.TemplateResponse(request, "ai_report.html", {"brand": BRAND, "period": "daily", "period_name": "日报"})
-
-    @app.get("/ai/weekly", response_class=HTMLResponse)
-    async def ai_weekly_page(request: Request):
-        return tmpl.TemplateResponse(request, "ai_report.html", {"brand": BRAND, "period": "weekly", "period_name": "周报"})
-
-    @app.get("/ai/monthly", response_class=HTMLResponse)
-    async def ai_monthly_page(request: Request):
-        return tmpl.TemplateResponse(request, "ai_report.html", {"brand": BRAND, "period": "monthly", "period_name": "月报"})
-
-    @app.get("/api/ai-report")
-    async def api_ai_report(period: str = "daily"):
-        """AI 报告：按周期生成参会分析报告"""
-        now = datetime.now(timezone.utc)
-        if period == "daily":
-            since = now - timedelta(days=1)
-        elif period == "weekly":
-            since = now - timedelta(days=7)
-        elif period == "monthly":
-            since = now - timedelta(days=30)
-        else:
-            return {"ok": False, "error": "period must be daily/weekly/monthly"}
-        since_str = since.strftime("%Y-%m-%d")
-        conn = db._get_conn()
-        rows = conn.execute("SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? ORDER BY action_time", (since_str,)).fetchall()
-        if not rows:
-            return {"ok": False, "note": f"该周期内无数据", "period": period}
-        names = set()
-        entries = 0
-        for r in rows:
-            names.add(r[0])
-            if r[1] == "enter":
-                entries += 1
-        prompt = f"Zoom 参会监控{period}报告：周期内 {len(names)} 人参会，{entries} 次进入。生成 200 字中文总结。"
-        try:
-            import requests as req
-            ai = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions",
-                json={"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 500},
-                headers={"Authorization": "Bearer " + (os.environ.get("SUB2API_KEY") or os.environ.get("DEEPSEEK_API_KEY", ""))},
-                timeout=30)
-            d = ai.json()
-            report = d["choices"][0]["message"]["content"] if d.get("choices") else "AI 暂时不可用"
-        except Exception as e:
-            report = f"AI 不可用: {e}"
-        return {"ok": True, "period": period, "total_people": len(names), "total_entries": entries, "report": report}
-
     # ── 设置 ────────────────────────────────────────────────────────────────
+    # 旧路由重定向（向后兼容）
     @app.get("/settings/zoom", response_class=HTMLResponse)
-    async def settings_zoom_page(request: Request):
-        # 收集 Zoom 配置状态
-        conn = db._get_conn()
-        tokens = conn.execute("SELECT email, scope, expires_at FROM zoom_oauth_tokens ORDER BY id DESC LIMIT 3").fetchall()
-        webhook_status = "未配置"
-        try:
-            import requests as req
-            h = req.get("http://127.0.0.1:9000/health", timeout=3)
-            webhook_status = "运行中" if h.status_code == 200 else "异常"
-        except: webhook_status = "未启动"
-        return tmpl.TemplateResponse(request, "settings_zoom.html", {
-            "brand": BRAND,
-            "monitor_interval": getattr(settings, "monitor_interval", 300),
-            "pmi_id": getattr(settings, "zoom_pmi_id", ""),
-            "extra_ids": getattr(settings, "zoom_extra_meeting_ids", ""),
-            "host_email": getattr(settings, "zoom_host_email", ""),
-            "webhook_status": webhook_status,
-            "oauth_accounts": [{"email": r[0], "scope": (r[1] or "")[:50], "expires_at": r[2]} for r in tokens],
-        })
-
     @app.get("/settings/telegram", response_class=HTMLResponse)
-    async def settings_telegram_page(request: Request):
-        # 检查 bot 状态
-        bot_ok = False
-        bot_username = ""
-        try:
-            import requests as req
-            token = "8791140288:AAHL_7Az6vQitTIJUhlP-M8YaMXzPz2joG4"
-            r = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
-            if r.json().get("ok"):
-                bot_ok = True
-                bot_username = r.json()["result"]["username"]
-        except: pass
-        return tmpl.TemplateResponse(request, "settings_telegram.html", {
-            "brand": BRAND,
-            "bot_ok": bot_ok,
-            "bot_username": bot_username,
-            "home_chat_id": "7922047310",
-        })
+    async def settings_old_redirect():
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/settings/system")
 
     # ── Telegram Rules API ──────────────────────────────────────────────
 
@@ -570,20 +482,24 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/groups", response_class=HTMLResponse)
     async def settings_groups_page(request: Request):
-        """分组名称管理"""
-        return tmpl.TemplateResponse(request, "settings_groups.html", {
-            "brand": BRAND,
-        })
+        # 合并到 /settings/members
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/settings/members")
 
     @app.get("/settings/system", response_class=HTMLResponse)
     async def settings_system_page(request: Request):
         import os
         import subprocess
+        import json as _j
         docker_status = {}
         for name in ["zoom-monitor", "zoom-api", "zoom-webhook", "zoom-command"]:
             try:
-                r = subprocess.run(["docker", "inspect", name, "--format", "{{.State.Status}}"], capture_output=True, text=True, timeout=5)
-                docker_status[name] = r.stdout.strip()
+                r = subprocess.run(["curl", "-s", "--unix-socket", "/var/run/docker.sock", f"http://localhost/containers/{name}/json"], capture_output=True, text=True, timeout=5)
+                if r.returncode == 0 and r.stdout:
+                    data = _j.loads(r.stdout)
+                    docker_status[name] = data.get("State", {}).get("Status", "unknown")
+                else:
+                    docker_status[name] = "unknown"
             except:
                 docker_status[name] = "unknown"
 
@@ -606,12 +522,49 @@ def build_app() -> "FastAPI":
         except:
             pass
 
+        # Zoom 凭证数据（原 settings_zoom_page）
+        conn = db._get_conn()
+        tokens = []
+        try:
+            tokens = conn.execute("SELECT email, scope, expires_at FROM zoom_oauth_tokens ORDER BY id DESC LIMIT 3").fetchall()
+        except Exception:
+            tokens = []
+        webhook_status = "未配置"
+        try:
+            import requests as req
+            h = req.get("http://127.0.0.1:9000/health", timeout=3)
+            webhook_status = "运行中" if h.status_code == 200 else "异常"
+        except: webhook_status = "未启动"
+
+        # Telegram Bot 数据（原 settings_telegram_page）
+        bot_ok = False
+        bot_username = ""
+        try:
+            import requests as req
+            token = settings.telegram_bot_token
+            r = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5)
+            if r.json().get("ok"):
+                bot_ok = True
+                bot_username = r.json()["result"]["username"]
+        except: pass
+
         return tmpl.TemplateResponse(request, "settings_system.html", {
             "brand": BRAND,
             "version": "0.2.1",
             "docker_status": docker_status,
             "zoom_status": zoom_status,
             "participant_count": db.get_today_participants(limit=1) and len(db.get_today_participants(limit=10000)) or 0,
+            # Zoom 凭证
+            "monitor_interval": getattr(settings, "monitor_interval", 300),
+            "pmi_id": getattr(settings, "zoom_pmi_id", ""),
+            "extra_ids": getattr(settings, "zoom_extra_meeting_ids", ""),
+            "host_email": getattr(settings, "zoom_host_email", ""),
+            "webhook_status": webhook_status,
+            "oauth_accounts": [{"email": r[0], "scope": (r[1] or "")[:50], "expires_at": r[2]} for r in tokens],
+            # Telegram Bot
+            "bot_ok": bot_ok,
+            "bot_username": bot_username,
+            "home_chat_id": "7922047310",
         })
     # ── API ──────────────────────────────────────────────────────────────────
     @app.post("/api/tg/send-test")
@@ -730,6 +683,15 @@ def build_app() -> "FastAPI":
             return _ensure_demo().get_demo_participants(limit=limit)
         return db.get_today_participants(limit=limit)
 
+    @app.get("/api/v3/attendance-summary")
+    async def api_v3_attendance_summary():
+        if settings.demo_mode:
+            return _ensure_demo().get_demo_attendance_summary()
+        try:
+            return db.get_today_attendance_summary()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     @app.get("/api/alerts")
     async def api_alerts(limit: int = 50):
         if settings.demo_mode:
@@ -838,7 +800,13 @@ def build_app() -> "FastAPI":
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
             name = participant.get("user_name", "").strip()
-            user_id = re.sub(r"[^0-9]", "", str(participant.get("user_id", "")))[:20]
+            raw_uid = str(participant.get("user_id", ""))
+            # Breakout room events corrupt user_id by appending timestamp
+            if "breakout" in event_type and re.search(r"20\d{2}-\d{2}-\d{2}", raw_uid):
+                m = re.match(r"^(\d+)", raw_uid)
+                user_id = m.group(1) if m else ""
+            else:
+                user_id = re.sub(r"[^0-9]", "", raw_uid)[:20]
             sd = participant.get("sharing_details", {})
             content = sd.get("content", "")
             dt_str = sd.get("date_time", "")
@@ -1034,11 +1002,9 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/telegram-channels", response_class=HTMLResponse)
     async def settings_telegram_channels_page(request: Request):
-        channels = db.get_telegram_channels()
-        return tmpl.TemplateResponse(request, "settings_telegram_channels.html", {
-            "brand": BRAND,
-            "channels": channels,
-        })
+        # 合并到 /settings/telegram-rules
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/settings/telegram-rules")
 
     @app.get("/api/v3/aliases")
     async def api_v3_aliases():
@@ -1323,7 +1289,12 @@ def build_app() -> "FastAPI":
                 et = p.get("event", "")
                 obj = p.get("payload", {}).get("object", p.get("object", {}))
                 pt = obj.get("participant", {})
-                uid = re.sub(r"[^0-9]", "", str(pt.get("user_id", "")))[:20]
+                raw_uid2 = str(pt.get("user_id", ""))
+                if "breakout" in et and re.search(r"20\d{2}-\d{2}-\d{2}", raw_uid2):
+                    m2 = re.match(r"^(\d+)", raw_uid2)
+                    uid = m2.group(1) if m2 else ""
+                else:
+                    uid = re.sub(r"[^0-9]", "", raw_uid2)[:20]
                 raw = pt.get("user_name", "").strip()
                 sd = pt.get("sharing_details", {})
                 dt_str = sd.get("date_time", "")
@@ -1678,7 +1649,6 @@ def build_app() -> "FastAPI":
             "成员：Dino Jun\n"
             "会议：tuijin's Zoom Meeting\n"
             "共享时长：32 分钟\n\n"
-            "查看：https://zoom.dhbwang.xyz/sharing"
         )
         return result
 
@@ -1741,7 +1711,6 @@ def build_app() -> "FastAPI":
                                                 + f"成员：{display_name}\n"
                                                 + f"会议：{topic}\n"
                                                 + f"共享时长：{mins} 分钟\n\n"
-                                                + "查看：https://zoom.dhbwang.xyz/sharing"
                                             )
                                             result = send_message(text, rule.get("chat_id") or None)
                                             if result.get("ok"):
@@ -2015,8 +1984,7 @@ def build_app() -> "FastAPI":
         }
         return {"ok": True, "stats": stats, "members": sorted(members, key=lambda x: x["name"]), "meetings": [{"meeting_id": k, "count": v["count"], "unique_people": len(v["names"]), "first_enter": v["first_enter"][:19] if v["first_enter"] != "99:99" else "", "last_leave": v["last_leave"][:19] if v["last_leave"] != "00:00" else ""} for k, v in meetings.items()]}
 
-    # ── AI 分析 ────────────────────────────────────────────────────────────
-    
+
 
     @app.get("/api/v3/live")
     async def api_v3_live():
@@ -2104,149 +2072,6 @@ def build_app() -> "FastAPI":
             "sharing_count": sharing_count,
             "meetings": meetings,
         }
-
-
-    @app.get("/api/v2/ai-analysis")
-    async def api_ai_analysis():
-        """用 AI（DeepSeek）分析今日参会数据，生成自然语言报告"""
-        # 先拿汇总数据
-        summary_resp = await api_summary()
-        if not summary_resp.get("ok"):
-            return {"ok": False, "error": "无数据"}
-        data = summary_resp
-
-        # 构建 prompt
-        stats = data.get("stats", {})
-        members = data.get("members", [])
-        meetings = data.get("meetings", [])
-
-        prompt = f"""作为 Zoom 参会监控的 AI 分析助手，请分析今天的参会数据并生成中文报告。
-
-今日概览：
-- 总参与人数: {stats.get('total_participants', 0)} 人
-- 参会记录数: {stats.get('total_records', 0)} 条
-- 平均在线时长: {stats.get('avg_duration_min', 0)} 分钟
-- 迟到人数: {stats.get('late_count', 0)} 人
-- 早退人数: {stats.get('early_leave_count', 0)} 人
-
-参会明细:
-{chr(10).join(f'- {m["name"]}: {m["duration_min"]}分钟 (会议:{m["meeting_id"]})' + (' ⚠️迟到' if m.get('is_late') else '') + (' ⚠️早退' if m.get('is_early_leave') else '') for m in members[:30])}
-
-会议室:
-{chr(10).join(f'- 会议 {m["meeting_id"]}: {m["unique_people"]}人参与, 最早 {m["first_enter"]}, 最晚 {m["last_leave"]}' for m in meetings[:10])}
-
-请生成一份简洁的总结报告（300字以内），包括：
-1. 出勤概况
-2. 异常标记（迟到/早退）
-3. 建议"""
-
-        try:
-            import requests as req
-            ai_resp = req.post("https://sub2api.dhbwang.xyz/v1/chat/completions",
-                json={"model": "gpt-5.4-mini", "messages": [{"role": "user", "content": prompt}], "max_tokens": 500},
-                headers={"Authorization": "Bearer " + (os.environ.get("SUB2API_KEY") or os.environ.get("DEEPSEEK_API_KEY", ""))},
-                timeout=30)
-            d = ai_resp.json()
-            report = d["choices"][0]["message"]["content"] if d.get("choices") else "AI 分析暂不可用"
-        except Exception as e:
-            report = f"AI 分析暂时不可用（{str(e)}）"
-
-        return {"ok": True, "report": report}
-
-    @app.get("/api/v2/ai-daily-report")
-    async def api_ai_daily_report():
-        """Generate formatted AI daily report text for Telegram push"""
-        import httpx
-        from datetime import datetime, timezone, timedelta
-        MYT = timezone(timedelta(hours=8))
-        now_myt = datetime.now(MYT)
-        date_str = now_myt.strftime("%Y-%m-%d")
-
-        async with httpx.AsyncClient(timeout=10) as client:
-            try:
-                live_r = await client.get("http://localhost:8000/api/v2/live")
-                live = live_r.json() if live_r.status_code == 200 else {}
-            except:
-                live = {}
-            try:
-                sum_r = await client.get("http://localhost:8000/api/v2/summary")
-                summary = sum_r.json() if sum_r.status_code == 200 else {}
-            except:
-                summary = {}
-
-        stats = summary.get("stats", {})
-        members = summary.get("members", [])
-        anomalies = live.get("anomalies", [])
-        top_online = live.get("top_online", [])
-        top_active = live.get("top_active", [])
-        ai_summary = live.get("ai_summary", "")
-        online_count = live.get("total_online", 0)
-        total_participants = live.get("unique_participants", stats.get("total_participants", 0))
-        total_events = live.get("total_events", 0)
-
-        lines = []
-        lines.append(f"\U0001f4ca Zoom Monitor \u65e5\u62a5")
-        lines.append(f"\U0001f4c5 {date_str}")
-        lines.append("")
-        late = stats.get("late_count", 0)
-        early = stats.get("early_leave_count", 0)
-        risk = late + early
-        lines.append(f"\U0001f465 \u53c2\u4e0e: {total_participants}  |  \U0001f7e2 \u5728\u7ebf: {online_count}")
-        lines.append(f"\U0001f4cb \u4e8b\u4ef6: {total_events}  |  \u26a0 \u98ce\u9669: {risk}")
-        lines.append(f"\u23f1 \u5e73\u5747: {stats.get('avg_duration_min', 0)} \u5206\u949f")
-        lines.append("")
-
-        if top_active:
-            lines.append("\U0001f3c6 \u6700\u6d3b\u8dc3")
-            for ta in top_active[:3]:
-                lines.append(f"  {ta['name']} \u2014 {ta['count']} \u6b21")
-            lines.append("")
-        if top_online:
-            lines.append("\u23f1 \u6700\u957f\u5728\u7ebf")
-            for to in top_online[:3]:
-                lines.append(f"  {to['name']} \u2014 {to['duration_display']}")
-            lines.append("")
-        if anomalies:
-            lines.append("\U0001f6a8 \u98ce\u9669")
-            for a in anomalies[:5]:
-                lines.append(f"  \u26a0 {a['name']} \u2014 {', '.join(a['flags'])} ({a['actions']}\u6b21)")
-            lines.append("")
-        if ai_summary:
-            lines.append("\U0001f916 AI \u5206\u6790")
-            lines.append(f"  {ai_summary}")
-            lines.append("")
-        if late > 0 or early > 0:
-            lines.append(f"\u26a0 \u5f02\u5e38: \u8fdf\u5230 {late}  |  \u65e9\u9000 {early}")
-            risk_members = [m for m in members if m.get("is_late") or m.get("is_early_leave")]
-            for rm in risk_members[:5]:
-                tags = []
-                if rm.get("is_late"): tags.append("\u8fdf\u5230")
-                if rm.get("is_early_leave"): tags.append("\u65e9\u9000")
-                lines.append(f"  {rm['name']} ({', '.join(tags)})")
-
-        return {"ok": True, "report": "\n".join(lines), "date": date_str}
-
-    @app.get("/api/v2/tg-send-daily-report")
-    async def api_tg_send_daily_report():
-        """Send AI daily report to Telegram"""
-        import httpx
-        report_resp = await api_ai_daily_report()
-        if not report_resp.get("ok"):
-            return {"ok": False, "error": "Daily report generation failed"}
-        text = report_resp["report"]
-        token = settings.telegram_bot_token
-        chat_id = settings.telegram_group_chat_id or settings.telegram_private_chat_id
-        if not token or not chat_id:
-            return {"ok": False, "error": "Telegram not configured"}
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                r = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": chat_id, "text": text},
-                )
-                return {"ok": r.json().get("ok", False)}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
 
     # ── 实时功能 ────────────────────────────────────────────────────────────
 

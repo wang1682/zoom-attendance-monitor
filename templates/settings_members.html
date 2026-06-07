@@ -414,5 +414,198 @@ function esc(s){
 
 // ── Init ─────────────────────────────────────────────────────────────
 loadAll();
+
+// ── 分组管理 ──────────────────────────────────────────────────────────
+let editingGroupId = null;
+let groupsData = [];
+let configGroupId = null;
+let configGroupName = '';
+let configOriginalMembers = [];
+
+async function loadGroups(){
+  const r = await fetch('/api/v3/member-groups');
+  const j = await r.json();
+  const tb = document.getElementById('groupTableBody');
+  if (!j.ok || !j.groups) { tb.innerHTML = '<tr><td colspan="4" class="td-empty">暂无分组</td></tr>'; return; }
+  groupsData = j.groups;
+  tb.innerHTML = j.groups.map(g => `<tr>
+    <td class="td-name">${esc(g.name)}</td>
+    <td style="color:var(--ts)">${esc(g.description || '—')}</td>
+    <td>${g.members ? g.members.length : 0}</td>
+    <td>
+      <button class="bt bt-s" onclick="openGroupMembers(${g.id},'${esc(g.name)}')" title="配置成员">👥</button>
+      <button class="bt bt-s" onclick="editGroup(${g.id},'${esc(g.name)}','${esc(g.description||'')}')">✏️</button>
+      <button class="bt bt-s bt-d" onclick="deleteGroup(${g.id},'${esc(g.name)}')">删除</button>
+    </td>
+  </tr>`).join('');
+}
+
+function editGroup(id, name, desc){
+  editingGroupId = id;
+  document.getElementById('newGroupName').value = name;
+  document.getElementById('newGroupDesc').value = desc;
+  document.getElementById('groupCreateBtn').textContent = '更新';
+  document.getElementById('groupCancelBtn').style.display = 'inline-block';
+}
+
+function cancelGroupEdit(){
+  editingGroupId = null;
+  document.getElementById('newGroupName').value = '';
+  document.getElementById('newGroupDesc').value = '';
+  document.getElementById('groupCreateBtn').textContent = '创建';
+  document.getElementById('groupCancelBtn').style.display = 'none';
+}
+
+async function createOrUpdateGroup(){
+  const name = document.getElementById('newGroupName').value.trim();
+  const desc = document.getElementById('newGroupDesc').value.trim();
+  if (!name) return alert('请输入分组名称');
+  let url = '/api/v3/member-groups';
+  let method = 'POST';
+  if (editingGroupId) { url += '/' + editingGroupId; method = 'PUT'; }
+  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, description: desc})});
+  const j = await r.json();
+  if (j.ok) { cancelGroupEdit(); loadGroups(); }
+  else alert('操作失败');
+}
+
+async function deleteGroup(id, name){
+  if (!confirm('确定删除分组 "' + name + '"?')) return;
+  const r = await fetch('/api/v3/member-groups/' + id, {method:'DELETE'});
+  const j = await r.json();
+  if (j.ok) loadGroups();
+  else alert('删除失败');
+}
+
+// ── Group Member Configuration Modal ──────────────────────────────
+function escAttr(s){
+  if(!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+                  .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function openGroupMembers(groupId, groupName){
+  const group = groupsData.find(g => g.id === groupId);
+  if(!group) return;
+  configGroupId = groupId;
+  configGroupName = groupName;
+  configOriginalMembers = (group.members || []);
+
+  const tbody = document.getElementById('groupMemberCheckList');
+  const members = membersData || [];
+  if(!members.length){
+    tbody.innerHTML = '<tr><td colspan="2" class="td-empty">暂无成员，请先在左侧创建成员</td></tr>';
+  } else {
+    const groupMembersSet = new Set(configOriginalMembers);
+    tbody.innerHTML = members.map(m => {
+      const rawName = m.raw_name || '';
+      const checked = groupMembersSet.has(rawName) ? 'checked' : '';
+      return `<tr>
+        <td><input type="checkbox" value="${escAttr(rawName)}" ${checked}></td>
+        <td>${esc(m.display_name || rawName)} <span style="color:var(--ts);font-size:11px">(${esc(rawName)})</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.getElementById('groupMemberModalTitle').textContent = '配置成员 — ' + groupName;
+  document.getElementById('groupMemberModal').style.display = 'flex';
+}
+
+function closeGroupMemberModal(){
+  document.getElementById('groupMemberModal').style.display = 'none';
+}
+
+async function saveGroupMembers(){
+  const checkboxes = document.querySelectorAll('#groupMemberCheckList input[type="checkbox"]');
+  const selected = [];
+  checkboxes.forEach(cb => { if(cb.checked) selected.push(cb.value); });
+
+  // Calculate diffs
+  const toAdd = selected.filter(s => !configOriginalMembers.includes(s));
+  const toRemove = configOriginalMembers.filter(s => !selected.includes(s));
+
+  if(!toAdd.length && !toRemove.length){
+    closeGroupMemberModal();
+    return;
+  }
+
+  // Show saving state
+  const btn = document.getElementById('saveGroupMembersBtn');
+  const origText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '保存中...';
+
+  let errors = [];
+  for(const rawName of toRemove){
+    try {
+      const r = await fetch('/api/v3/member-groups/' + configGroupId + '/members/' + encodeURIComponent(rawName), {method:'DELETE'});
+      const d = await r.json();
+      if(!d.ok) errors.push('移除失败: ' + rawName);
+    } catch(e){ errors.push('移除异常: ' + rawName); }
+  }
+
+  for(const rawName of toAdd){
+    try {
+      const r = await fetch('/api/v3/member-groups/' + configGroupId + '/members', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({member_name: rawName})
+      });
+      const d = await r.json();
+      if(!d.ok) errors.push('添加失败: ' + rawName);
+    } catch(e){ errors.push('添加异常: ' + rawName); }
+  }
+
+  btn.disabled = false;
+  btn.textContent = origText;
+
+  if(errors.length){
+    alert('部分操作失败:\n' + errors.join('\n'));
+  }
+
+  closeGroupMemberModal();
+  loadGroups();
+  loadAll();
+}
+
+document.addEventListener('DOMContentLoaded', loadGroups);
 </script>
+
+<!-- Modal: Group Member Configuration -->
+<div class="modal-overlay" id="groupMemberModal" onclick="if(event.target===this)closeGroupMemberModal()">
+  <div class="modal" style="min-width:460px;max-width:520px">
+    <h3 id="groupMemberModalTitle">配置成员</h3>
+    <div style="max-height:360px;overflow-y:auto">
+      <table class="data-table" style="width:100%">
+        <thead><tr><th style="width:36px">选择</th><th>成员（显示名 → 原始名）</th></tr></thead>
+        <tbody id="groupMemberCheckList"><tr><td colspan="2" class="td-empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="closeGroupMemberModal()">取消</button>
+      <button class="btn btn-primary btn-sm" id="saveGroupMembersBtn" onclick="saveGroupMembers()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── 分组管理 ──────────────────────────────────────────────── -->
+<hr style="margin:32px 0;border-color:var(--div)">
+<div class="page-container">
+  <div style="margin-bottom:20px">
+    <h2 style="font-size:16px;font-weight:600;margin:0 0 4px 0">📂 分组管理</h2>
+    <p style="font-size:12px;color:var(--ts);margin:0">管理成员分组名称，点击 👥 按钮配置成员归属</p>
+  </div>
+  <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+    <input id="newGroupName" class="ipt" placeholder="分组名称" style="width:200px">
+    <input id="newGroupDesc" class="ipt" placeholder="描述" style="width:300px">
+    <button class="bt bt-p" id="groupCreateBtn" onclick="createOrUpdateGroup()">创建</button>
+    <button class="bt bt-s" id="groupCancelBtn" onclick="cancelGroupEdit()" style="display:none">取消</button>
+  </div>
+  <div class="card" style="padding:16px">
+    <table class="data-table" style="width:100%">
+      <thead><tr><th>名称</th><th>描述</th><th>成员数</th><th>操作</th></tr></thead>
+      <tbody id="groupTableBody"><tr><td colspan="4" class="td-empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}

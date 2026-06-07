@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Telegram 推送规则{% endblock %}
+{% block title %}推送设置{% endblock %}
 {% block content %}
 <div class="page-container">
-  <div class="page-header"><h1>📋 Telegram 推送规则</h1><p>按事件类型精细控制 Telegram 推送</p></div>
+  <div class="page-header"><h1>📨 推送设置</h1><p>按事件类型精细控制 Telegram 推送</p></div>
 
   <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
     <button class="bt bt-p bt-s" onclick="showCreateForm()">➕ 新建规则</button>
@@ -275,5 +275,187 @@ editRule = function(eventType) {
 
 // On page load, load channels
 document.addEventListener('DOMContentLoaded', loadChannels);
+</script>
+
+<!-- ─── 频道管理 ──────────────────────────────────────────────── -->
+<hr style="margin:32px 0;border-color:var(--div)">
+<div class="page-header"><h1>📢 频道管理</h1><p>管理 Telegram 推送频道/群组</p></div>
+
+<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">
+  <button class="bt bt-p bt-s" onclick="showChannelForm()">➕ 新建频道</button>
+</div>
+
+<div id="channelForm" style="display:none;background:var(--cb);border:1px solid var(--bd);border-radius:8px;padding:16px;margin-bottom:16px">
+  <h3 style="margin:0 0 12px 0;font-size:14px" id="chFormTitle">新建频道</h3>
+  <input type="hidden" id="chEditChatId" value="">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:600px">
+    <div>
+      <label style="font-size:12px;color:var(--ts)">名称 *</label>
+      <input id="chFName" class="ipt" style="width:100%" placeholder="例如: 默认频道">
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--ts)">Chat ID *</label>
+      <input id="chFChatId" class="ipt" style="width:100%" placeholder="7922047310">
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--ts)">启用</label>
+      <select id="chFEnabled" class="ipt" style="width:100%">
+        <option value="1">是</option>
+        <option value="0">否</option>
+      </select>
+    </div>
+    <div>
+      <label style="font-size:12px;color:var(--ts)">设为默认</label>
+      <select id="chFIsDefault" class="ipt" style="width:100%">
+        <option value="0">否</option>
+        <option value="1">是</option>
+      </select>
+    </div>
+    <div style="grid-column:1/-1">
+      <label style="font-size:12px;color:var(--ts)">备注</label>
+      <input id="chFNotes" class="ipt" style="width:100%" placeholder="可选备注信息">
+    </div>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:8px">
+    <button class="bt bt-p bt-s" onclick="saveChannel()">💾 保存</button>
+    <button class="bt bt-s" onclick="hideChannelForm()">取消</button>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>名称</th>
+        <th>Chat ID</th>
+        <th>状态</th>
+        <th>默认</th>
+        <th>备注</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="channelTableBody">
+      <tr><td colspan="6" style="text-align:center;color:var(--ts)">加载中...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<style>
+.ch-ipt{background:var(--bg);border:1px solid var(--cb);border-radius:6px;padding:7px 10px;font-size:13px;color:var(--text);outline:none;transition:border-color .15s;width:100%;box-sizing:border-box}
+.ch-ipt:focus{border-color:var(--pr)}
+</style>
+
+<script>
+// ── Helpers ──
+function esc(s){if(typeof s!=='string')return s;return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/'/g,'&#39;').replace(/"/g,'&quot;')}
+
+// ── Channel State ──
+let channelsData = [];
+
+// ── Channel CRUD ──
+async function loadChannelsData() {
+  try {
+    const resp = await fetch('/api/v3/telegram-channels');
+    const j = await resp.json();
+    if (j.ok && j.channels) {
+      channelsData = j.channels;
+      renderChannelTable();
+    }
+  } catch(e) {}
+}
+
+function renderChannelTable() {
+  const tb = document.getElementById('channelTableBody');
+  if (!channelsData.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="td-empty">暂无频道，点击上方按钮创建</td></tr>';
+    return;
+  }
+  tb.innerHTML = channelsData.map(c => `<tr>
+    <td class="td-name">${esc(c.name)}</td>
+    <td><code class="mono">${esc(c.chat_id)}</code></td>
+    <td><span class="bg ${c.enabled ? 'bg-g' : 'bg-r'}">${c.enabled ? '🟢 启用' : '🔴 禁用'}</span></td>
+    <td>${c.is_default ? '⭐ 默认' : '—'}</td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts)">${esc(c.notes || '—')}</td>
+    <td>
+      <button class="bt bt-s" onclick="editChannel('${esc(c.chat_id)}')">✏️</button>
+      <button class="bt bt-s" onclick="testChannel('${esc(c.chat_id)}')">📨</button>
+      <button class="bt bt-s bt-d" onclick="deleteChannel('${esc(c.chat_id)}','${esc(c.name)}')">🗑️</button>
+    </td>
+  </tr>`).join('');
+}
+
+function showChannelForm() {
+  document.getElementById('chEditChatId').value = '';
+  document.getElementById('chFormTitle').textContent = '新建频道';
+  document.getElementById('chFName').value = '';
+  document.getElementById('chFChatId').value = '';
+  document.getElementById('chFEnabled').value = '1';
+  document.getElementById('chFIsDefault').value = '0';
+  document.getElementById('chFNotes').value = '';
+  document.getElementById('channelForm').style.display = 'block';
+}
+
+function hideChannelForm() {
+  document.getElementById('channelForm').style.display = 'none';
+}
+
+function editChannel(chatId) {
+  const c = channelsData.find(x => x.chat_id === chatId);
+  if (!c) return;
+  document.getElementById('chEditChatId').value = chatId;
+  document.getElementById('chFormTitle').textContent = '编辑频道: ' + (c.name || chatId);
+  document.getElementById('chFName').value = c.name || '';
+  document.getElementById('chFChatId').value = c.chat_id || '';
+  document.getElementById('chFEnabled').value = c.enabled ? '1' : '0';
+  document.getElementById('chFIsDefault').value = c.is_default ? '1' : '0';
+  document.getElementById('chFNotes').value = c.notes || '';
+  document.getElementById('channelForm').style.display = 'block';
+}
+
+async function saveChannel() {
+  const editChatId = document.getElementById('chEditChatId').value;
+  const data = {
+    name: document.getElementById('chFName').value.trim(),
+    chat_id: document.getElementById('chFChatId').value.trim(),
+    enabled: parseInt(document.getElementById('chFEnabled').value),
+    is_default: parseInt(document.getElementById('chFIsDefault').value),
+    notes: document.getElementById('chFNotes').value.trim(),
+  };
+  if (!data.name || !data.chat_id) return alert('名称和 Chat ID 不能为空');
+  let url = '/api/v3/telegram-channels';
+  let method = 'POST';
+  if (editChatId) { url += '/' + encodeURIComponent(editChatId); method = 'PUT'; }
+  try {
+    const resp = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const j = await resp.json();
+    if (j.ok) location.reload();
+    else alert('保存失败: ' + (j.error || ''));
+  } catch(e) { alert('请求失败: ' + e.message); }
+}
+
+async function deleteChannel(chatId, name) {
+  if (!confirm('确定要删除频道 "' + name + '" 吗？')) return;
+  try {
+    const resp = await fetch('/api/v3/telegram-channels/' + encodeURIComponent(chatId), { method: 'DELETE' });
+    const j = await resp.json();
+    if (j.ok) location.reload();
+    else alert('删除失败');
+  } catch(e) { alert('请求失败'); }
+}
+
+async function testChannel(chatId) {
+  if (!confirm('确定要发送测试消息到该频道吗？')) return;
+  try {
+    const resp = await fetch('/api/v3/telegram-channels/' + encodeURIComponent(chatId) + '/test', { method: 'POST' });
+    const j = await resp.json();
+    alert(j.ok ? '✅ 测试消息发送成功！' : '❌ 发送失败: ' + (j.error || ''));
+  } catch(e) { alert('请求失败'); }
+}
+
+// ── Init channels ──
+document.addEventListener('DOMContentLoaded', function() {
+  loadChannels();  // existing: load channels for rule dropdown
+  loadChannelsData();  // new: load channels for channel table
+});
 </script>
 {% endblock %}
