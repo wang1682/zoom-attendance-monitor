@@ -212,47 +212,63 @@ async def monitor_loop():
                     except:
                         pass
                 if push_now and should_send_telegram("periodic_online_report"):
-                    # 从 /api/v2/live 获取实时在线名单
+                    # 从 /api/v3/live 获取实时在线名单，按分组展示
                     import httpx
-                    _v2_names = []
+                    from app import resolve_member
                     _v2_participants = []
                     try:
                         _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
                         if _v2r.status_code == 200:
                             _v2d = _v2r.json()
-                            _v2_participants = []
                             for _m in _v2d.get("data", {}).get("meetings", []):
-                                _room = _m.get("meeting_topic", "")
                                 for _p in _m.get("participants", []):
-                                    _name = _p.get("name", "")
-                                    _v2_names.append(_name)
+                                    _raw = _p.get("name", "").strip()
+                                    if not _raw:
+                                        continue
+                                    _rm = resolve_member(_raw)
+                                    _std = _rm["standard_name"]
+                                    _grp = _rm.get("group_name") or "未分组"
                                     _join = _p.get("join_time", "")
-                                    _enter = _join[11:19] if len(_join) > 11 else "?"
+                                    _enter = _join[11:16] if len(_join) > 11 else "??:??"
                                     _mins = _p.get("online_minutes", 0)
-                                    if _mins < 60:
-                                        _dur = f"{_mins}分钟"
-                                    else:
-                                        _dur = f"{_mins // 60}h{_mins % 60:02d}"
-                                    _v2_participants.append((_name, _room, _enter, _dur))
+                                    _h, _m = _mins // 60, _mins % 60
+                                    _dur = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
+                                    _v2_participants.append((_std, _grp, _enter, _dur))
                     except:
                         pass
+                    # 按分组归类
+                    _grouped = {}
+                    for _std, _grp, _ent, _dur in _v2_participants:
+                        _grouped.setdefault(_grp, []).append((_std, _ent, _dur))
+                    # 排序：核销 > 推进 > 其他
+                    _ordered = []
+                    for _g in ("核销", "推进"):
+                        if _g in _grouped:
+                            _ordered.append((_g, _grouped.pop(_g)))
+                    for _g, _members in _grouped.items():
+                        _ordered.append((_g, _members))
+                    # 构建消息
                     _lines = [
-                        "\U0001f50d 实时在线",
+                        "\U0001f7e0 实时在线",
                         "",
-                        "当前在线参会者",
-                        "",
-                        "\u23f0 " + now_myt.strftime("%m-%d %H:%M"),
+                        f"\u23f0 更新时间：{now_myt.strftime('%m-%d %H:%M')}",
+                        f"\U0001f465 在线人数：{len(_v2_participants)}",
                         "",
                     ]
                     if _v2_participants:
-                        _lines.append(f"在线人数 {len(_v2_participants)}")
-                        _lines.append("")
-                        for _n, _r, _e, _d in _v2_participants:
-                            _lines.append(f"• {_n}  {_e}  {_d}")
+                        _g_emoji = {"核销": "\U0001f535", "推进": "\U0001f7e3"}
+                        for _g, _members in _ordered:
+                            _emoji = _g_emoji.get(_g, "\u26aa")
+                            _lines.append(f"{_emoji}\u3010{_g}\u3011")
+                            for _std, _ent, _dur in _members:
+                                _lines.append(f"\u2022 {_std}")
+                                _lines.append(f"  \u21b3 加入：{_ent}")
+                                _lines.append(f"  \u21b3 在线：{_dur}")
+                            _lines.append("")
                     else:
                         _lines.append("当前无人在线")
-                    _lines.append("")
-                    _lines.append(f"\U0001f4ca 共 {len(_v2_names)} 人在线")
+                        _lines.append("")
+                    _lines.append(f"\U0001f4ca 共{len(_v2_participants)}人在线")
                     await tg.send("\n".join(_lines), group=True)
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
