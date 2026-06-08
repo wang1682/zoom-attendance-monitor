@@ -190,6 +190,52 @@ def build_app() -> "FastAPI":
         response = await call_next(request)
         return response
 
+    # ── 政策页面（用于 Zoom Marketplace 审核） ────────────────────────────────
+    @app.get("/privacy", response_class=HTMLResponse)
+    async def privacy_page():
+        return HTMLResponse("""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Privacy Policy — Zoom Attendance Monitor</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#334;background:#fafafa}h1{color:#1a1a2e;border-bottom:2px solid #e2e8f0;padding-bottom:12px}h2{color:#1a1a2e;margin-top:32px}p{color:#475569}footer{margin-top:48px;font-size:14px;color:#94a3b8}</style></head><body>
+<h1>Privacy Policy</h1>
+<p><strong>Last updated:</strong> June 2026</p>
+<h2>Information We Collect</h2>
+<p>Zoom Attendance Monitor collects the following data from authorized Zoom accounts:</p>
+<ul><li>Meeting metadata (ID, topic, start/end time)</li><li>Participant names and join/leave timestamps</li><li>Screen sharing activity indicators</li></ul>
+<h2>How We Use Information</h2>
+<p>All collected data is used solely to generate attendance reports and real-time monitoring dashboards as requested by the account owner. No data is sold, shared, or used for any other purpose.</p>
+<h2>Data Storage</h2>
+<p>Data is stored on a private server and retained for the duration of the service subscription. Account owners may request deletion of their data at any time by contacting support.</p>
+<h2>Data Sharing</h2>
+<p>We do not share personal data with third parties. Data is accessible only to the account owner who authorized the app and their designated team members.</p>
+<h2>Contact</h2>
+<p>For privacy inquiries or data deletion requests: support@dhbwang.xyz</p>
+<footer>Zoom Attendance Monitor — dhbwang.xyz</footer>
+</body></html>""")
+
+    @app.get("/terms", response_class=HTMLResponse)
+    async def terms_page():
+        return HTMLResponse("""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Terms of Service — Zoom Attendance Monitor</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#334;background:#fafafa}h1{color:#1a1a2e;border-bottom:2px solid #e2e8f0;padding-bottom:12px}h2{color:#1a1a2e;margin-top:32px}p{color:#475569}footer{margin-top:48px;font-size:14px;color:#94a3b8}</style></head><body>
+<h1>Terms of Service</h1>
+<p><strong>Last updated:</strong> June 2026</p>
+<h2>Acceptance</h2>
+<p>By authorizing Zoom Attendance Monitor, you agree to these terms. If you do not agree, do not use the service.</p>
+<h2>Service Description</h2>
+<p>Zoom Attendance Monitor provides meeting attendance tracking and reporting for authorized Zoom accounts. The service requires read-only access to meeting and participant data.</p>
+<h2>User Responsibilities</h2>
+<ul><li>You must have the authority to grant access to the Zoom account</li><li>You are responsible for configuring monitoring preferences</li><li>You must comply with applicable privacy laws when monitoring meetings</li></ul>
+<h2>Limitation of Liability</h2>
+<p>The service is provided "as is" without warranty. We are not liable for any damages arising from use of the service.</p>
+<h2>Termination</h2>
+<p>You may revoke access at any time via Zoom Marketplace. We may terminate service for violation of these terms.</p>
+<h2>Contact</h2>
+<p>support@dhbwang.xyz</p>
+<footer>Zoom Attendance Monitor — dhbwang.xyz</footer>
+</body></html>""")
+
     # ── 看板 ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=RedirectResponse)
     async def landing(request: Request):
