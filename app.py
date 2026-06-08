@@ -141,12 +141,17 @@ def build_app() -> "FastAPI":
     if _app is not None:
         return _app
 
-    from fastapi import FastAPI, Request, HTTPException
+    from fastapi import FastAPI, Request, HTTPException, Form
     from fastapi.responses import HTMLResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
     app = FastAPI(title=BRAND["app_name_zh"], version="2.0.0")
+    try:
+        from starlette.middleware.sessions import SessionMiddleware
+        app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400, same_site="lax", https_only=False)
+    except ImportError:
+        pass
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
@@ -2543,6 +2548,49 @@ def build_app() -> "FastAPI":
             results["note"] = "缺少 OAuth token，先通过面板连接 Zoom 账号"
 
         return {"ok": True, **results}
+
+    # ── Multi-tenant admin routes ──────────────────────────────────────────
+    from admin_routes import router as admin_router
+    app.include_router(admin_router, prefix="/dashboard")
+
+    # ── Login / Logout ─────────────────────────────────────────────────────
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request):
+        error = request.query_params.get("error", "")
+        return tmpl.TemplateResponse(request, "login.html", {"request": request, "error": error})
+
+    @app.post("/login")
+    async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+        user = db.verify_user_password(username, password)
+        if not user:
+            return RedirectResponse(url="/login?error=用户名或密码错误", status_code=303)
+        if not user.get("is_active"):
+            return RedirectResponse(url="/login?error=账号已被禁用", status_code=303)
+        request.session["user_id"] = user["id"]
+        # 根据用户实际所属租户设置 tenant_id
+        user_tenants = db.get_user_tenants(user["id"])
+        if user["role"] == "admin":
+            # admin 默认指向 default 租户（可通过 switch 切换）
+            request.session["tenant_id"] = "default"
+        elif user_tenants:
+            # 普通用户指向其绑定的第一个活跃租户
+            request.session["tenant_id"] = user_tenants[0]["tenant_id"]
+        else:
+            request.session["tenant_id"] = "default"
+        return RedirectResponse(url="/dashboard", status_code=303)
+
+    @app.post("/logout")
+    async def logout(request: Request):
+        request.session.clear()
+        return RedirectResponse(url="/login", status_code=303)
+
+    # ── Landing page redirect ──────────────────────────────────────────────
+    @app.get("/", response_class=HTMLResponse)
+    async def root(request: Request):
+        user_id = request.session.get("user_id")
+        if user_id and db.get_user_by_id(user_id):
+            return RedirectResponse(url="/dashboard", status_code=302)
+        return RedirectResponse(url="/login", status_code=302)
 
     _app = app
     return app

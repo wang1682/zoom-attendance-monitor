@@ -303,6 +303,10 @@ def init_db(readonly: bool = False):
     # seed default telegram channel
     _seed_default_telegram_channel()
 
+    # multi-tenant migrations
+    if not readonly:
+        run_mt_migrations()
+
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
 
@@ -1149,3 +1153,477 @@ def normalize_identity_name(name: str) -> str:
     """归一化姓名：去空格、大小写、连字符"""
     import re
     return re.sub(r"[\s\-\._']+", "", (name or "").strip().lower())
+
+import secrets
+import hashlib
+
+# ── bcrypt wrapper (fallback to hashlib if bcrypt not available) ─────────
+try:
+    import bcrypt as _bcrypt
+    def _hash_pw(pw: str) -> str:
+        return _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
+    def _check_pw(pw: str, hashed: str) -> bool:
+        return _bcrypt.checkpw(pw.encode(), hashed.encode())
+except ImportError:
+    import hashlib, os
+    def _hash_pw(pw: str) -> str:
+        salt = os.urandom(16).hex()
+        h = hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000).hex()
+        return f"{salt}${h}"
+    def _check_pw(pw: str, hashed: str) -> bool:
+        try:
+            salt, h = hashed.split('$', 1)
+            return hashlib.pbkdf2_hmac('sha256', pw.encode(), salt.encode(), 100000).hex() == h
+        except:
+            return False
+
+
+# ── Migration: Add tenant_id to existing tables ─────────────────────────
+MT_MIGRATIONS = [
+    "ALTER TABLE zoom_events ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE zoom_participants ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE seen_emails ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE alerts ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE sharing_live ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE alert_rules ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE zoom_events ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE zoom_participants ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE seen_emails ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE alerts ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE sharing_live ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE alert_rules ADD COLUMN owner_id INTEGER DEFAULT NULL",
+    "ALTER TABLE telegram_alert_rules ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE telegram_channels ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE member_groups ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE member_display ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE member_group_members ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+    "ALTER TABLE audit_logs ADD COLUMN tenant_id TEXT DEFAULT 'default'",
+]
+
+MT_TABLES = [
+    "CREATE TABLE IF NOT EXISTS users ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  username TEXT NOT NULL UNIQUE,"
+    "  password_hash TEXT NOT NULL,"
+    "  display_name TEXT NOT NULL DEFAULT '',"
+    "  role TEXT NOT NULL DEFAULT 'viewer',"  # super_admin / tenant_admin / viewer
+    "  is_active INTEGER NOT NULL DEFAULT 1,"
+    "  created_at TEXT NOT NULL,"
+    "  updated_at TEXT NOT NULL"
+    ")",
+
+    "CREATE TABLE IF NOT EXISTS tenants ("
+    "  id TEXT PRIMARY KEY,"  # slug-based: 'default', client-xxx
+    "  name TEXT NOT NULL,"
+    "  display_name TEXT NOT NULL DEFAULT '',"
+    "  plan TEXT NOT NULL DEFAULT 'pro',"
+    "  is_active INTEGER NOT NULL DEFAULT 1,"
+    "  is_global_admin INTEGER NOT NULL DEFAULT 0,"
+    "  api_token TEXT NOT NULL DEFAULT '',"
+    "  created_at TEXT NOT NULL,"
+    "  updated_at TEXT NOT NULL"
+    ")",
+
+    "CREATE TABLE IF NOT EXISTS tenant_users ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  user_id INTEGER NOT NULL REFERENCES users(id),"
+    "  tenant_id TEXT NOT NULL REFERENCES tenants(id),"
+    "  role TEXT NOT NULL DEFAULT 'viewer',"  # owner / admin / viewer
+    "  is_active INTEGER NOT NULL DEFAULT 1,"
+    "  created_at TEXT NOT NULL,"
+    "  UNIQUE(user_id, tenant_id)"
+    ")",
+
+    "CREATE TABLE IF NOT EXISTS zoom_accounts ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  tenant_id TEXT NOT NULL REFERENCES tenants(id),"
+    "  label TEXT NOT NULL DEFAULT '',"
+    "  account_id TEXT NOT NULL,"
+    "  client_id TEXT NOT NULL,"
+    "  client_secret TEXT NOT NULL,"
+    "  host_email TEXT NOT NULL DEFAULT '',"
+    "  is_active INTEGER NOT NULL DEFAULT 1,"
+    "  created_at TEXT NOT NULL"
+    ")",
+
+    "CREATE TABLE IF NOT EXISTS monitored_meetings ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  tenant_id TEXT NOT NULL REFERENCES tenants(id),"
+    "  account_id INTEGER REFERENCES zoom_accounts(id),"
+    "  meeting_id TEXT NOT NULL,"
+    "  label TEXT NOT NULL DEFAULT '',"
+    "  meeting_type TEXT NOT NULL DEFAULT 'pmi',"
+    "  is_active INTEGER NOT NULL DEFAULT 1,"
+    "  created_at TEXT NOT NULL"
+    ")",
+
+    "CREATE TABLE IF NOT EXISTS tenant_channels ("
+    "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+    "  tenant_id TEXT NOT NULL REFERENCES tenants(id),"
+    "  chat_id TEXT NOT NULL,"
+    "  label TEXT NOT NULL DEFAULT '',"
+    "  is_group INTEGER NOT NULL DEFAULT 0,"
+    "  is_enabled INTEGER NOT NULL DEFAULT 1,"
+    "  created_at TEXT NOT NULL"
+    ")",
+]
+
+
+def run_mt_migrations(readonly: bool = False):
+    """Run multi-tenant migrations on existing tables + create new tables."""
+    if readonly:
+        return
+    conn = _get_conn()
+    for sql in MT_TABLES:
+        conn.execute(sql)
+    for sql in MT_MIGRATIONS:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # column already exists
+
+    # Seed default tenant if not exists
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("default", "Default", "默认租户", "business", 1, 1, "", now, now)
+        )
+    except Exception:
+        pass
+    conn.commit()
+
+
+# ── Auth Functions ──────────────────────────────────────────────────────
+
+def create_user(username: str, password: str, display_name: str = "",
+                role: str = "viewer") -> int:
+    """Create user. Returns user id. Raises on duplicate username."""
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    pw_hash = _hash_pw(password)
+    cur = conn.execute(
+        "INSERT INTO users (username, password_hash, display_name, role, is_active, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, ?, ?)",
+        (username, pw_hash, display_name, role, now, now),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_user_by_username(username: str) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE username = ?", (username,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_user_by_id(user_id: int) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def verify_user_password(username: str, password: str) -> dict | None:
+    """Verify user credentials. Returns user dict on success, None on failure."""
+    user = get_user_by_username(username)
+    if not user:
+        return None
+    if not user["is_active"]:
+        return None
+    if not _check_pw(password, user["password_hash"]):
+        return None
+    return user
+
+
+def get_user_tenants(user_id: int) -> list[dict]:
+    """Get all tenant_ids this user belongs to (active only)."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT tu.tenant_id, tu.role as tenant_role, "
+        "       t.name, t.display_name, t.plan, t.is_active "
+        "FROM tenant_users tu "
+        "JOIN tenants t ON t.id = tu.tenant_id "
+        "WHERE tu.user_id = ? AND tu.is_active = 1 AND t.is_active = 1",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_user_tenant_role(user_id: int, tenant_id: str, role: str) -> bool:
+    """Add or update user-tenant association."""
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT INTO tenant_users (user_id, tenant_id, role, is_active, created_at) "
+            "VALUES (?, ?, ?, 1, ?) "
+            "ON CONFLICT(user_id, tenant_id) DO UPDATE SET role = ?, is_active = 1",
+            (user_id, tenant_id, role, now, role),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+def remove_user_from_tenant(user_id: int, tenant_id: str) -> bool:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            "DELETE FROM tenant_users WHERE user_id = ? AND tenant_id = ?",
+            (user_id, tenant_id),
+        )
+        conn.commit()
+        return True
+    except Exception:
+        return False
+
+
+# ── Tenant CRUD ─────────────────────────────────────────────────────────
+
+def create_tenant(name: str, display_name: str = "", plan: str = "pro") -> str:
+    """Create tenant. Returns tenant_id (slug)."""
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    # Generate unique slug
+    import re
+    slug = re.sub(r'[^a-z0-9-]', '', name.lower().replace(' ', '-'))
+    if not slug:
+        slug = "tenant"
+    base = slug
+    counter = 1
+    while conn.execute("SELECT 1 FROM tenants WHERE id = ?", (slug,)).fetchone():
+        slug = f"{base}-{counter}"
+        counter += 1
+    api_token = secrets.token_hex(24)
+    conn.execute(
+        "INSERT INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)",
+        (slug, name, display_name or name, plan, api_token, now, now),
+    )
+    conn.commit()
+    log_audit("create", "tenant", 0, f"Created tenant: {slug}")
+    return slug
+
+
+def get_all_tenants() -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM tenants ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_tenant(tenant_id: str) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM tenants WHERE id = ?", (tenant_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def toggle_tenant(tenant_id: str) -> bool:
+    conn = _get_conn()
+    row = conn.execute("SELECT is_active FROM tenants WHERE id = ?", (tenant_id,)).fetchone()
+    if not row:
+        return False
+    new_val = 0 if row[0] else 1
+    conn.execute("UPDATE tenants SET is_active = ? WHERE id = ?", (new_val, tenant_id))
+    conn.commit()
+    log_audit("update", "tenant", 0, f"Toggled tenant {tenant_id}: active={new_val}")
+    return True
+
+
+def delete_tenant(tenant_id: str) -> bool:
+    if tenant_id == "default":
+        return False
+    conn = _get_conn()
+    conn.execute("DELETE FROM tenant_users WHERE tenant_id = ?", (tenant_id,))
+    conn.execute("DELETE FROM zoom_accounts WHERE tenant_id = ?", (tenant_id,))
+    conn.execute("DELETE FROM monitored_meetings WHERE tenant_id = ?", (tenant_id,))
+    conn.execute("DELETE FROM tenant_channels WHERE tenant_id = ?", (tenant_id,))
+    conn.execute("DELETE FROM tenants WHERE id = ?", (tenant_id,))
+    conn.commit()
+    log_audit("delete", "tenant", 0, f"Deleted tenant: {tenant_id}")
+    return True
+
+
+def regenerate_tenant_token(tenant_id: str) -> str:
+    conn = _get_conn()
+    api_token = secrets.token_hex(24)
+    conn.execute("UPDATE tenants SET api_token = ? WHERE id = ?", (api_token, tenant_id))
+    conn.commit()
+    return api_token
+
+
+# ── User CRUD (admin) ────────────────────────────────────────────────────
+
+def get_all_users() -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT u.*, "
+        "  (SELECT GROUP_CONCAT(tu.tenant_id || ':' || tu.role) FROM tenant_users tu WHERE tu.user_id = u.id) as tenant_roles "
+        "FROM users u ORDER BY u.created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def toggle_user(target_id: int) -> bool:
+    conn = _get_conn()
+    row = conn.execute("SELECT is_active FROM users WHERE id = ?", (target_id,)).fetchone()
+    if not row:
+        return False
+    new_val = 0 if row[0] else 1
+    conn.execute("UPDATE users SET is_active = ? WHERE id = ?", (new_val, target_id))
+    conn.commit()
+    return True
+
+
+def update_user(target_id: int, display_name: str = None, role: str = None) -> bool:
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    fields = ["updated_at = ?"]
+    vals = [now]
+    if display_name is not None:
+        fields.append("display_name = ?")
+        vals.append(display_name)
+    if role is not None:
+        fields.append("role = ?")
+        vals.append(role)
+    vals.append(target_id)
+    conn.execute(
+        f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
+        vals,
+    )
+    conn.commit()
+    return True
+
+
+def delete_user(target_id: int) -> bool:
+    conn = _get_conn()
+    conn.execute("DELETE FROM tenant_users WHERE user_id = ?", (target_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
+    conn.commit()
+    return True
+
+
+# ── Zoom Accounts CRUD ──────────────────────────────────────────────────
+
+def create_zoom_account(tenant_id: str, label: str, account_id: str,
+                        client_id: str, client_secret: str, host_email: str = "") -> int:
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.execute(
+        "INSERT INTO zoom_accounts (tenant_id, label, account_id, client_id, client_secret, host_email, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (tenant_id, label, account_id, client_id, client_secret, host_email, now),
+    )
+    conn.commit()
+    log_audit("create", "zoom_account", cur.lastrowid, f"Created Zoom account: {label}")
+    return cur.lastrowid
+
+
+def get_zoom_accounts(tenant_id: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM zoom_accounts WHERE tenant_id = ? ORDER BY created_at DESC",
+        (tenant_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_zoom_account(account_id: int) -> bool:
+    conn = _get_conn()
+    conn.execute("DELETE FROM zoom_accounts WHERE id = ?", (account_id,))
+    conn.commit()
+    log_audit("delete", "zoom_account", account_id, "Deleted Zoom account")
+    return True
+
+
+# ── Meeting CRUD ────────────────────────────────────────────────────────
+
+def create_meeting(tenant_id: str, account_id: int, meeting_id: str,
+                   label: str = "", meeting_type: str = "pmi") -> int:
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.execute(
+        "INSERT INTO monitored_meetings (tenant_id, account_id, meeting_id, label, meeting_type, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (tenant_id, account_id, meeting_id, label, meeting_type, now),
+    )
+    conn.commit()
+    log_audit("create", "meeting", cur.lastrowid, f"Created meeting: {meeting_id}")
+    return cur.lastrowid
+
+
+def get_meetings(tenant_id: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM monitored_meetings WHERE tenant_id = ? ORDER BY created_at DESC",
+        (tenant_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_meeting(meeting_id_db: int) -> bool:
+    conn = _get_conn()
+    conn.execute("DELETE FROM monitored_meetings WHERE id = ?", (meeting_id_db,))
+    conn.commit()
+    log_audit("delete", "meeting", meeting_id_db, "Deleted meeting")
+    return True
+
+
+# ── Channel CRUD ────────────────────────────────────────────────────────
+
+def create_tenant_channel(tenant_id: str, chat_id: str, label: str = "",
+                          is_group: bool = False) -> int:
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.execute(
+        "INSERT INTO tenant_channels (tenant_id, chat_id, label, is_group, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (tenant_id, chat_id, label, 1 if is_group else 0, now),
+    )
+    conn.commit()
+    log_audit("create", "channel", cur.lastrowid, f"Created channel: {chat_id}")
+    return cur.lastrowid
+
+
+def get_tenant_channels(tenant_id: str) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM tenant_channels WHERE tenant_id = ? ORDER BY created_at DESC",
+        (tenant_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def toggle_tenant_channel(channel_id: int) -> bool:
+    conn = _get_conn()
+    row = conn.execute("SELECT is_enabled FROM tenant_channels WHERE id = ?", (channel_id,)).fetchone()
+    if not row:
+        return False
+    new_val = 0 if row[0] else 1
+    conn.execute("UPDATE tenant_channels SET is_enabled = ? WHERE id = ?", (new_val, channel_id))
+    conn.commit()
+    return True
+
+
+def delete_tenant_channel(channel_id: int) -> bool:
+    conn = _get_conn()
+    conn.execute("DELETE FROM tenant_channels WHERE id = ?", (channel_id,))
+    conn.commit()
+    return True
