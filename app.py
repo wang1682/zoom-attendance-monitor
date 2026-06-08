@@ -1760,10 +1760,11 @@ def build_app() -> "FastAPI":
 
     # ── OAuth 授权 ────────────────────────────────────────────────────────────
     import secrets
+    from urllib.parse import quote
 
-    ZOOM_CLIENT_ID = "cLd9VdnGQxGETjM1u9pfg"
-    ZOOM_CLIENT_SECRET = "1dvP5CbHHkpTG9XYxWXgkDMH3XB6kwiJ"
-    REDIRECT_URI = "https://zoom.dhbwang.xyz/api/v2/auth/callback"
+    ZOOM_CLIENT_ID = os.environ.get("ZOOM_OAUTH_CLIENT_ID", "")
+    ZOOM_CLIENT_SECRET = os.environ.get("ZOOM_OAUTH_CLIENT_SECRET", "")
+    REDIRECT_URI = os.environ.get("ZOOM_OAUTH_REDIRECT_URI", "https://zoom.dhbwang.xyz/api/v2/auth/callback")
 
     def init_oauth_db():
         conn = db._get_conn()
@@ -1780,7 +1781,8 @@ def build_app() -> "FastAPI":
 
         # 通用授权链接
         base_url = "https://zoom.us/oauth/authorize"
-        params = f"response_type=code&client_id={ZOOM_CLIENT_ID}&redirect_uri={REDIRECT_URI}&state={state}"
+        scope_str = os.environ.get("ZOOM_OAUTH_SCOPES", "meeting:read:meeting meeting:read:list_past_participants user:read:user webinar:read:list_past_participants")
+        params = f"response_type=code&client_id={ZOOM_CLIENT_ID}&redirect_uri={REDIRECT_URI}&state={state}&scope={quote(scope_str)}"
 
         # Web 授权
         web_url = f"{base_url}?{params}"
