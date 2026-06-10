@@ -147,6 +147,36 @@ def build_app() -> "FastAPI":
     from fastapi.templating import Jinja2Templates
 
     app = FastAPI(title=BRAND["app_name_zh"], version="2.0.0")
+
+    # ── 认证中间件（必须注册在 SessionMiddleware 之前，使其成为 innermost） ─────
+    @app.middleware("http")
+    async def _auth_middleware(request: Request, call_next):
+        """全局认证中间件 — 未登录用户重定向到 /login"""
+        path = request.url.path
+
+        # 白名单：这些路径不需要认证
+        public_paths = [
+            "/login", "/logout",
+            "/privacy", "/terms",
+            "/static/",
+            "/api/v2/auth/",
+            "/webhook",
+            "/health",
+        ]
+        if any(path.startswith(pp) for pp in public_paths):
+            return await call_next(request)
+
+        user_id = request.session.get("user_id")
+        if not user_id:
+            return RedirectResponse(url="/login", status_code=302)
+
+        user = db.get_user_by_id(user_id)
+        if not user:
+            request.session.clear()
+            return RedirectResponse(url="/login", status_code=302)
+
+        return await call_next(request)
+
     try:
         from starlette.middleware.sessions import SessionMiddleware
         app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400, same_site="lax", https_only=False)
