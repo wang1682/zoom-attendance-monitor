@@ -769,7 +769,43 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             return _ensure_demo().get_demo_attendance_summary()
         try:
-            return db.get_today_attendance_summary()
+            result = db.get_today_attendance_summary()
+            # If DB has no data but Zoom API has people live, use live data
+            if result.get("total_members", 0) == 0:
+                from zoom_metrics import ZoomMetrics
+                zm = ZoomMetrics()
+                live_data = await zm.get_live()
+                online_list = live_data.get("online_list", [])
+                if online_list:
+                    now_utc = datetime.now(timezone.utc)
+                    members = []
+                    for p in online_list:
+                        members.append({
+                        "standard_name": p.get("name", ""),
+                        "group_name": "",
+                        "status": "online",
+                        "first_join": p.get("join_time", ""),
+                        "today_total_seconds": p.get("online_minutes", 0) * 60,
+                        "today_total_duration": p.get("online_display", ""),
+                        "join_count": 1,
+                        "leave_count": 0,
+                        "last_activity": p.get("join_time", ""),
+                        "last_action": "enter",
+                        "raw_events": [],
+                        "first_join_display": "",
+                        "last_activity_display": "",
+                    })
+                    return {
+                        "ok": True,
+                        "total_members": len(members),
+                        "online_count": len(members),
+                        "offline_count": 0,
+                        "total_duration": members[0]["today_total_duration"] if members else "0m",
+                        "avg_duration": members[0]["today_total_duration"] if members else "0m",
+                        "date": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d"),
+                        "members": members,
+                    }
+            return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -2160,92 +2196,140 @@ def build_app() -> "FastAPI":
         data = await zm.get_live()
         return {"ok": True, "data": data}
 
-
-    async def api_v3_live():
-        """Business Metrics API 实时在线数据（去重）"""
-        from zoom_metrics import ZoomMetrics
-        zm = ZoomMetrics()
-        data = await zm.get_live()
-        return {"ok": True, "data": data}
-
     @app.get("/api/v3/dashboard")
     async def api_v3_dashboard():
-        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）"""
+        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）
+        
+        主数据源：Zoom Metrics API（与 /api/v3/live 一致）
+        备选回退：sharing_live / zoom_participants（当 API 不可用时）
+        """
         conn = db._get_conn()
         report_start_utc, report_end_utc = myt_day_range_to_utc()
 
         online_count = 0
         sharing_count = 0
         meetings = []
+        participant_count = 0
+        participants = []
+        join_count = 0
+        leave_count = 0
 
-        # Fallback-first mode: current OAuth app cannot use /metrics/*.
-        # Use sharing_live as the stable live source.
+        # ── 主源：Zoom Metrics API ──
         try:
-            live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1").fetchall()
-            online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
-            sharing_count = online_count
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+            live_data = await zm.get_live()
 
-            by_meeting = {}
-            for r in live_rows:
-                mid = str(r["meeting_id"] or "")
-                raw = r["user_name"] or ""
-                _rm = resolve_member(raw)
-                by_meeting.setdefault(mid, {
-                    "meeting_id": mid,
-                    "meeting_topic": "",
-                    "participants": []
-                })["participants"].append({
-                    "name": _rm["standard_name"],
-                    "raw_name": raw,
-                    "meeting_id": mid,
-                    "user_id": r["user_id"] or "",
-                    "join_time": r["start_time"] or "",
-                    "status": "in_meeting",
-                    "count_enabled": True,
-                    "is_aliased": bool(_rm.get("is_aliased")),
-                    "email": "",
-                    "online_minutes": 0,
-                    "online_display": "",
-                    "join_time_display": (r["start_time"] or "")[:16],
+            online_count = live_data.get("total_online", 0)
+
+            # Build meetings from live API data
+            for m in live_data.get("meetings", []):
+                meeting_participants = []
+                for p in m.get("participants", []):
+                    meeting_participants.append({
+                        "name": p.get("name", ""),
+                        "raw_name": p.get("raw_name", ""),
+                        "meeting_id": m.get("meeting_id", ""),
+                        "meeting_topic": m.get("meeting_topic", ""),
+                        "user_id": p.get("user_id", ""),
+                        "join_time": p.get("join_time", ""),
+                        "status": "in_meeting",
+                        "count_enabled": True,
+                        "is_aliased": p.get("is_aliased", False),
+                        "email": p.get("email", ""),
+                        "online_minutes": p.get("online_minutes", 0),
+                        "online_display": p.get("online_display", ""),
+                        "join_time_display": p.get("join_time_display", ""),
+                    })
+                meetings.append({
+                    "meeting_id": m.get("meeting_id", ""),
+                    "meeting_topic": m.get("meeting_topic", ""),
+                    "participants": meeting_participants,
                 })
-            meetings = list(by_meeting.values())
-        except:
+
+            # Build participants list from online_list
+            for p in live_data.get("online_list", []):
+                participants.append({
+                    "name": p.get("name", ""),
+                    "raw_name": p.get("raw_name", ""),
+                    "meeting_id": p.get("meeting_id", ""),
+                    "last_action": "in_meeting",
+                    "last_active": p.get("join_time", ""),
+                    "standard_name": p.get("name", ""),
+                    "group_name": "",
+                    "status": "在线中",
+                    "current_session": "",
+                    "session_duration": p.get("online_display", ""),
+                    "today_duration": p.get("online_display", ""),
+                    "leave_count": 0,
+                })
+
+            participant_count = len(participants)
+
+            # Still try sharing_live for sharing data (secondary source)
+            try:
+                live_rows = conn.execute(
+                    "SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1"
+                ).fetchall()
+                _sc = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
+                if _sc > 0:
+                    sharing_count = _sc
+            except Exception:
+                pass
+        except Exception:
+            # ── Fallback: sharing_live + zoom_participants ──
+            try:
+                live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1").fetchall()
+                online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
+                sharing_count = online_count
+            except Exception:
+                pass
+
+            try:
+                participant_count = conn.execute(
+                    "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",
+                    (report_start_utc, report_end_utc)
+                ).fetchone()[0]
+            except Exception:
+                pass
+
+            try:
+                participants_rows = conn.execute(
+                    "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
+                    (report_start_utc, report_end_utc)
+                ).fetchall()
+                seen = set()
+                for r in participants_rows:
+                    _rm = resolve_member(r["name"])
+                    canonical = _rm["standard_name"]
+                    if canonical not in seen:
+                        seen.add(canonical)
+                        participants.append({
+                            "name": canonical,
+                            "raw_name": r["name"],
+                            "meeting_id": r["meeting_id"],
+                            "last_action": r["action"],
+                            "last_active": r["action_time"],
+                        })
+            except Exception:
+                pass
+
+        # join/leave counts always from DB (historical)
+        try:
+            join_count = conn.execute(
+                "SELECT COUNT(*) FROM zoom_participants WHERE action = 'enter' AND action_time >= ? AND action_time < ?",
+                (report_start_utc, report_end_utc)
+            ).fetchone()[0]
+        except Exception:
             pass
 
-        participant_count = conn.execute(
-            "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?",
-            (report_start_utc, report_end_utc)
-        ).fetchone()[0]
-
-        join_count = conn.execute(
-            "SELECT COUNT(*) FROM zoom_participants WHERE action = 'enter' AND action_time >= ? AND action_time < ?",
-            (report_start_utc, report_end_utc)
-        ).fetchone()[0]
-
-        leave_count = conn.execute(
-            "SELECT COUNT(*) FROM zoom_participants WHERE action = 'leave' AND action_time >= ? AND action_time < ?",
-            (report_start_utc, report_end_utc)
-        ).fetchone()[0]
-
-        participants_rows = conn.execute(
-            "SELECT name, action, action_time, meeting_id FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY action_time DESC LIMIT 50",
-            (report_start_utc, report_end_utc)
-        ).fetchall()
-
-        participants = []
-        seen = set()
-        for r in participants_rows:
-            _rm = resolve_member(r["name"])
-            canonical = _rm["standard_name"]
-            if canonical not in seen:
-                seen.add(canonical)
-                participants.append({
-                    "name": canonical,
-                    "raw_name": r["name"],
-                    "meeting_id": r["meeting_id"],
-                    "last_action": r["action"],
-                    "last_active": r["action_time"],
-                })
+        try:
+            leave_count = conn.execute(
+                "SELECT COUNT(*) FROM zoom_participants WHERE action = 'leave' AND action_time >= ? AND action_time < ?",
+                (report_start_utc, report_end_utc)
+            ).fetchone()[0]
+        except Exception:
+            pass
 
         return {
             "ok": True,
