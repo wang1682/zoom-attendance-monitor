@@ -715,8 +715,9 @@ def build_app() -> "FastAPI":
         except: result["webhook"] = "timeout"
         # Telegram
         try:
-            tg = req.get("https://api.telegram.org/bot8791140288:AAHL_7Az6vQitTIJUhlP-M8YaMXzPz2joG4/getMe", timeout=5)
-            result["telegram"] = "ok" if tg.json().get("ok") else "error"
+            token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+            tg = req.get(f"https://api.telegram.org/bot{token}/getMe", timeout=5) if token else type("X", (object,), {"status_code": 400})()
+            result["telegram"] = "ok" if tg.status_code == 200 and tg.json().get("ok") else "error"
         except: result["telegram"] = "timeout"
         # sub2api
         try:
