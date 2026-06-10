@@ -296,6 +296,22 @@ def init_db(readonly: bool = False):
     except Exception:
         pass
 
+    # migrate: add zoom_accounts columns for account config page
+    for col_sql in [
+        "ALTER TABLE zoom_accounts ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE zoom_accounts ADD COLUMN status TEXT NOT NULL DEFAULT 'inactive'",
+        "ALTER TABLE zoom_accounts ADD COLUMN last_sync TEXT",
+        "ALTER TABLE zoom_accounts ADD COLUMN last_sync_result TEXT",
+        "ALTER TABLE zoom_accounts ADD COLUMN webhook_last_event TEXT",
+        "ALTER TABLE zoom_accounts ADD COLUMN webhook_last_time TEXT",
+        "ALTER TABLE zoom_accounts ADD COLUMN updated_at TEXT",
+    ]:
+        try:
+            conn.execute(col_sql)
+        except Exception:
+            pass
+    conn.commit()
+
     # seed default telegram alert rules
     if not readonly: seed_telegram_rules()
     if not readonly: seed_member_groups()
@@ -335,12 +351,13 @@ def save_participant(
     meeting_id: str, name: str, email: str,
     action: str, action_time: datetime,
     source: str = "poll",
+    tenant_id: str = "default",
 ) -> int:
     conn = _get_conn()
     cur = conn.execute(
-        "INSERT INTO zoom_participants (meeting_id, name, email, action, action_time, source) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (meeting_id, name, email, action, action_time.isoformat(), source),
+        "INSERT INTO zoom_participants (meeting_id, name, email, action, action_time, source, tenant_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (meeting_id, name, email, action, action_time.isoformat(), source, tenant_id),
     )
     conn.commit()
     return cur.lastrowid
@@ -1520,14 +1537,15 @@ def delete_user(target_id: int) -> bool:
 # ── Zoom Accounts CRUD ──────────────────────────────────────────────────
 
 def create_zoom_account(tenant_id: str, label: str, account_id: str,
-                        client_id: str, client_secret: str, host_email: str = "") -> int:
+                        client_id: str, client_secret: str, host_email: str = "",
+                        webhook_secret: str = "") -> int:
     conn = _get_conn()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     cur = conn.execute(
-        "INSERT INTO zoom_accounts (tenant_id, label, account_id, client_id, client_secret, host_email, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (tenant_id, label, account_id, client_id, client_secret, host_email, now),
+        "INSERT INTO zoom_accounts (tenant_id, label, account_id, client_id, client_secret, host_email, webhook_secret, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (tenant_id, label, account_id, client_id, client_secret, host_email, webhook_secret, now),
     )
     conn.commit()
     log_audit("create", "zoom_account", cur.lastrowid, f"Created Zoom account: {label}")
@@ -1543,11 +1561,79 @@ def get_zoom_accounts(tenant_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_all_active_zoom_accounts() -> list[dict]:
+    """获取所有租户下激活的 Zoom 账号"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT za.*, t.name AS tenant_name "
+        "FROM zoom_accounts za "
+        "JOIN tenants t ON t.id = za.tenant_id "
+        "WHERE za.is_active = 1 AND t.is_active = 1 "
+        "ORDER BY za.tenant_id, za.created_at"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_zoom_account(account_db_id: int) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM zoom_accounts WHERE id = ?", (account_db_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def delete_zoom_account(account_id: int) -> bool:
     conn = _get_conn()
     conn.execute("DELETE FROM zoom_accounts WHERE id = ?", (account_id,))
     conn.commit()
     log_audit("delete", "zoom_account", account_id, "Deleted Zoom account")
+    return True
+
+
+def update_zoom_account(account_id: int, **kwargs) -> bool:
+    """Update zoom_account editable fields. Accepts: label, host_email, webhook_secret, is_active, client_id, client_secret"""
+    allowed = {"label", "host_email", "webhook_secret", "is_active", "client_id", "client_secret"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    clauses = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [now, account_id]
+    conn = _get_conn()
+    conn.execute(
+        f"UPDATE zoom_accounts SET {clauses}, updated_at = ? WHERE id = ?",
+        values,
+    )
+    conn.commit()
+    log_audit("update", "zoom_account", account_id, f"Updated Zoom account: {','.join(updates.keys())}")
+    return True
+
+
+def update_zoom_account_status(account_id: int, status: str,
+                                last_sync: str = None,
+                                last_sync_result: str = None,
+                                webhook_last_event: str = None,
+                                webhook_last_time: str = None) -> bool:
+    """Update zoom_account runtime status fields."""
+    conn = _get_conn()
+    sets = ["status = ?"]
+    vals = [status]
+    if last_sync is not None:
+        sets.append("last_sync = ?")
+        vals.append(last_sync)
+    if last_sync_result is not None:
+        sets.append("last_sync_result = ?")
+        vals.append(last_sync_result)
+    if webhook_last_event is not None:
+        sets.append("webhook_last_event = ?")
+        vals.append(webhook_last_event)
+    if webhook_last_time is not None:
+        sets.append("webhook_last_time = ?")
+        vals.append(webhook_last_time)
+    vals.append(account_id)
+    conn.execute(f"UPDATE zoom_accounts SET {', '.join(sets)} WHERE id = ?", vals)
+    conn.commit()
     return True
 
 
@@ -1566,6 +1652,30 @@ def create_meeting(tenant_id: str, account_id: int, meeting_id: str,
     conn.commit()
     log_audit("create", "meeting", cur.lastrowid, f"Created meeting: {meeting_id}")
     return cur.lastrowid
+
+
+def get_monitored_meetings_for_account(account_db_id: int) -> list[dict]:
+    """获取指定 Zoom 账号下的监控会议"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM monitored_meetings WHERE account_id = ? AND is_active = 1",
+        (account_db_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_all_active_monitored_meetings() -> list[dict]:
+    """获取所有激活的监控会议（含 account_id 和 tenant_id）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT mm.*, za.client_id, za.account_id AS zoom_account_id, "
+        "       za.client_secret, za.host_email, za.tenant_id "
+        "FROM monitored_meetings mm "
+        "JOIN zoom_accounts za ON za.id = mm.account_id "
+        "JOIN tenants t ON t.id = mm.tenant_id "
+        "WHERE mm.is_active = 1 AND za.is_active = 1 AND t.is_active = 1"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_meetings(tenant_id: str) -> list[dict]:

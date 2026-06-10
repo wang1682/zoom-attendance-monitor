@@ -1,5 +1,6 @@
 """
 zoom_api.py — Zoom Server-to-Server OAuth 客户端
+支持传参实例化，不传则默认读 .env 配置
 """
 from __future__ import annotations
 
@@ -14,10 +15,16 @@ MYT = timezone(timedelta(hours=8))
 
 
 class ZoomAPI:
-    def __init__(self):
+    def __init__(self, account_id: str = None, client_id: str = None,
+                 client_secret: str = None, tenant_id: str = None):
         self._token: str = ""
         self._expires_at: float = 0
         self._scheduled_cache: dict = {"ids": [], "cached_at": 0}
+        self._account_id = account_id or settings.zoom_account_id
+        self._client_id = client_id or settings.zoom_client_id
+        self._client_secret = client_secret or settings.zoom_client_secret
+        self.tenant_id = tenant_id or "default"
+        self.label = ""
 
     async def _get_token(self) -> str:
         now = time.time()
@@ -26,8 +33,8 @@ class ZoomAPI:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
                 "https://zoom.us/oauth/token",
-                data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
-                auth=(settings.zoom_client_id, settings.zoom_client_secret),
+                data={"grant_type": "account_credentials", "account_id": self._account_id},
+                auth=(self._client_id, self._client_secret),
             )
             r.raise_for_status()
             data = r.json()
@@ -90,3 +97,61 @@ class ZoomAPI:
             return dt
         except Exception:
             return None
+
+    async def test_connection(self) -> dict:
+        """测试 Zoom API 连接，返回详细诊断结果"""
+        result = {
+            "ok": False,
+            "token": False,
+            "user": {},
+            "scopes": [],
+            "meetings": {"scheduled": 0, "recent": 0},
+            "participants_ok": False,
+            "error": None,
+        }
+        # Step 1: get token
+        try:
+            token = await self._get_token()
+            result["token"] = True
+        except Exception as e:
+            result["error"] = f"Token: {e}"
+            return result
+
+        # Step 2: get user info
+        try:
+            user_data = await self._get("/users/me")
+            result["user"] = {
+                "id": user_data.get("id", ""),
+                "email": user_data.get("email", ""),
+                "display_name": user_data.get("display_name", ""),
+                "account_id": user_data.get("account_id", ""),
+                "plan_type": user_data.get("plan_type", 0),
+            }
+        except Exception as e:
+            result["error"] = f"User: {e}"
+            return result
+
+        # Step 3: check scopes by calling dashboard API
+        try:
+            # Try to list meetings as scope check
+            meetings_data = await self._get("/users/me/meetings", {"page_size": 1, "type": "scheduled"})
+            result["meetings"]["scheduled"] = len(meetings_data.get("meetings", []))
+        except Exception as e:
+            result["error"] = f"Meetings scope: {e}"
+            return result
+
+        # Step 4: try to read past meeting participants (report scope)
+        try:
+            past = await self._get("/users/me/meetings", {"page_size": 1, "type": "ended"})
+            past_meetings = past.get("meetings", [])
+            result["meetings"]["recent"] = len(past_meetings)
+            if past_meetings:
+                mid = str(past_meetings[0]["id"])
+                participants = await self.get_participants(mid)
+                result["participants_ok"] = len(participants) > 0
+        except Exception:
+            # Report scope may not be available - not critical
+            pass
+
+        result["ok"] = True
+        return result

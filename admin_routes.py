@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
 from config import settings
+from zoom_api import ZoomAPI
 
 router = APIRouter()
 
@@ -69,8 +70,18 @@ def _account_dict(a: dict) -> dict:
     return {
         "id": a["id"],
         "label": a.get("label", ""),
+        "tenant_id": a.get("tenant_id", ""),
         "account_id": a.get("account_id", ""),
         "host_email": a.get("host_email", ""),
+        "client_id": a.get("client_id", ""),
+        "webhook_secret": a.get("webhook_secret", ""),
+        "status": a.get("status", "inactive"),
+        "is_active": a.get("is_active", 1),
+        "last_sync": a.get("last_sync", ""),
+        "last_sync_result": a.get("last_sync_result", ""),
+        "webhook_last_event": a.get("webhook_last_event", ""),
+        "webhook_last_time": a.get("webhook_last_time", ""),
+        "created_at": a.get("created_at", ""),
     }
 
 
@@ -237,7 +248,7 @@ async def admin_accounts(request: Request, user: dict = Depends(require_user)):
     accounts = [_account_dict(a) for a in db.get_zoom_accounts(tenant_id)]
     meetings = [_meeting_dict(m) for m in db.get_meetings(tenant_id)]
     return _render_admin(request, "admin", user, "admin_accounts.html",
-                         accounts=accounts, meetings=meetings)
+                         accounts=accounts, meetings=meetings, tenants=db.get_all_tenants())
 
 
 @router.post("/admin/accounts/create")
@@ -247,10 +258,36 @@ async def admin_accounts_create(request: Request,
                                 client_id: str = Form(...),
                                 client_secret: str = Form(...),
                                 host_email: str = Form(""),
+                                webhook_secret: str = Form(""),
                                 user: dict = Depends(require_user)):
     """Create a new Zoom account binding."""
     tenant_id = request.session.get("tenant_id", "default")
-    db.create_zoom_account(tenant_id, label, account_id, client_id, client_secret, host_email)
+    db.create_zoom_account(tenant_id, label, account_id, client_id, client_secret, host_email, webhook_secret)
+    return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
+
+
+@router.post("/admin/accounts/{account_id}/edit")
+async def admin_accounts_edit(request: Request, account_id: int,
+                              label: str = Form(""),
+                              host_email: str = Form(""),
+                              webhook_secret: str = Form(""),
+                              is_active: str = Form("1"),
+                              client_id: str = Form(""),
+                              client_secret: str = Form(""),
+                              user: dict = Depends(require_user)):
+    """Edit a Zoom account."""
+    updates = dict(
+        label=label,
+        host_email=host_email,
+        webhook_secret=webhook_secret,
+        is_active=int(is_active),
+    )
+    # Only update credentials if provided
+    if client_id:
+        updates["client_id"] = client_id
+    if client_secret:
+        updates["client_secret"] = client_secret
+    db.update_zoom_account(account_id, **updates)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
 
 
@@ -260,6 +297,61 @@ async def admin_accounts_delete(request: Request, account_id: int,
     """Delete a Zoom account."""
     db.delete_zoom_account(account_id)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
+
+
+# ── Admin: Accounts API ──────────────────────────────────────────────────────
+
+@router.get("/admin/accounts/{account_id}/webhook-status")
+async def admin_accounts_webhook_status(request: Request, account_id: int,
+                                         user: dict = Depends(require_user)):
+    """Get webhook status for a Zoom account."""
+    account = db.get_zoom_account(account_id)
+    if not account:
+        return JSONResponse({"ok": False, "error": "Account not found"})
+    return JSONResponse({
+        "ok": True,
+        "webhook_last_event": account.get("webhook_last_event", ""),
+        "webhook_last_time": account.get("webhook_last_time", ""),
+        "status": account.get("status", "inactive"),
+    })
+
+
+@router.post("/admin/accounts/{account_id}/test")
+async def admin_accounts_test(request: Request, account_id: int,
+                               user: dict = Depends(require_user)):
+    """Test Zoom API connection for a specific account."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    account = db.get_zoom_account(account_id)
+    if not account:
+        return JSONResponse({"ok": False, "error": "Account not found"})
+
+    db.update_zoom_account_status(account_id, "verifying")
+
+    api = ZoomAPI(
+        account_id=account["account_id"],
+        client_id=account["client_id"],
+        client_secret=account["client_secret"],
+        tenant_id=account["tenant_id"],
+    )
+    try:
+        result = await api.test_connection()
+        if result["ok"]:
+            db.update_zoom_account_status(
+                account_id, "active",
+                last_sync=now,
+                last_sync_result=f"Connected as {result['user'].get('email','?')}",
+            )
+        else:
+            db.update_zoom_account_status(
+                account_id, "error",
+                last_sync=now,
+                last_sync_result=result.get("error", "Unknown error"),
+            )
+        return JSONResponse({"ok": True, "result": result})
+    except Exception as e:
+        db.update_zoom_account_status(account_id, "error", last_sync=now, last_sync_result=str(e))
+        return JSONResponse({"ok": True, "result": {"ok": False, "error": str(e)}})
 
 
 # ── Admin: Meetings ──────────────────────────────────────────────────────────

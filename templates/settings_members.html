@@ -3,11 +3,53 @@
 {% block title %}成员身份中心{% endblock %}
 {% block head %}
 <style>
-/* Three-column layout */
-.ml{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px}
-@media(max-width:1100px){.ml{grid-template-columns:1fr 1fr}}
-@media(max-width:700px){.ml{grid-template-columns:1fr}}
-.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px;max-height:600px;overflow-y:auto}
+/* ── Tab Navigation ── */
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--cb);margin-bottom:20px;overflow-x:auto}
+.tab-btn{padding:10px 20px;font-size:13px;font-weight:500;color:var(--ts);cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;transition:all .15s;white-space:nowrap}
+.tab-btn:hover{color:var(--text);background:var(--rh)}
+.tab-btn.active{color:var(--pr);border-bottom-color:var(--pr);font-weight:600}
+.tab-btn .tb-badge{font-size:10px;font-weight:500;color:var(--tm);background:var(--div);padding:1px 7px;border-radius:8px;margin-left:5px}
+.tab-btn.active .tb-badge{background:var(--pr-o);color:var(--pr)}
+.tab-pane{display:none}
+.tab-pane.active{display:block}
+
+/* ── Members Table ── */
+.filter-bar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.filter-bar .ipt{font-size:12px;padding:6px 10px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text)}
+.filter-bar .mc-badge{margin-left:auto;font-size:11px}
+.member-row td{font-size:13px;padding:8px 10px;vertical-align:middle}
+.member-row .online-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px}
+.member-row .alias-tags{display:flex;flex-wrap:wrap;gap:3px}
+.member-row .alias-tags .alias-tag{font-size:10px;background:var(--div);padding:1px 6px;border-radius:4px}
+.member-row .act-btn{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--cb);background:var(--card);color:var(--ts);white-space:nowrap}
+.member-row .act-btn:hover{background:var(--pr);color:#fff;border-color:var(--pr)}
+.member-row .act-del{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid transparent;background:transparent;color:var(--da)}
+.member-row .act-del:hover{background:var(--da-b)}
+.member-row .group-badge{font-size:10px;color:var(--tm);background:var(--div);padding:2px 7px;border-radius:4px}
+
+/* ── Discover Tab ── */
+.discover-row td{font-size:13px;padding:8px 10px;vertical-align:middle}
+.discover-row .name-cell{font-weight:500}
+.discover-row .mapped-badge{font-size:10px;color:var(--ts);background:var(--div);padding:2px 6px;border-radius:4px}
+.discover-row .act-map{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--cb);background:var(--card);color:var(--ts);white-space:nowrap}
+.discover-row .act-map:hover{background:var(--pr);color:#fff;border-color:var(--pr)}
+.discover-row .act-create{font-size:10px;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid var(--in);background:var(--in-b);color:var(--in);white-space:nowrap}
+.discover-row .act-create:hover{background:var(--in);color:#fff}
+#discoverEmpty{display:none}
+#discoverLoading{display:none}
+#discoverError{display:none}
+#discoverTableWrap{display:block}
+.discover-empty #discoverEmpty{display:block}
+.discover-empty #discoverTableWrap{display:none}
+.discover-loading .discover-table-wrap{display:none}
+.discover-loading #discoverLoading{display:block}
+.discover-loading #discoverEmpty{display:none}
+.discover-error #discoverError{display:block}
+.discover-error #discoverTableWrap{display:none}
+.discover-error #discoverEmpty{display:none}
+
+/* ── Card List (from original) ── */
+.mc{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:16px}
 .mh{font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--div);display:flex;justify-content:space-between;align-items:center}
 .mh .mc-title{display:flex;align-items:center;gap:6px}
 .mh .mc-badge{font-size:10px;font-weight:500;color:var(--tm);background:var(--div);padding:2px 8px;border-radius:8px}
@@ -25,14 +67,13 @@
 .mi .ma-edit{font-size:10px;padding:2px 7px;border-radius:4px;cursor:pointer;opacity:0;transition:opacity .15s;border:1px solid transparent;background:transparent;color:var(--in);white-space:nowrap}
 .mi:hover .ma-edit{opacity:1}
 .mi .ma-edit:hover{background:var(--in-b)}
-
-/* Aliases display under member */
 .member-aliases{font-size:11px;color:var(--ts);padding:2px 0 4px 16px;display:flex;flex-wrap:wrap;gap:4px}
 .member-aliases .alias-tag{display:inline-flex;align-items:center;gap:4px;background:var(--div);padding:2px 8px;border-radius:4px;font-size:10px}
 .member-aliases .alias-tag .alias-del{color:var(--tm);cursor:pointer;font-size:9px;padding:0 2px}
 .member-aliases .alias-tag .alias-del:hover{color:var(--da)}
+.quick-badge{font-size:9px;padding:1px 5px;border-radius:3px}
 
-/* Modal */
+/* ── Modal ── */
 .modal-overlay{position:fixed;inset:0;background:var(--ov);z-index:100;display:none;align-items:center;justify-content:center}
 .modal{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:24px;min-width:340px;max-width:440px;max-height:80vh;overflow-y:auto}
 .modal h3{font-size:15px;font-weight:600;margin:0 0 12px;color:var(--text)}
@@ -48,43 +89,166 @@
 .modal .alias-item .rm-alias{color:var(--tm);cursor:pointer;font-size:10px;margin-left:2px}
 .modal .alias-item .rm-alias:hover{color:var(--da)}
 
-/* Quick map badge */
-.quick-badge{font-size:9px;padding:1px 5px;border-radius:3px}
+/* ── Duplicates Tab ── */
+.dup-state{display:none;text-align:center;padding:40px 20px}
+.dup-state.visible{display:block}
+.dup-state .emoji{font-size:40px;margin-bottom:12px}
+.dup-state .tit{font-size:15px;font-weight:500;color:var(--tit)}
+.dup-state .tip{font-size:12px;color:var(--tm);margin-top:4px}
+#dupLoading{display:flex;align-items:center;justify-content:center;gap:8px;padding:40px;color:var(--ts);font-size:13px}
+.dup-group{border:1px solid var(--cb);border-radius:10px;margin-bottom:12px;overflow:hidden}
+.dup-group-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--rh);border-bottom:1px solid var(--cb);font-size:12px}
+.dup-group-header .dup-count{font-weight:600;color:var(--text)}
+.dup-group-header .dup-hint{color:var(--tm);font-size:11px;flex:1}
+.dup-group-header .dup-actions{display:flex;gap:6px;margin-left:auto}
+.dup-member{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--div);font-size:13px;transition:background .1s}
+.dup-member:last-child{border-bottom:none}
+.dup-member:hover{background:var(--rh)}
+.dup-member input[type=radio]{accent-color:var(--pr);cursor:pointer}
+.dup-member .dup-name{font-weight:500;color:var(--text);flex:1}
+.dup-member .dup-stat{font-size:11px;color:var(--ts)}
+.dup-member .dup-primary-badge{font-size:9px;background:var(--pr-o);color:var(--pr);padding:1px 6px;border-radius:4px;font-weight:500}
+.dup-member.selected{background:var(--in-b)}
+.dup-member.selected .dup-name{color:var(--in);font-weight:600}
+#duplicateList.empty-msg{padding:20px;text-align:center;color:var(--tm);font-size:12px}
+
+/* ── Groups Tab ── */
+.groups-form{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.groups-form .ipt{font-size:12px;padding:6px 10px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text)}
+.groups-state{display:none;text-align:center;padding:40px 20px}
+.groups-state .emoji{font-size:40px;margin-bottom:12px}
+.groups-state .tit{font-size:15px;font-weight:500;color:var(--tit)}
+.groups-state .tip{font-size:12px;color:var(--tm);margin-top:4px}
+.groups-card{overflow-x:auto}
+.gm-member-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--div);font-size:13px}
+.gm-member-row:last-child{border-bottom:none}
+.gm-member-row .gm-name{flex:1;font-weight:500;color:var(--text);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gm-member-row .gm-raw{font-size:11px;color:var(--ts);flex-shrink:0}
+.gm-add-row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+.gm-add-row select{flex:1;padding:6px 10px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px}
 </style>
 {% endblock %}
 {% block content %}
 <div class="page-container">
 <div class="page-header">
-  <h1 class="page-title">成员身份中心</h1>
-  <p class="page-subtitle">统一管理 Zoom 用户名映射 — 自动发现、快速映射、统一归并</p>
+  <h1 class="page-title">成员中心</h1>
+  <p class="page-subtitle">统一管理 Zoom 用户名映射 — 自动发现、快速映射、归并分组</p>
 </div>
 
-<div class="ml">
-  <!-- LEFT: Configured Members -->
+<!-- Tab Bar -->
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" data-tab="members" onclick="switchTab('members')">✅ 成员映射 <span class="tb-badge" id="tabBadgeMembers">0</span></button>
+  <button class="tab-btn" data-tab="discover" onclick="switchTab('discover')">🔍 未映射发现 <span class="tb-badge" id="tabBadgeDiscover">0</span></button>
+  <button class="tab-btn" data-tab="duplicates" onclick="switchTab('duplicates')">🔁 重复合并 <span class="tb-badge" id="tabBadgeDuplicates">0</span></button>
+  <button class="tab-btn" data-tab="groups" onclick="switchTab('groups')">📂 分组管理</button>
+</div>
+
+<!-- Tab Pane: 成员映射 -->
+<div class="tab-pane active" id="tabMembers">
   <div class="mc">
-    <div class="mh">
-      <span class="mc-title">✅ 已配置成员</span>
+    <div class="filter-bar">
+      <input id="memberSearch" class="ipt" placeholder="搜索成员..." style="flex:1;min-width:160px" oninput="applyMemberFilters()">
+      <select id="groupFilter" class="ipt" style="width:150px" onchange="applyMemberFilters()">
+        <option value="">全部组</option>
+      </select>
+      <select id="onlineFilter" class="ipt" style="width:110px" onchange="applyMemberFilters()">
+        <option value="all">全部状态</option>
+        <option value="online">在线</option>
+        <option value="offline">离线</option>
+      </select>
       <span class="mc-badge" id="memberCount">0</span>
     </div>
-    <div id="memberList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
-  </div>
-
-  <!-- MIDDLE: Unmapped Usernames -->
-  <div class="mc">
-    <div class="mh">
-      <span class="mc-title">🔍 未映射用户名</span>
-      <span class="mc-badge" id="unmappedCount">0</span>
+    <div style="overflow-x:auto">
+      <table class="data-table" style="width:100%">
+        <thead><tr><th>显示名</th><th>Zoom 别名</th><th>分组</th><th>状态</th><th style="width:120px">操作</th></tr></thead>
+        <tbody id="memberTableBody"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody>
+      </table>
     </div>
-    <div id="unmappedList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
   </div>
+</div>
 
-  <!-- RIGHT: Currently Online -->
+<!-- Tab Pane: 未映射发现 -->
+<div class="tab-pane" id="tabDiscover">
   <div class="mc">
-    <div class="mh">
-      <span class="mc-title">🟢 当前在线</span>
-      <span class="mc-badge" id="onlineCount">0</span>
+    <div class="filter-bar">
+      <span style="font-size:14px;font-weight:600">🔍 Zoom 名称发现</span>
+      <input id="discoverSearch" class="ipt" placeholder="搜索名称..." style="flex:1;min-width:160px" oninput="applyDiscoverFilter()">
+      <select id="discoverFilter" class="ipt" style="width:120px" onchange="applyDiscoverFilter()">
+        <option value="unmapped">未映射</option>
+        <option value="all">全部</option>
+        <option value="online">在线</option>
+      </select>
+      <button class="bt bt-s" onclick="loadDiscover()" style="font-size:12px;padding:5px 12px">🔄 刷新</button>
+      <span class="mc-badge" id="discoverCount">0</span>
     </div>
-    <div id="onlineList"><div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">加载中...</div></div>
+    <div id="discoverLoading" class="mi" style="justify-content:center;cursor:default;color:var(--ts);font-size:13px">⏳ 加载中...</div>
+    <div id="discoverError" class="mi" style="justify-content:center;cursor:default;color:var(--da);font-size:13px">❌ 加载失败，请稍后重试</div>
+    <div id="discoverEmpty">
+      <div style="text-align:center;padding:40px 20px">
+        <div style="font-size:40px;margin-bottom:12px">🎉</div>
+        <div style="font-size:15px;font-weight:500;color:var(--tit)">全部已映射!</div>
+        <div style="font-size:12px;color:var(--tm);margin-top:4px">所有 Zoom 用户名都已绑定到标准成员</div>
+      </div>
+    </div>
+    <div id="discoverTableWrap" style="overflow-x:auto">
+      <table class="data-table" style="width:100%">
+        <thead><tr><th>名称</th><th>次数</th><th>最后出现</th><th>状态</th><th>映射</th><th style="width:160px">操作</th></tr></thead>
+        <tbody id="discoverTableBody"><tr><td colspan="6" class="td-empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Tab Pane: 重复合并 -->
+<div class="tab-pane" id="tabDuplicates">
+  <div class="mc">
+    <div class="filter-bar">
+      <span style="font-size:14px;font-weight:600">🔁 疑似重复名称</span>
+      <button class="bt bt-s" onclick="loadDuplicates()" style="font-size:12px;padding:5px 12px">🔄 刷新</button>
+      <span class="mc-badge" id="duplicateCount">0</span>
+    </div>
+    <div id="dupLoading">⏳ 分析中...</div>
+    <div id="dupEmpty" class="dup-state">
+      <div class="emoji">✅</div>
+      <div class="tit">暂无重复建议</div>
+      <div class="tip">所有名称都通过自动清洗判断为不重复</div>
+    </div>
+    <div id="dupError" class="dup-state">
+      <div class="emoji">❌</div>
+      <div class="tit">加载失败</div>
+      <div class="tip">请稍后重试</div>
+    </div>
+    <div id="duplicateList"></div>
+  </div>
+</div>
+
+<!-- Tab Pane: 分组管理 -->
+<div class="tab-pane" id="tabGroups">
+  <div class="mc">
+    <div class="filter-bar">
+      <span class="mc-title">📂 分组管理</span>
+      <span class="mc-badge" id="groupCount">0</span>
+      <button class="bt bt-s" onclick="loadGroups()" style="margin-left:auto">🔄 刷新</button>
+    </div>
+    <div class="groups-form">
+      <input id="newGroupName" class="ipt" placeholder="分组名称" style="width:200px">
+      <input id="newGroupDesc" class="ipt" placeholder="描述" style="width:300px">
+      <button class="bt bt-p" id="groupCreateBtn" onclick="createGroup()">创建</button>
+      <button class="bt bt-s" id="groupCancelBtn" onclick="cancelGroupEdit()" style="display:none">取消</button>
+    </div>
+    <div id="groupsLoading" class="groups-state"><div class="emoji">⏳</div><div class="tit">加载中...</div></div>
+    <div id="groupsEmpty" class="groups-state" style="display:none">
+      <div class="emoji">📂</div><div class="tit">暂无分组</div><div class="tip">在上方创建第一个分组</div>
+    </div>
+    <div id="groupsError" class="groups-state" style="display:none">
+      <div class="emoji">❌</div><div class="tit">加载失败</div><div class="tip">请稍后重试</div>
+    </div>
+    <div class="groups-card" id="groupsCardWrap">
+      <table class="data-table" style="width:100%">
+        <thead><tr><th>名称</th><th>描述</th><th>成员数</th><th>操作</th></tr></thead>
+        <tbody id="groupTableBody"><tr><td colspan="4" class="td-empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -112,7 +276,7 @@
   </div>
 </div>
 
-<!-- Modal: Quick Map (one-click) -->
+<!-- Modal: Quick Map -->
 <div class="modal-overlay" id="quickMapModal" onclick="if(event.target===this)closeQuickMap()">
   <div class="modal">
     <h3>快速映射: <span id="quickMapName" style="font-weight:400"></span></h3>
@@ -131,107 +295,331 @@
   </div>
 </div>
 
+<!-- Modal: Group Member Configuration -->
+<div class="modal-overlay" id="groupMemberModal" onclick="if(event.target===this)closeGroupMemberModal()">
+  <div class="modal" style="min-width:480px;max-width:540px">
+    <h3 id="groupMemberModalTitle">组内成员</h3>
+    <div class="gm-add-row" id="gmAddRow">
+      <select id="gmMemberSelect">
+        <option value="">— 选择成员添加 —</option>
+      </select>
+      <button class="bt bt-p" onclick="addMemberToGroup()" style="flex-shrink:0">添加</button>
+    </div>
+    <div style="max-height:360px;overflow-y:auto;border:1px solid var(--cb);border-radius:8px">
+      <div id="gmMemberList" style="padding:20px;text-align:center;color:var(--tm);font-size:12px">暂无成员</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="closeGroupMemberModal()">关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
-// ── State ──────────────────────────────────────────────────────────────
-let membersData = [];     // from GET /api/v3/members
-let discoverData = null;  // from GET /api/v3/member-aliases/discover
+// ── Tab Switching ──
+function switchTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab' + name.charAt(0).toUpperCase() + name.slice(1)));
+}
+
+// ── State ──
+let membersData = [];
+let discoverData = null;
 let currentModalRawName = "";
-let currentModalMember = null; // {display_name, raw_name, aliases} for editing
+let currentModalMember = null;
 let pendingAliases = [];
 let quickMapName = "";
 
-// ── Load ───────────────────────────────────────────────────────────────
+// ── Load ──
 async function loadAll(){
-  const [m, d] = await Promise.all([
-    fetch("/api/v3/members").then(r=>r.json()),
-    fetch("/api/v3/member-aliases/discover").then(r=>r.json())
-  ]);
-  if(!m.ok || !d.ok) return;
+  const m = await fetch("/api/v3/members").then(r=>r.json());
+  if(!m.ok) return;
   membersData = m.items || [];
-  discoverData = d;
-
-  renderMembers(membersData);
-  renderUnmapped(d.unmapped || [], d.online || []);
-  renderOnline(d.online || []);
+  await populateGroupFilter();
+  renderMembersTable(membersData);
+  loadDiscover();
+  loadDuplicates();
+  loadGroups();
 }
 
-// ── Left: Configured Members ───────────────────────────────────────────
-function renderMembers(members){
-  const div = document.getElementById("memberList");
-  document.getElementById("memberCount").textContent = members.length;
-  if(!members.length){
-    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">暂无配置</div>';
+// ── Duplicates Tab ──
+let duplicatesData = [];
+let ignoredGroups = new Set();
+
+function formatRelativeTime(iso){
+  if(!iso) return "未知";
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = (now - d) / 1000;
+    if(diff < 60) return "刚刚";
+    if(diff < 3600) return Math.floor(diff/60)+"分钟前";
+    if(diff < 86400) return Math.floor(diff/3600)+"小时前";
+    if(diff < 2592000) return Math.floor(diff/86400)+"天前";
+    return d.toLocaleDateString("zh-CN",{month:"2-digit",day:"2-digit"});
+  } catch { return String(iso).slice(0,10); }
+}
+
+async function loadDuplicates(){
+  const list = document.getElementById("duplicateList");
+  const loading = document.getElementById("dupLoading");
+  const empty = document.getElementById("dupEmpty");
+  const error = document.getElementById("dupError");
+  loading.style.display = "flex";
+  empty.className = "dup-state";
+  error.className = "dup-state";
+  list.innerHTML = "";
+  try {
+    const r = await fetch("/api/v3/aliases/duplicates");
+    const d = await r.json();
+    loading.style.display = "none";
+    if(!d.ok || !d.groups) throw new Error("接口异常");
+    duplicatesData = d.groups;
+    document.getElementById("duplicateCount").textContent = d.total;
+    document.getElementById("tabBadgeDuplicates").textContent = d.total;
+    renderDuplicates();
+  } catch(e){
+    loading.style.display = "none";
+    error.className = "dup-state visible";
+  }
+}
+
+function renderDuplicates(){
+  const list = document.getElementById("duplicateList");
+  const empty = document.getElementById("dupEmpty");
+  const visible = duplicatesData.filter(g => !ignoredGroups.has(g.group_id));
+  if(!visible.length){
+    empty.className = "dup-state visible";
+    list.innerHTML = "";
     return;
   }
-  div.innerHTML = members.map(m => {
-    const aliasTags = (m.aliases || []).map(a =>
-      `<span class="alias-tag">${a}</span>`
-    ).join("");
-    return `<div style="margin-bottom:4px">
-      <div class="mi" style="cursor:default">
-        <span class="md" style="background:${m.count_enabled ? 'var(--sc)' : 'var(--tm)'}"></span>
-        <span class="mn">${esc(m.display_name)}</span>
-        <span class="ms">← ${esc(m.raw_name)}</span>
-        <button class="ma-edit" onclick="editMember('${esc(m.display_name)}')">编辑</button>
-        <button class="ma-del" onclick="deleteMember('${esc(m.display_name)}')">✕</button>
+  empty.className = "dup-state";
+  list.innerHTML = visible.map(g => {
+    const gid = g.group_id;
+    const members = g.members || [];
+    const suggested = g.suggested_primary || (members[0] && members[0].name) || "";
+    return `<div class="dup-group" data-gid="${gid}">
+      <div class="dup-group-header">
+        <span class="dup-count">${members.length} 个名称</span>
+        <span class="dup-hint">建议标准名: ${esc(suggested)}</span>
+        <div class="dup-actions">
+          <button class="bt bt-s bt-p" onclick="mergeDuplicate(${gid})" style="font-size:11px;padding:3px 10px">合并</button>
+          <button class="bt bt-s" onclick="ignoreDuplicate(${gid})" style="font-size:11px;padding:3px 10px">忽略</button>
+        </div>
       </div>
-      ${aliasTags ? `<div class="member-aliases">${aliasTags}</div>` : ''}
+      ${members.map((m, i) => {
+        const isPrimary = i === 0;
+        return `<div class="dup-member${isPrimary ? ' selected' : ''}">
+          <input type="radio" name="dup_${gid}" value="${esc(m.name)}" ${isPrimary ? 'checked' : ''} onchange="selectDupPrimary(${gid},'${esc(m.name)}')">
+          <span class="dup-name">${esc(m.name)}</span>
+          <span class="dup-stat">${m.count} 次 · ${formatRelativeTime(m.last_seen)}</span>
+          ${isPrimary ? '<span class="dup-primary-badge">建议</span>' : ''}
+        </div>`;
+      }).join('')}
     </div>`;
-  }).join("");
+  }).join('');
 }
 
-// ── Middle: Unmapped ───────────────────────────────────────────────────
-function renderUnmapped(unmappedNames, onlineNames){
-  const div = document.getElementById("unmappedList");
-  document.getElementById("unmappedCount").textContent = unmappedNames.length;
-  if(!unmappedNames.length){
-    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">✅ 全部已映射</div>';
+function selectDupPrimary(gid, name){
+  const group = duplicatesData.find(g => g.group_id === gid);
+  if(!group) return;
+  group.suggested_primary = name;
+  const cards = document.querySelectorAll(`.dup-group[data-gid="${gid}"]`);
+  cards.forEach(c => {
+    c.querySelectorAll('.dup-member').forEach((el, i) => {
+      el.classList.toggle('selected', el.querySelector('input').checked);
+    });
+  });
+}
+
+async function mergeDuplicate(gid){
+  const group = duplicatesData.find(g => g.group_id === gid);
+  if(!group) return;
+  const canonical = group.suggested_primary || (group.members[0] && group.members[0].name);
+  if(!canonical) return;
+  const aliases = group.members.map(m => m.name).filter(n => n !== canonical);
+  if(!confirm(`确定将「${aliases.join('」、『')}」合并到「${canonical}」？`)) return;
+  const btn = document.querySelector(`.dup-group[data-gid="${gid}"] .bt-p`);
+  if(btn){ btn.disabled = true; btn.textContent = "合并中..."; }
+  const r = await fetch("/api/v3/aliases/merge", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({canonical, aliases})
+  });
+  const d = await r.json();
+  if(d.ok){
+    ignoredGroups.add(gid);
+    renderDuplicates();
+    loadDiscover();
+    const m = await fetch("/api/v3/members").then(r=>r.json());
+    if(m.ok){ membersData = m.items || []; renderMembersTable(membersData); }
+  } else {
+    alert(d.error || "合并失败");
+    if(btn){ btn.disabled = false; btn.textContent = "合并"; }
+  }
+}
+
+function ignoreDuplicate(gid){
+  ignoredGroups.add(gid);
+  renderDuplicates();
+}
+
+// ── Members Tab: Table Render + Search/Filter ──
+let onlineNames = [];
+
+function renderMembersTable(members){
+  const tbody = document.getElementById("memberTableBody");
+  document.getElementById("memberCount").textContent = members.length;
+  document.getElementById("tabBadgeMembers").textContent = membersData.length;
+  if(!members.length){
+    tbody.innerHTML = '<tr><td colspan="5" class="td-empty">暂无成员</td></tr>';
     return;
   }
   const onlineSet = new Set(onlineNames);
-  div.innerHTML = unmappedNames.map(n => {
-    const isOnline = onlineSet.has(n);
-    const dot = isOnline ? '<span class="online-dot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--sc);margin-right:4px"></span>' : '';
-    return `<div class="mi" onclick="openMapModal('${esc(n)}')">
-      ${dot}<span class="mn">${esc(n)}</span>
-      <button class="ma">映射</button>
-    </div>`;
+  const groupMap = {};
+  (groupsData || []).forEach(g => { groupMap[g.id] = g.name; });
+  tbody.innerHTML = members.map(m => {
+    const rawOnline = onlineSet.has(m.raw_name);
+    const dotColor = rawOnline ? 'var(--sc)' : 'var(--tm)';
+    const statusText = rawOnline ? '在线' : '离线';
+    const aliasTags = (m.aliases || []).map(a =>
+      `<span class="alias-tag">${a}</span>`
+    ).join("");
+    const groupName = m.group_id ? (groupMap[m.group_id] || '—') : '—';
+    return `<tr class="member-row">
+      <td><strong>${esc(m.display_name)}</strong></td>
+      <td>${esc(m.raw_name)}${aliasTags ? '<br><span class="alias-tags">' + aliasTags + '</span>' : ''}</td>
+      <td>${groupName !== '—' ? '<span class="group-badge">' + esc(groupName) + '</span>' : '—'}</td>
+      <td><span class="online-dot" style="background:${dotColor};display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px"></span>${statusText}</td>
+      <td>
+        <button class="act-btn" onclick="editMember('${esc(m.display_name)}')">编辑</button>
+        <button class="act-del" onclick="deleteMember('${esc(m.display_name)}')">删除</button>
+      </td>
+    </tr>`;
   }).join("");
 }
 
-// ── Right: Online ────────────────────────────────────────────────────
-function renderOnline(onlineNames){
-  const div = document.getElementById("onlineList");
-  document.getElementById("onlineCount").textContent = onlineNames.length;
-  if(!onlineNames.length){
-    div.innerHTML = '<div class="mi" style="justify-content:center;cursor:default;color:var(--tm);font-size:12px">暂无在线</div>';
+function applyMemberFilters(){
+  const query = document.getElementById("memberSearch").value.trim().toLowerCase();
+  const groupVal = document.getElementById("groupFilter").value;
+  const onlineVal = document.getElementById("onlineFilter").value;
+  const onlineSet = new Set(onlineNames);
+  let filtered = membersData;
+  if(query){
+    filtered = filtered.filter(m =>
+      m.display_name.toLowerCase().includes(query) ||
+      m.raw_name.toLowerCase().includes(query) ||
+      (m.aliases || []).some(a => a.toLowerCase().includes(query))
+    );
+  }
+  if(groupVal){
+    filtered = filtered.filter(m => String(m.group_id || '') === groupVal);
+  }
+  if(onlineVal === 'online'){
+    filtered = filtered.filter(m => onlineSet.has(m.raw_name));
+  } else if(onlineVal === 'offline'){
+    filtered = filtered.filter(m => !onlineSet.has(m.raw_name));
+  }
+  renderMembersTable(filtered);
+}
+
+async function populateGroupFilter(){
+  const sel = document.getElementById("groupFilter");
+  if(!sel) return;
+  if(!groupsData || !groupsData.length){
+    sel.innerHTML = '<option value="">全部组</option>';
     return;
   }
-  // Check which are already mapped
-  const mappedRaws = new Set(membersData.map(m => m.raw_name.toLowerCase().replace(/\\s+/g, '')));
-  div.innerHTML = onlineNames.map(n => {
-    const key = n.toLowerCase().replace(/\\s+/g, '');
-    const isMapped = mappedRaws.has(key);
-    if(isMapped){
-      // Find display name
-      const member = membersData.find(m => m.raw_name.toLowerCase().replace(/\\s+/g, '') === key);
-      const dn = member ? member.display_name : n;
-      return `<div class="mi" style="cursor:default">
-        <span class="md" style="background:var(--sc)"></span>
-        <span class="mn">${esc(dn)}</span>
-        <span class="ms">✅</span>
-      </div>`;
-    } else {
-      return `<div class="mi" onclick="openQuickMap('${esc(n)}')">
-        <span class="md" style="background:var(--wa)"></span>
-        <span class="mn">${esc(n)}</span>
-        <button class="ma">快速映射</button>
-      </div>`;
-    }
-  }).join("");
+  sel.innerHTML = '<option value="">全部组</option>' +
+    groupsData.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
 }
 
-// ── Main Modal: Create / Edit Member ─────────────────────────────────
+// ── Discover Tab ──
+async function loadDiscover(){
+  const outer = document.getElementById('tabDiscover').querySelector('.mc');
+  const wrap = document.getElementById('discoverTableWrap');
+  const loading = document.getElementById('discoverLoading');
+  const error = document.getElementById('discoverError');
+  const empty = document.getElementById('discoverEmpty');
+  outer.classList.remove('discover-empty','discover-error');
+  outer.classList.add('discover-loading');
+  if(loading) loading.style.display=''; if(wrap) wrap.style.display='none';
+  if(error) error.style.display='none'; if(empty) empty.style.display='none';
+  try {
+    const r = await fetch("/api/v3/aliases/discover");
+    const d = await r.json();
+    outer.classList.remove('discover-loading');
+    if(loading) loading.style.display='none';
+    if(!d.ok || !d.names) throw new Error('Invalid response');
+    discoverData = d.names || [];
+    onlineNames = discoverData.filter(n => n.is_online).map(n => n.name);
+    const unmapped = discoverData.filter(n => !n.already_mapped);
+    document.getElementById('discoverCount').textContent = unmapped.length;
+    document.getElementById('tabBadgeDiscover').textContent = unmapped.length;
+    if(!discoverData.length){
+      outer.classList.add('discover-empty');
+      if(wrap) wrap.style.display='none'; if(empty) empty.style.display=''; return;
+    }
+    if(wrap) wrap.style.display=''; if(empty) empty.style.display='none';
+    renderDiscoverTable(discoverData);
+  } catch(e){
+    outer.classList.remove('discover-loading');
+    outer.classList.add('discover-error');
+    if(loading) loading.style.display='none'; if(error) error.style.display='';
+    if(wrap) wrap.style.display='none'; if(empty) empty.style.display='none';
+    console.error('Discover error:', e);
+  }
+}
+
+function renderDiscoverTable(names){
+  const tbody = document.getElementById('discoverTableBody');
+  const filter = document.getElementById('discoverFilter').value;
+  const query = document.getElementById('discoverSearch').value.trim().toLowerCase();
+  let filtered = names;
+  if(filter === 'unmapped') filtered = filtered.filter(n => !n.already_mapped);
+  else if(filter === 'online') filtered = filtered.filter(n => n.is_online);
+  if(query) filtered = filtered.filter(n => n.name.toLowerCase().includes(query));
+  if(!filtered.length){
+    tbody.innerHTML = '<tr><td colspan="6" class="td-empty">没有匹配的名称</td></tr>'; return;
+  }
+  tbody.innerHTML = filtered.map(n => {
+    const status = n.is_online
+      ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sc);margin-right:4px"></span><span style="color:var(--sc)">在线</span>'
+      : '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--tm);margin-right:4px"></span><span style="color:var(--tm)">离线</span>';
+    const badge = n.already_mapped
+      ? '<span class="mapped-badge">已映射</span>'
+      : '<span class="mapped-badge" style="color:var(--da-bg)">未映射</span>';
+    const actions = n.already_mapped
+      ? '<span style="color:var(--ts);font-size:11px">—</span>'
+      : `<button class="act-map" onclick="openQuickMap('${esc(n.name)}')">映射</button>` +
+        `<button class="act-create" onclick="openMapModal('${esc(n.name)}')">新建</button>`;
+    return `<tr class="discover-row">
+      <td><span class="name-cell">${esc(n.name)}</span></td>
+      <td>${n.count}</td>
+      <td style="font-size:11px;color:var(--ts)">${formatLastSeen(n.last_seen)}</td>
+      <td>${status}</td>
+      <td>${badge}</td>
+      <td style="white-space:nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function formatLastSeen(iso){
+  if(!iso) return '—';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffH = (now - d) / 3600000;
+    if(diffH < 1) return '刚刚';
+    if(diffH < 24) return Math.round(diffH) + '小时前';
+    const days = Math.round(diffH / 24);
+    if(days < 7) return days + '天前';
+    return d.toLocaleDateString('zh-CN', {month:'2-digit', day:'2-digit'});
+  } catch { return String(iso).slice(0, 16); }
+}
+
+function applyDiscoverFilter(){ renderDiscoverTable(discoverData); }
+
+// ── Modal: Create / Edit Member ──
 function openMapModal(rawName){
   currentModalRawName = rawName;
   currentModalMember = null;
@@ -267,10 +655,7 @@ function addAlias(){
   const input = document.getElementById("modalAliasInput");
   const val = input.value.trim();
   if(!val) return;
-  if(pendingAliases.includes(val)){
-    input.value = "";
-    return;
-  }
+  if(pendingAliases.includes(val)){ input.value = ""; return; }
   pendingAliases.push(val);
   input.value = "";
   renderPendingAliases();
@@ -302,31 +687,23 @@ async function saveMember(){
     body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: pendingAliases})
   });
   const d = await r.json();
-  if(d.ok){
-    closeMemberModal();
-    loadAll();
-  } else {
-    alert(d.error || "保存失败");
-  }
+  if(d.ok){ closeMemberModal(); loadAll(); }
+  else alert(d.error || "保存失败");
 }
 
 async function deleteMember(displayName){
   if(!confirm("确定删除成员「" + displayName + "」？此操作不可撤销。")) return;
   const r = await fetch("/api/v3/members/" + encodeURIComponent(displayName), {method: "DELETE"});
   const d = await r.json();
-  if(d.ok){
-    loadAll();
-  } else {
-    alert(d.error || "删除失败");
-  }
+  if(d.ok) loadAll();
+  else alert(d.error || "删除失败");
 }
 
-// ── Quick Map Modal ──────────────────────────────────────────────────
+// ── Quick Map Modal ──
 function openQuickMap(name){
   quickMapName = name;
   document.getElementById("quickMapName").textContent = name;
   document.getElementById("quickMapNewName").value = name;
-  // Populate existing members
   const sel = document.getElementById("quickMapTarget");
   sel.innerHTML = '<option value="__new__">— 新建成员 —</option>';
   membersData.forEach(m => {
@@ -359,85 +736,84 @@ async function doQuickMap(){
     if(!displayName) return alert("请输入成员名称");
     rawName = quickMapName;
   } else {
-    // Find existing member by display_name
     const member = membersData.find(m => m.display_name === target);
     if(!member) return alert("未找到成员");
-    // Create a new entry with this online name as raw_name pointing to existing display_name
     rawName = quickMapName;
     displayName = member.display_name;
-    // Also add quickMapName as an alias to the existing member
     const existingAliases = member.aliases || [];
     if(!existingAliases.includes(quickMapName)){
       existingAliases.push(quickMapName);
     }
-    // Update the existing member to include this alias
     const r = await fetch("/api/v3/members", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        raw_name: member.raw_name,
-        display_name: member.display_name,
-        aliases: existingAliases
-      })
+      body: JSON.stringify({raw_name: member.raw_name, display_name: member.display_name, aliases: existingAliases})
     });
     const d = await r.json();
-    if(d.ok){
-      closeQuickMap();
-      loadAll();
-    } else {
-      alert(d.error || "映射失败");
-    }
+    if(d.ok){ closeQuickMap(); loadAll(); }
+    else alert(d.error || "映射失败");
     return;
   }
-
-  // New member
   const r = await fetch("/api/v3/members", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({raw_name: rawName, display_name: displayName, aliases: []})
   });
   const d = await r.json();
-  if(d.ok){
-    closeQuickMap();
-    loadAll();
-  } else {
-    alert(d.error || "保存失败");
-  }
+  if(d.ok){ closeQuickMap(); loadAll(); }
+  else alert(d.error || "保存失败");
 }
 
-// ── Utilities ────────────────────────────────────────────────────────
+// ── Utilities ──
 function esc(s){
   if(!s) return "";
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-// ── Init ─────────────────────────────────────────────────────────────
-loadAll();
-
-// ── 分组管理 ──────────────────────────────────────────────────────────
+// ── Groups ──
 let editingGroupId = null;
 let groupsData = [];
-let configGroupId = null;
-let configGroupName = '';
-let configOriginalMembers = [];
+let currentGroupId = null;
+let currentGroupName = '';
 
 async function loadGroups(){
-  const r = await fetch('/api/v3/member-groups');
-  const j = await r.json();
+  const loading = document.getElementById('groupsLoading');
+  const empty = document.getElementById('groupsEmpty');
+  const error = document.getElementById('groupsError');
+  const wrap = document.getElementById('groupsCardWrap');
   const tb = document.getElementById('groupTableBody');
-  if (!j.ok || !j.groups) { tb.innerHTML = '<tr><td colspan="4" class="td-empty">暂无分组</td></tr>'; return; }
-  groupsData = j.groups;
-  tb.innerHTML = j.groups.map(g => `<tr>
+  loading.style.display = ''; empty.style.display = 'none'; error.style.display = 'none'; wrap.style.display = 'none';
+  try {
+    const r = await fetch('/api/v3/member-groups');
+    const j = await r.json();
+    loading.style.display = 'none';
+    if (!j.ok || !j.groups) throw new Error('Invalid response');
+    groupsData = j.groups;
+    document.getElementById('groupCount').textContent = groupsData.length;
+    populateGroupFilter();
+    if(!groupsData.length){ empty.style.display = ''; return; }
+    wrap.style.display = '';
+    tb.innerHTML = groupsData.map(g => renderGroupRow(g)).join('');
+  } catch(e){
+    loading.style.display = 'none';
+    error.style.display = '';
+    console.error('Groups error:', e);
+  }
+}
+
+function renderGroupRow(g){
+  const count = g.members ? g.members.length : 0;
+  return `<tr>
     <td class="td-name">${esc(g.name)}</td>
     <td style="color:var(--ts)">${esc(g.description || '—')}</td>
-    <td>${g.members ? g.members.length : 0}</td>
+    <td>${count}</td>
     <td>
-      <button class="bt bt-s" onclick="openGroupMembers(${g.id},'${esc(g.name)}')" title="配置成员">👥</button>
-      <button class="bt bt-s" onclick="editGroup(${g.id},'${esc(g.name)}','${esc(g.description||'')}')">✏️</button>
-      <button class="bt bt-s bt-d" onclick="deleteGroup(${g.id},'${esc(g.name)}')">删除</button>
+      <button class="bt bt-s" onclick="openGroupMembers(${g.id},'${escAttr(g.name)}')" title="查看成员">👥</button>
+      <button class="bt bt-s" onclick="editGroup(${g.id},'${escAttr(g.name)}','${escAttr(g.description||'')}')">✏️</button>
+      <button class="bt bt-s bt-d" onclick="deleteGroup(${g.id},'${escAttr(g.name)}')">删除</button>
     </td>
-  </tr>`).join('');
+  </tr>`;
 }
 
 function editGroup(id, name, desc){
@@ -456,7 +832,7 @@ function cancelGroupEdit(){
   document.getElementById('groupCancelBtn').style.display = 'none';
 }
 
-async function createOrUpdateGroup(){
+async function createGroup(){
   const name = document.getElementById('newGroupName').value.trim();
   const desc = document.getElementById('newGroupDesc').value.trim();
   if (!name) return alert('请输入分组名称');
@@ -470,44 +846,39 @@ async function createOrUpdateGroup(){
 }
 
 async function deleteGroup(id, name){
-  if (!confirm('确定删除分组 "' + name + '"?')) return;
+  if (!confirm('确定删除分组 "' + name + '"?\n仅解除分组，不会删除成员。')) return;
   const r = await fetch('/api/v3/member-groups/' + id, {method:'DELETE'});
   const j = await r.json();
   if (j.ok) loadGroups();
   else alert('删除失败');
 }
 
-// ── Group Member Configuration Modal ──────────────────────────────
 function escAttr(s){
   if(!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
                   .replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-function openGroupMembers(groupId, groupName){
+async function openGroupMembers(groupId, groupName){
   const group = groupsData.find(g => g.id === groupId);
   if(!group) return;
-  configGroupId = groupId;
-  configGroupName = groupName;
-  configOriginalMembers = (group.members || []);
-
-  const tbody = document.getElementById('groupMemberCheckList');
-  const members = membersData || [];
-  if(!members.length){
-    tbody.innerHTML = '<tr><td colspan="2" class="td-empty">暂无成员，请先在左侧创建成员</td></tr>';
-  } else {
-    const groupMembersSet = new Set(configOriginalMembers);
-    tbody.innerHTML = members.map(m => {
-      const rawName = m.raw_name || '';
-      const checked = groupMembersSet.has(rawName) ? 'checked' : '';
-      return `<tr>
-        <td><input type="checkbox" value="${escAttr(rawName)}" ${checked}></td>
-        <td>${esc(m.display_name || rawName)} <span style="color:var(--ts);font-size:11px">(${esc(rawName)})</span></td>
-      </tr>`;
-    }).join('');
+  currentGroupId = groupId;
+  currentGroupName = groupName;
+  document.getElementById('groupMemberModalTitle').textContent = '组内成员 — ' + groupName;
+  renderGroupMembers(group.members || []);
+  const sel = document.getElementById('gmMemberSelect');
+  sel.innerHTML = '<option value="">— 选择成员添加 —</option>';
+  if(membersData && membersData.length){
+    const groupSet = new Set(group.members || []);
+    membersData.forEach(m => {
+      if(!groupSet.has(m.raw_name)){
+        const opt = document.createElement('option');
+        opt.value = m.raw_name;
+        opt.textContent = esc(m.display_name || m.raw_name) + ' (' + esc(m.raw_name) + ')';
+        sel.appendChild(opt);
+      }
+    });
   }
-
-  document.getElementById('groupMemberModalTitle').textContent = '配置成员 — ' + groupName;
   document.getElementById('groupMemberModal').style.display = 'flex';
 }
 
@@ -515,97 +886,58 @@ function closeGroupMemberModal(){
   document.getElementById('groupMemberModal').style.display = 'none';
 }
 
-async function saveGroupMembers(){
-  const checkboxes = document.querySelectorAll('#groupMemberCheckList input[type="checkbox"]');
-  const selected = [];
-  checkboxes.forEach(cb => { if(cb.checked) selected.push(cb.value); });
-
-  // Calculate diffs
-  const toAdd = selected.filter(s => !configOriginalMembers.includes(s));
-  const toRemove = configOriginalMembers.filter(s => !selected.includes(s));
-
-  if(!toAdd.length && !toRemove.length){
-    closeGroupMemberModal();
+function renderGroupMembers(members){
+  const div = document.getElementById('gmMemberList');
+  if(!members || !members.length){
+    div.innerHTML = '<div style="padding:20px;text-align:center;color:var(--tm);font-size:12px">暂无成员，从上方下拉列表添加</div>';
     return;
   }
-
-  // Show saving state
-  const btn = document.getElementById('saveGroupMembersBtn');
-  const origText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '保存中...';
-
-  let errors = [];
-  for(const rawName of toRemove){
-    try {
-      const r = await fetch('/api/v3/member-groups/' + configGroupId + '/members/' + encodeURIComponent(rawName), {method:'DELETE'});
-      const d = await r.json();
-      if(!d.ok) errors.push('移除失败: ' + rawName);
-    } catch(e){ errors.push('移除异常: ' + rawName); }
-  }
-
-  for(const rawName of toAdd){
-    try {
-      const r = await fetch('/api/v3/member-groups/' + configGroupId + '/members', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({member_name: rawName})
-      });
-      const d = await r.json();
-      if(!d.ok) errors.push('添加失败: ' + rawName);
-    } catch(e){ errors.push('添加异常: ' + rawName); }
-  }
-
-  btn.disabled = false;
-  btn.textContent = origText;
-
-  if(errors.length){
-    alert('部分操作失败:\n' + errors.join('\n'));
-  }
-
-  closeGroupMemberModal();
-  loadGroups();
-  loadAll();
+  div.innerHTML = members.map(rawName => {
+    const member = (membersData || []).find(m => m.raw_name === rawName);
+    const displayName = member ? member.display_name : rawName;
+    return `<div class="gm-member-row">
+      <span class="gm-name">${esc(displayName)}</span>
+      <span class="gm-raw">${esc(rawName)}</span>
+      <button class="bt bt-s bt-d" onclick="removeMemberFromGroup('${escAttr(rawName)}')" style="margin-left:auto;flex-shrink:0">移除</button>
+    </div>`;
+  }).join('');
 }
 
-document.addEventListener('DOMContentLoaded', loadGroups);
+async function addMemberToGroup(){
+  const sel = document.getElementById('gmMemberSelect');
+  const rawName = sel.value;
+  if(!rawName) return;
+  sel.value = '';
+  try {
+    const r = await fetch('/api/v3/member-groups/' + currentGroupId + '/members', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({member_name: rawName})
+    });
+    const d = await r.json();
+    if(d.ok){
+      await loadGroups();
+      const g = groupsData.find(x => x.id === currentGroupId);
+      if(g) renderGroupMembers(g.members || []);
+    } else alert('添加失败');
+  } catch(e){ alert('添加异常'); }
+}
+
+async function removeMemberFromGroup(rawName){
+  if(!currentGroupId) return;
+  if(!confirm('从「' + currentGroupName + '」中移除 ' + rawName + '？')) return;
+  try {
+    const r = await fetch('/api/v3/member-groups/' + currentGroupId + '/members/' + encodeURIComponent(rawName), {method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){
+      await loadGroups();
+      const g = groupsData.find(x => x.id === currentGroupId);
+      if(g) renderGroupMembers(g.members || []);
+    } else alert('移除失败');
+  } catch(e){ alert('移除异常'); }
+}
+
+// ── Init ──
+loadAll();
 </script>
-
-<!-- Modal: Group Member Configuration -->
-<div class="modal-overlay" id="groupMemberModal" onclick="if(event.target===this)closeGroupMemberModal()">
-  <div class="modal" style="min-width:460px;max-width:520px">
-    <h3 id="groupMemberModalTitle">配置成员</h3>
-    <div style="max-height:360px;overflow-y:auto">
-      <table class="data-table" style="width:100%">
-        <thead><tr><th style="width:36px">选择</th><th>成员（显示名 → 原始名）</th></tr></thead>
-        <tbody id="groupMemberCheckList"><tr><td colspan="2" class="td-empty">加载中...</td></tr></tbody>
-      </table>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-sm" onclick="closeGroupMemberModal()">取消</button>
-      <button class="btn btn-primary btn-sm" id="saveGroupMembersBtn" onclick="saveGroupMembers()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- ─── 分组管理 ──────────────────────────────────────────────── -->
-<hr style="margin:32px 0;border-color:var(--div)">
-<div class="page-container">
-  <div style="margin-bottom:20px">
-    <h2 style="font-size:16px;font-weight:600;margin:0 0 4px 0">📂 分组管理</h2>
-    <p style="font-size:12px;color:var(--ts);margin:0">管理成员分组名称，点击 👥 按钮配置成员归属</p>
-  </div>
-  <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
-    <input id="newGroupName" class="ipt" placeholder="分组名称" style="width:200px">
-    <input id="newGroupDesc" class="ipt" placeholder="描述" style="width:300px">
-    <button class="bt bt-p" id="groupCreateBtn" onclick="createOrUpdateGroup()">创建</button>
-    <button class="bt bt-s" id="groupCancelBtn" onclick="cancelGroupEdit()" style="display:none">取消</button>
-  </div>
-  <div class="card" style="padding:16px">
-    <table class="data-table" style="width:100%">
-      <thead><tr><th>名称</th><th>描述</th><th>成员数</th><th>操作</th></tr></thead>
-      <tbody id="groupTableBody"><tr><td colspan="4" class="td-empty">加载中...</td></tr></tbody>
-    </table>
-  </div>
-</div>
 {% endblock %}

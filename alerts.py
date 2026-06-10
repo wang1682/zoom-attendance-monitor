@@ -63,7 +63,7 @@ class TelegramNotifier:
                 try:
                     r = await client.post(
                         f"{self._base}/sendMessage",
-                        json={"chat_id": cid, "text": text, "parse_mode": "Markdown"},
+                        json={"chat_id": cid, "text": text, },
                     )
                     if r.status_code != 200:
                         success = False

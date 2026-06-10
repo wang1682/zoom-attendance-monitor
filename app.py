@@ -796,6 +796,7 @@ def build_app() -> "FastAPI":
             raise HTTPException(400, "invalid JSON")
 
         import hashlib as _hashlib
+        import hmac as _hmac
         # Zoom URL Challenge（验证端点）
         event_type = payload.get("event", "")
         sys.stdout.write(f"[WEBHOOK] Received event: {event_type}\n")
@@ -803,7 +804,7 @@ def build_app() -> "FastAPI":
         sys.stdout.flush()
         if event_type == "endpoint.url_validation":
             plain_token = payload.get("payload", {}).get("plainToken", "")
-            enc = _hashlib.sha256((settings.zoom_webhook_secret + plain_token).encode()).hexdigest()
+            enc = _hmac.new(settings.zoom_webhook_secret.encode(), plain_token.encode(), _hashlib.sha256).hexdigest()
             sys.stdout.write(f"[WEBHOOK] Challenge OK: pt={plain_token[:10]}... enc={enc[:10]}...\n")
             sys.stdout.flush()
             return {"plainToken": plain_token, "encryptedToken": enc}
@@ -1254,6 +1255,71 @@ def build_app() -> "FastAPI":
         conn.commit()
         return {"ok": True}
 
+
+    @app.get("/api/v3/aliases/duplicates")
+    async def api_v3_aliases_duplicates():
+        """发现疑似重复的 Zoom 用户名（去空格 / 大小写 / 前4词）"""
+        import re
+        from datetime import datetime, timezone, timedelta
+        from collections import defaultdict
+        conn = db._get_conn()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        rows = conn.execute(
+            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
+            (cutoff,)
+        ).fetchall()
+        names = []
+        for r in rows:
+            nm = (r["name"] or "").strip()
+            if nm:
+                names.append({"name": nm, "count": r["cnt"], "last_seen": (r["last_seen"] or "")})
+        def norm_no_space(s): return re.sub(r'\s+', '', s.lower())
+        def norm_case(s): return s.lower().strip()
+        def norm_first_4(s): return " ".join(s.strip().lower().split()[:4])
+        seen = set()
+        groups = []
+        for fn in [norm_no_space, norm_case, norm_first_4]:
+            buckets = defaultdict(list)
+            for n in names:
+                k = fn(n["name"])
+                if k: buckets[k].append(n["name"])
+            for k, members in buckets.items():
+                if len(members) < 2: continue
+                members.sort()
+                gid = "|".join(members)
+                if gid in seen: continue
+                seen.add(gid)
+                nl = {n["name"]: n for n in names}
+                md = sorted([nl[m] for m in members], key=lambda x: -x["count"])
+                groups.append({"group_id": hash(gid), "members": md, "suggested_primary": md[0]["name"]})
+        groups.sort(key=lambda g: -len(g["members"]))
+        return {"ok": True, "groups": groups, "total": len(groups)}
+
+    @app.post("/api/v3/aliases/merge")
+    async def api_v3_aliases_merge(request: Request):
+        """批量合并：将一组别名合并到标准名"""
+        data = await request.json()
+        canonical = (data.get("canonical", "") or "").strip()
+        aliases = data.get("aliases", [])
+        if not canonical or not aliases:
+            return {"ok": False, "error": "参数不完整"}
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        conn = db._get_conn()
+        # 确保标准名存在
+        exist = conn.execute("SELECT display_name FROM member_display WHERE display_name=?", (canonical,)).fetchone()
+        if not exist:
+            conn.execute("INSERT INTO member_display (display_name, raw_name, aliases, created_at, updated_at) VALUES (?,?, '[]', ?,?)",
+                         (canonical, canonical, now, now))
+        cnt = 0
+        for alias in aliases:
+            if alias == canonical: continue
+            conn.execute(
+                "INSERT OR IGNORE INTO member_aliases (canonical_name, alias_name, count_enabled, created_at, updated_at) VALUES (?,?,1,?,?)",
+                (canonical, alias, now, now))
+            cnt += 1
+        conn.commit()
+        return {"ok": True, "mapped": cnt}
 
 
     @app.get("/api/v3/sharing-live")
@@ -1806,7 +1872,7 @@ def build_app() -> "FastAPI":
 
     # ── OAuth 授权 ────────────────────────────────────────────────────────────
     import secrets
-    from urllib.parse import quote
+    from urllib.parse import urlencode
 
     ZOOM_CLIENT_ID = os.environ.get("ZOOM_OAUTH_CLIENT_ID", "")
     ZOOM_CLIENT_SECRET = os.environ.get("ZOOM_OAUTH_CLIENT_SECRET", "")
@@ -1828,7 +1894,7 @@ def build_app() -> "FastAPI":
         # 通用授权链接
         base_url = "https://zoom.us/oauth/authorize"
         scope_str = os.environ.get("ZOOM_OAUTH_SCOPES", "meeting:read:meeting meeting:read:list_past_participants user:read:user webinar:read:list_past_participants")
-        params = f"response_type=code&client_id={ZOOM_CLIENT_ID}&redirect_uri={REDIRECT_URI}&state={state}&scope={quote(scope_str)}"
+        params = urlencode({"response_type":"code","client_id":ZOOM_CLIENT_ID,"redirect_uri":REDIRECT_URI,"state":state,"scope":scope_str})
 
         # Web 授权
         web_url = f"{base_url}?{params}"
@@ -2081,19 +2147,38 @@ def build_app() -> "FastAPI":
         online_count = 0
         sharing_count = 0
         meetings = []
-        try:
-            from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics()
-            live_data = await zm.get_live()
-            online_count = live_data.get("total_online", 0)
-            meetings = live_data.get("meetings", [])
-        except:
-            pass
 
-        sharing_count = 0
+        # Fallback-first mode: current OAuth app cannot use /metrics/*.
+        # Use sharing_live as the stable live source.
         try:
-            sr = conn.execute("SELECT COUNT(*) FROM sharing_live WHERE is_active=1").fetchone()[0]
-            sharing_count = sr
+            live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1").fetchall()
+            online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
+            sharing_count = online_count
+
+            by_meeting = {}
+            for r in live_rows:
+                mid = str(r["meeting_id"] or "")
+                raw = r["user_name"] or ""
+                _rm = resolve_member(raw)
+                by_meeting.setdefault(mid, {
+                    "meeting_id": mid,
+                    "meeting_topic": "",
+                    "participants": []
+                })["participants"].append({
+                    "name": _rm["standard_name"],
+                    "raw_name": raw,
+                    "meeting_id": mid,
+                    "user_id": r["user_id"] or "",
+                    "join_time": r["start_time"] or "",
+                    "status": "in_meeting",
+                    "count_enabled": True,
+                    "is_aliased": bool(_rm.get("is_aliased")),
+                    "email": "",
+                    "online_minutes": 0,
+                    "online_display": "",
+                    "join_time_display": (r["start_time"] or "")[:16],
+                })
+            meetings = list(by_meeting.values())
         except:
             pass
 
