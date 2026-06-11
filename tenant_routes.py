@@ -112,15 +112,191 @@ async def tenant_overview(request: Request, user: dict = Depends(require_user)):
     )
 
 
-# ── Zoom 账号（只读）────────────────────────────────────────────────────────
+# ── Zoom 账号自助配置 ──────────────────────────────────────────────────────
 
 
 @router.get("/zoom", response_class=HTMLResponse)
 async def tenant_zoom(request: Request, user: dict = Depends(require_user)):
-    """Zoom account status page — read-only view."""
+    """Zoom account self-service page — create, edit, test connection."""
     tenant_id = request.session.get("tenant_id", "default")
-    accounts = [_account_dict(a) for a in db.get_zoom_accounts(tenant_id)]
-    return _render_tenant(request, "zoom", user, "tenant_zoom.html", accounts=accounts)
+    accounts = db.get_zoom_accounts(tenant_id)
+    # Mask secrets in display dicts
+    display_accounts = []
+    for a in accounts:
+        d = _account_dict(a)
+        d["client_id_display"] = a.get("client_id", "")[:8] + "****" if a.get("client_id") else ""
+        d["has_client_secret"] = bool(a.get("client_secret"))
+        display_accounts.append(d)
+    return _render_tenant(
+        request, "zoom", user, "tenant_zoom.html",
+        accounts=display_accounts,
+    )
+
+
+@router.post("/zoom/create", response_class=RedirectResponse)
+async def tenant_zoom_create(
+    request: Request,
+    user: dict = Depends(require_user),
+    label: str = Form(""),
+    account_id: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
+    webhook_secret: str = Form(""),
+):
+    tenant_id = request.session.get("tenant_id", "default")
+    db.create_zoom_account(
+        tenant_id=tenant_id,
+        label=label or account_id,
+        account_id=account_id,
+        client_id=client_id,
+        client_secret=client_secret,
+        webhook_secret=webhook_secret,
+    )
+    return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
+
+
+@router.post("/zoom/{account_db_id}/update", response_class=RedirectResponse)
+async def tenant_zoom_update(
+    request: Request,
+    account_db_id: int,
+    user: dict = Depends(require_user),
+    label: str = Form(""),
+    account_id: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(""),
+    webhook_secret: str = Form(""),
+):
+    tenant_id = request.session.get("tenant_id", "default")
+    # Verify ownership
+    acct = db.get_zoom_account(account_db_id)
+    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
+        raise HTTPException(status_code=404)
+    updates = {
+        "label": label or account_id,
+        "account_id": account_id,
+    }
+    if client_id.strip():
+        updates["client_id"] = client_id.strip()
+    # Only update secrets if user provides a new value
+    if client_secret.strip():
+        updates["client_secret"] = client_secret.strip()
+    if webhook_secret.strip():
+        updates["webhook_secret"] = webhook_secret.strip()
+    db.update_zoom_account(account_db_id, **updates)
+    return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
+
+
+@router.post("/zoom/test")
+async def tenant_zoom_test(
+    request: Request,
+    user: dict = Depends(require_user),
+    account_id: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
+):
+    """Test Zoom OAuth connection with provided credentials."""
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            # Step 1: Get access token
+            token_url = "https://zoom.us/oauth/token"
+            payload = {
+                "grant_type": "account_credentials",
+                "account_id": account_id,
+            }
+            auth = httpx.BasicAuth(client_id, client_secret)
+            tr = await cl.post(token_url, data=payload, auth=auth)
+            if tr.status_code != 200:
+                detail = tr.text[:200]
+                return JSONResponse(
+                    status_code=200,
+                    content={"success": False, "message": f"OAuth 失败 (HTTP {tr.status_code}): {detail}"},
+                )
+            token_data = tr.json()
+            access_token = token_data.get("access_token", "")
+
+            # Step 2: Verify with /users/me
+            ur = await cl.get(
+                "https://api.zoom.us/v2/users/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if ur.status_code != 200:
+                return JSONResponse(
+                    status_code=200,
+                    content={"success": False, "message": f"用户验证失败 (HTTP {ur.status_code})"},
+                )
+            user_data = ur.json()
+            host_email = user_data.get("email", "未知")
+            host_name = user_data.get("first_name", "") + " " + user_data.get("last_name", "")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": f"连接成功！主机: {host_name.strip()} ({host_email})",
+                    "host_email": host_email,
+                },
+            )
+    except httpx.TimeoutException:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "message": "连接超时，请检查 Zoom 服务状态"},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=200,
+            content={"success": False, "message": f"测试失败: {type(e).__name__}: {str(e)[:200]}"},
+        )
+
+
+@router.post("/zoom/{account_db_id}/test")
+async def tenant_zoom_test_existing(
+    request: Request,
+    account_db_id: int,
+    user: dict = Depends(require_user),
+):
+    """Test connection for an existing account using DB-stored credentials."""
+    tenant_id = request.session.get("tenant_id", "default")
+    acct = db.get_zoom_account(account_db_id)
+    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
+        return JSONResponse(status_code=200, content={"success": False, "message": "账号不存在或无权访问"})
+    if not acct.get("client_id") or not acct.get("client_secret") or not acct.get("account_id"):
+        return JSONResponse(status_code=200, content={"success": False, "message": "账号凭据不完整，请重新编辑"})
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            token_url = "https://zoom.us/oauth/token"
+            payload = {"grant_type": "account_credentials", "account_id": acct["account_id"]}
+            auth = httpx.BasicAuth(acct["client_id"], acct["client_secret"])
+            tr = await cl.post(token_url, data=payload, auth=auth)
+            if tr.status_code != 200:
+                return JSONResponse(
+                    status_code=200,
+                    content={"success": False, "message": f"OAuth 失败 (HTTP {tr.status_code})"},
+                )
+            token_data = tr.json()
+            access_token = token_data.get("access_token", "")
+            ur = await cl.get(
+                "https://api.zoom.us/v2/users/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if ur.status_code != 200:
+                return JSONResponse(
+                    status_code=200,
+                    content={"success": False, "message": f"用户验证失败 (HTTP {ur.status_code})"},
+                )
+            user_data = ur.json()
+            host_email = user_data.get("email", "未知")
+            host_name = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": f"连接成功！主机: {host_name} ({host_email})",
+                    "host_email": host_email,
+                },
+            )
+    except httpx.TimeoutException:
+        return JSONResponse(status_code=200, content={"success": False, "message": "连接超时"})
+    except Exception as e:
+        return JSONResponse(status_code=200, content={"success": False, "message": f"测试失败: {str(e)[:200]}"})
 
 
 # ── Telegram 频道管理 ────────────────────────────────────────────────────────
@@ -313,7 +489,7 @@ def _compute_setup_status(tenant_id: str) -> dict:
 
     next_steps = []
     if not checks["zoom_account"]:
-        next_steps.append("配置 Zoom 账号（S2S App）")
+        next_steps.append("配置 Zoom S2S OAuth → 前往接入中心开始配置")
     if not checks["oauth"] and checks["zoom_account"]:
         next_steps.append("完成 OAuth 授权验证")
     if not checks["webhook"]:

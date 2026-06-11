@@ -35,7 +35,8 @@
             ('telegram', '推送频道', checks.get('telegram', False)),
         ] %}
         {% for key, label, value in items %}
-        <div style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px;">
+        <a href="{% if key == 'zoom_account' %}/dashboard/tenant/zoom{% else %}javascript:void(0){% endif %}"
+           style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px; text-decoration:none;{% if key == 'zoom_account' %}cursor:pointer; transition:border-color .12s;{% endif %}">
             <span style="font-size:1.1rem;">
                 {% if value is sameas true %}
                 ✅
@@ -45,8 +46,13 @@
                 ⏳
                 {% endif %}
             </span>
-            <span style="font-size:0.9rem; color:#cbd5e1;">{{ label }}</span>
-        </div>
+            <span style="font-size:0.9rem; color:#cbd5e1; flex:1;">{{ label }}</span>
+            {% if key == 'zoom_account' and value is sameas false %}
+            <span style="font-size:0.75rem; color:#818cf8; background:rgba(99,102,241,.12); padding:3px 8px; border-radius:4px;">开始配置 →</span>
+            {% elif key == 'zoom_account' and value is sameas true %}
+            <span style="font-size:0.75rem; color:#6ee7b7;">查看详情 →</span>
+            {% endif %}
+        </a>
         {% endfor %}
         <!-- 成员映射（百分比） -->
         <div style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px;">
