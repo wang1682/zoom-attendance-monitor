@@ -1063,9 +1063,10 @@ def build_app() -> "FastAPI":
                                     if _ch and _ch.get("enabled"):
                                         _targets = [_ch["chat_id"]]
                                 else:
-                                    # 未指定（默认）→ 发到所有启用频道
+                                    # 未指定（默认）→ 发到所有启用频道（排除 TJ 群，TJ 群只收 9h 在线预警）
                                     _all = p_conn.execute("SELECT chat_id FROM telegram_channels WHERE enabled=1").fetchall()
-                                    _targets = [row[0] for row in _all]
+                                    _group2 = settings.telegram_group2_chat_id
+                                    _targets = [row[0] for row in _all if not _group2 or str(row[0]) != _group2]
                             except:
                                 pass
                             if not _targets:
