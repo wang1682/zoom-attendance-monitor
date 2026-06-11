@@ -1420,37 +1420,30 @@ def build_app() -> "FastAPI":
         merged = {}  # user_id -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
-        # Source 1: Metrics API (most reliable for current state)
+        # Source 1: ZoomMetrics API (cached, deduped, consistent with Dashboard/Live)
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                tr = await c.post("https://zoom.us/oauth/token",
-                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
-                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
-                if tr.status_code == 200:
-                    token = tr.json().get("access_token", "")
-                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
-                        headers={"Authorization": f"Bearer {token}"})
-                    if mr.status_code == 200:
-                        for m in mr.json().get("meetings", []):
-                            mid = str(m.get("id", ""))
-                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
-                                headers={"Authorization": f"Bearer {token}"})
-                            if pr.status_code == 200:
-                                for p in pr.json().get("participants", []):
-                                    if p.get("status") != "in_meeting": continue
-                                    is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
-                                    if not is_sharing: continue
-                                    uid = str(p.get("user_id", ""))
-                                    if not uid or uid in merged: continue
-                                    raw = p.get("user_name", "").strip()
-                                    _rm = resolve_member(raw)
-                                    dn = _rm["standard_name"]
-                                    content = "application" if p.get("share_application") else ("desktop" if p.get("share_desktop") else "whiteboard")
-                                    jt = p.get("join_time", "")
-                                    merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": mid,
-                                                   "content": content, "start_time": jt, "source": "metrics_api"}
-                                    sources["metrics_api"] += 1
-        except: pass
+            from zoom_metrics import ZoomMetrics as _ZM
+            zm = _ZM()
+            live_data = await zm.get_live()
+            for m in live_data.get("meetings", []):
+                mid = m.get("meeting_id", "")
+                for p in m.get("participants", []):
+                    if not p.get("is_sharing"):
+                        continue
+                    uid = p.get("user_id", "")
+                    if not uid or uid in merged:
+                        continue
+                    raw = p.get("raw_name", "")
+                    content = p.get("sharing_content", "desktop")
+                    merged[uid] = {
+                        "name": p.get("name", ""), "raw_name": raw,
+                        "user_id": uid, "meeting_id": mid,
+                        "content": content, "start_time": p.get("join_time", ""),
+                        "source": "metrics_api"
+                    }
+                    sources["metrics_api"] += 1
+        except Exception as e:
+            sys.stderr.write(f"[sharing-live] ZoomMetrics error: {e}\n")
         
         # Source 2: sharing_live table (is_active=1, not stale)
         live_rows = conn.execute(
@@ -2267,13 +2260,16 @@ def build_app() -> "FastAPI":
 
             participant_count = len(participants)
 
-            # Still try sharing_live for sharing data (secondary source)
+            # Sharing count from Metrics API (is_sharing flag on each participant)
+            sharing_count = len([p for p in live_data.get("online_list", []) if p.get("is_sharing")])
+
+            # Also try sharing_live for any webhook-captured sharing data (secondary)
             try:
                 live_rows = conn.execute(
                     "SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1"
                 ).fetchall()
                 _sc = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
-                if _sc > 0:
+                if _sc > sharing_count:
                     sharing_count = _sc
             except Exception:
                 pass

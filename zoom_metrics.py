@@ -90,6 +90,19 @@ class ZoomMetrics:
                 count_it = resolved["count_enabled"]
                 key = re.sub(r"\s+", "", display.lower())
 
+                is_sharing = bool(
+                    p.get("share_application") or
+                    p.get("share_desktop") or
+                    p.get("share_whiteboard")
+                )
+                sharing_content = ""
+                if is_sharing:
+                    if p.get("share_application"):
+                        sharing_content = "application"
+                    elif p.get("share_desktop"):
+                        sharing_content = "desktop"
+                    elif p.get("share_whiteboard"):
+                        sharing_content = "whiteboard"
                 if key not in seen:
                     seen[key] = {
                         "name": display,
@@ -102,8 +115,15 @@ class ZoomMetrics:
                         "count_enabled": count_it,
                         "is_aliased": (display != raw_name),
                         "email": p.get("email", ""),
+                        "is_sharing": is_sharing,
+                        "sharing_content": sharing_content,
                     }
                 else:
+                    # Merge: if any dedup entry is sharing, mark as sharing
+                    if is_sharing:
+                        seen[key]["is_sharing"] = True
+                        if not seen[key].get("sharing_content"):
+                            seen[key]["sharing_content"] = sharing_content
                     existing = seen[key]["join_time"]
                     new_jt = p.get("join_time", "")
                     if new_jt and (not existing or new_jt < existing):
@@ -196,7 +216,7 @@ class ZoomMetrics:
                         "flags": [],
                         "email": p.get("email", ""),
                         "meeting_id": p.get("meeting_id", ""),
-                        "is_sharing": False,
+                        "is_sharing": p.get("is_sharing", False),
                     }
                 else:
                     ps_map[key]["total_actions"] += 1
