@@ -258,7 +258,7 @@ async def monitor_loop():
 
             # ── Periodic online report (每3小时) ──
             if not hasattr(__import__("sys").modules["__main__"], "_LAST_ONLINE_REPORT"):
-                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = 0
+                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = time.time()
             _nr = time.time()
             if _nr - __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT >= 10800:
                 __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = _nr

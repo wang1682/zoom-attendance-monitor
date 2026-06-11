@@ -160,6 +160,7 @@ def build_app() -> "FastAPI":
             "/privacy", "/terms",
             "/static/",
             "/api/v2/auth/",
+            "/api/v3/live",
             "/webhook",
             "/health",
         ]
