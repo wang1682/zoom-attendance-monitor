@@ -1617,8 +1617,8 @@ def delete_zoom_account(account_id: int) -> bool:
 
 
 def update_zoom_account(db_id: int, **kwargs) -> bool:
-    """Update zoom_account editable fields. Accepts: label, account_id, host_email, webhook_secret, is_active, client_id, client_secret"""
-    allowed = {"label", "account_id", "host_email", "webhook_secret", "is_active", "client_id", "client_secret"}
+    """Update zoom_account editable fields. Accepts: label, account_id, host_email, webhook_secret, is_active, client_id, client_secret, status, last_sync, last_sync_result"""
+    allowed = {"label", "account_id", "host_email", "webhook_secret", "is_active", "client_id", "client_secret", "status", "last_sync", "last_sync_result"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False

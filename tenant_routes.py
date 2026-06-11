@@ -299,6 +299,15 @@ async def tenant_zoom_test_existing(
             user_data = ur.json()
             host_email = user_data.get("email", "未知")
             host_name = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
+            # Persist successful connection status
+            from datetime import datetime, timezone
+            db.update_zoom_account(
+                account_db_id,
+                status="active",
+                host_email=host_email,
+                last_sync=datetime.now(timezone.utc).isoformat(),
+                last_sync_result="OK",
+            )
             return JSONResponse(
                 status_code=200,
                 content={
