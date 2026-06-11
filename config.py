@@ -47,6 +47,7 @@ class Settings:
     telegram_group_enabled: bool = _bool("TELEGRAM_GROUP_ENABLED")
     telegram_group2_chat_id: str = _env("TELEGRAM_GROUP2_CHAT_ID")
     telegram_group2_enabled: bool = _bool("TELEGRAM_GROUP2_ENABLED")
+    telegram_group2_report_interval: int = _int("TELEGRAM_GROUP2_REPORT_INTERVAL", 32400)
 
     # 时段（所有小时值均为 MYT UTC+8）
     push_start_hour: int = _int("PUSH_START_HOUR", 0)         # MYT — 0=全天

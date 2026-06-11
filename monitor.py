@@ -256,99 +256,101 @@ async def monitor_loop():
             if accounts:
                 detail += f" {len(accounts)+1}账号"
 
-            # ── Periodic online report (每3小时) ──
-            if not hasattr(__import__("sys").modules["__main__"], "_LAST_ONLINE_REPORT"):
-                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = time.time()
+                        # ── Periodic online report (多群独立频率) ──
+            _M = __import__("sys").modules["__main__"]
+            if not hasattr(_M, "_LAST_ONLINE_REPORT"):
+                _M._LAST_ONLINE_REPORT = time.time()
+            if not hasattr(_M, "_LAST_ONLINE_REPORT_TJ"):
+                _M._LAST_ONLINE_REPORT_TJ = time.time()
             _nr = time.time()
-            if _nr - __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT >= 10800:
-                __import__("sys").modules["__main__"]._LAST_ONLINE_REPORT = _nr
-                _online_now = set()
-                all_default = list(set(config_ids + auto_ids))
-                for mid in all_default:
-                    try:
-                        for _p in await zoom_default.get_participants(mid):
-                            if _p.get("status") == "in_meeting":
-                                _n = _p.get("user_name", "").strip()
-                                if _n:
-                                    _online_now.add(_n)
-                    except:
-                        pass
-                if push_now and should_send_telegram("periodic_online_report"):
-                    import httpx
-                    from app import resolve_member
-                    _v2_participants = []
-                    try:
-                        _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
-                        if _v2r.status_code == 200:
-                            _v2d = _v2r.json()
-                            for _m in _v2d.get("data", {}).get("meetings", []):
-                                for _p in _m.get("participants", []):
-                                    _raw = _p.get("name", "").strip()
-                                    if not _raw:
-                                        continue
-                                    _rm = resolve_member(_raw)
-                                    _std = _rm["standard_name"]
-                                    _grp = _rm.get("group_name") or "未分组"
-                                    _join = _p.get("join_time", "")
-                                    try:
-                                        _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
-                                        _enter = _join_dt.astimezone(MYT).strftime("%H:%M")
-                                    except Exception:
-                                        _enter = _join[11:16] if len(_join) > 11 else "??:??"
-                                    _mins = _p.get("online_minutes", 0)
-                                    _h, _m = _mins // 60, _mins % 60
-                                    _dur = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
-                                    _v2_participants.append((_std, _grp, _enter, _dur))
-                    except:
-                        pass
-                    # 按分组归类
-                    _grouped = {}
-                    for _std, _grp, _ent, _dur in _v2_participants:
-                        _grouped.setdefault(_grp, []).append((_std, _ent, _dur))
-                    _ordered = []
-                    for _g in ("核销", "推进"):
-                        if _g in _grouped:
-                            _ordered.append((_g, _grouped.pop(_g)))
-                    for _g, _members in _grouped.items():
-                        _ordered.append((_g, _members))
-                    _lines = [
-                        "🟠 实时在线",
-                        "",
-                        f"⏰ 更新时间：{now_myt.strftime('%m-%d %H:%M')}",
-                        f"👥 在线人数：{len(_v2_participants)}",
-                        "",
-                    ]
-                    if _v2_participants:
-                        _g_emoji = {"核销": "🔵", "推进": "🟡"}
-                        _idx = 0
-                        for _g, _members in _ordered:
-                            _emoji = _g_emoji.get(_g, "⚪")
-                            _lines.append(f"{_emoji}【{_g}】")
-                            for _std, _ent, _dur in _members:
-                                _idx += 1
-                                _lines.append(f"{_idx}. **{_std}**")
-                                _lines.append(f"  ↳ 加入：{_ent}")
-                                _lines.append(f"  ↳ 在线：{_dur}")
-                            _lines.append("")
-                    else:
-                        _lines.append("当前无人在线")
+            _yc_due = _nr - _M._LAST_ONLINE_REPORT >= 10800
+            _tj_due = _nr - _M._LAST_ONLINE_REPORT_TJ >= settings.telegram_group2_report_interval
+
+            if (_yc_due or _tj_due) and push_now:
+                import httpx
+                from app import resolve_member
+                _v2_participants = []
+                try:
+                    _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
+                    if _v2r.status_code == 200:
+                        _v2d = _v2r.json()
+                        for _m in _v2d.get("data", {}).get("meetings", []):
+                            for _p in _m.get("participants", []):
+                                _raw = _p.get("name", "").strip()
+                                if not _raw:
+                                    continue
+                                _rm = resolve_member(_raw)
+                                _std = _rm["standard_name"]
+                                _grp = _rm.get("group_name") or "未分组"
+                                _join = _p.get("join_time", "")
+                                try:
+                                    _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
+                                    _enter = _join_dt.astimezone(MYT).strftime("%H:%M")
+                                except Exception:
+                                    _enter = _join[11:16] if len(_join) > 11 else "??:??"
+                                _mins = _p.get("online_minutes", 0)
+                                _h, _m = _mins // 60, _mins % 60
+                                _dur = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
+                                _v2_participants.append((_std, _grp, _enter, _dur))
+                except Exception:
+                    pass
+                _grouped = {}
+                for _std, _grp, _ent, _dur in _v2_participants:
+                    _grouped.setdefault(_grp, []).append((_std, _ent, _dur))
+                _ordered = []
+                for _g in ("核销", "推进"):
+                    if _g in _grouped:
+                        _ordered.append((_g, _grouped.pop(_g)))
+                for _g, _members in _grouped.items():
+                    _ordered.append((_g, _members))
+                _lines = [
+                    "🟠 实时在线",
+                    "",
+                    f"⏰ 更新时间：{now_myt.strftime('%m-%d %H:%M')}",
+                    f"👥 在线人数：{len(_v2_participants)}",
+                    "",
+                ]
+                if _v2_participants:
+                    _g_emoji = {"核销": "🔵", "推进": "🟡"}
+                    _idx = 0
+                    for _g, _members in _ordered:
+                        _emoji = _g_emoji.get(_g, "⚪")
+                        _lines.append(f"{_emoji}【{_g}】")
+                        for _std, _ent, _dur in _members:
+                            _idx += 1
+                            _lines.append(f"{_idx}. **{_std}**")
+                            _lines.append(f"  ↳ 加入：{_ent}")
+                            _lines.append(f"  ↳ 在线：{_dur}")
                         _lines.append("")
-                    _lines.append(f"📊 共{len(_v2_participants)}人在线")
+                else:
+                    _lines.append("当前无人在线")
+                    _lines.append("")
+                _lines.append(f"📊 共{len(_v2_participants)}人在线")
+                _report_text = "\n".join(_lines)
+
+                if _yc_due and should_send_telegram("periodic_online_report"):
                     import db as _db
                     _conn = _db._get_conn()
                     _rule_row = _conn.execute(
                         "SELECT target_channel_id FROM telegram_alert_rules WHERE event_type='periodic_online_report'"
                     ).fetchone()
-                    _target_chat_id = ""
+                    _yc_chat_id = ""
                     if _rule_row and _rule_row[0]:
                         _ch_row = _conn.execute(
                             "SELECT chat_id FROM telegram_channels WHERE id=?", (_rule_row[0],)
                         ).fetchone()
                         if _ch_row and _ch_row[0]:
-                            _target_chat_id = _ch_row[0]
-                    sys.stdout.write(f"[PERIODIC REPORT] sending to chat_id={_target_chat_id or 'private'}\n")
+                            _yc_chat_id = _ch_row[0]
+                    sys.stdout.write(f"[PERIODIC REPORT] YC群 chat_id={_yc_chat_id or 'private'}\n")
                     sys.stdout.flush()
-                    await tg.send("\n".join(_lines), chat_id=_target_chat_id)
+                    await tg.send(_report_text, chat_id=_yc_chat_id)
+                    _M._LAST_ONLINE_REPORT = _nr
+
+                if _tj_due and settings.telegram_group2_enabled and settings.telegram_group2_chat_id:
+                    sys.stdout.write(f"[PERIODIC REPORT] TJ群 chat_id={settings.telegram_group2_chat_id}\n")
+                    sys.stdout.flush()
+                    await tg.send(_report_text, chat_id=settings.telegram_group2_chat_id)
+                    _M._LAST_ONLINE_REPORT_TJ = _nr
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
