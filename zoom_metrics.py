@@ -154,7 +154,13 @@ class ZoomMetrics:
                         jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
                         p["join_time_display"] = jd.astimezone(timezone(timedelta(hours=8))).strftime("%m-%d %H:%M:%S")
                     except:
-                        p["join_time_display"] = jt[:16] if jt else ""
+                        # fallback: try simple hour offset
+                        try:
+                            _h, _m = int(jt[11:13]), int(jt[14:16])
+                            _h8 = (_h + 8) % 24
+                            p["join_time_display"] = f"{jt[5:10]} {_h8:02d}:{_m:02d}:00"
+                        except:
+                            p["join_time_display"] = jt[:16] if jt else ""
                 else:
                     p["join_time_display"] = ""
 

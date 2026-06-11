@@ -1447,18 +1447,31 @@ def build_app() -> "FastAPI":
         
         # Source 2: sharing_live table (is_active=1, not stale)
         live_rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE is_active=1"
+            "SELECT * FROM sharing_live WHERE is_active=1 ORDER BY start_time DESC"
         ).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
+        RECENT_CUTOFF = timedelta(hours=48)
         for r in live_rows:
             d = dict(zip(live_cols, r))
             uid = d.get("user_id", "")
             start_str = d.get("start_time", "")
-            # Stale cutoff: >4h old
+            # Stale cutoff: >4h → discard from active; >24h → discard entirely
             if start_str:
                 try:
                     sd = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                    if (now_utc - sd) > STALE_CUTOFF:
+                    age = now_utc - sd
+                    if age > RECENT_CUTOFF:
+                        continue
+                    if age > STALE_CUTOFF:
+                        # stale but within 24h → keep as recent only
+                        if uid not in merged:
+                            raw = d.get("user_name", "")
+                            _rm = resolve_member(raw)
+                            dn = _rm["standard_name"]
+                            merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
+                                           "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
+                                           "_stale": True}
+                            sources["sharing_live"] += 1
                         continue
                 except: pass
             if uid and uid not in merged:
@@ -1527,12 +1540,13 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
-        # Build output
+        # Build output: split into active (current) and recent (stale but <24h, shown as history)
         active = []
+        recent = []
         for uid, info in merged.items():
             st = info.get("start_time", "")
             m = max(0, mins_between(st))
-            active.append({
+            entry = {
                 "name": info.get("name", ""),
                 "raw_name": info.get("raw_name", ""),
                 "user_id": uid,
@@ -1543,12 +1557,18 @@ def build_app() -> "FastAPI":
                 "duration_minutes": m,
                 "duration_display": disp(m),
                 "source": info.get("source", ""),
-            })
+            }
+            if info.get("_stale"):
+                recent.append(entry)
+            else:
+                active.append(entry)
         
         return {
             "ok": True,
             "current": len(active),
             "active": active,
+            "recent": recent,
+            "recent_total": len(recent),
             "sources": sources,
         }
         
