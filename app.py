@@ -267,6 +267,29 @@ def build_app() -> "FastAPI":
 <footer>Zoom Attendance Monitor — dhbwang.xyz</footer>
 </body></html>""")
 
+    # ── 多租户 ZoomMetrics 辅助函数 ──────────────────────────────────────────
+    def _get_tenant_zoom_metrics(request: Request) -> tuple:
+        """根据请求会话中的 tenant_id，获取该租户的 ZoomMetrics 实例。
+
+        Returns:
+            (ZoomMetrics, tenant_id)
+            仅当请求来自已验证的租户（role == "tenant"）时使用其自配置的 Zoom 账号，
+            否则回退到全局环境变数（未登录 / 管理员 / 公共 API）。
+        """
+        user_role = request.session.get("role")
+        if user_role == "tenant":
+            tenant_id = request.session.get("tenant_id", "default")
+            accounts = db.get_zoom_accounts(tenant_id)
+            active = next(
+                (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+                None,
+            )
+            if active:
+                from zoom_metrics import ZoomMetrics
+                return ZoomMetrics(active), tenant_id
+        from zoom_metrics import ZoomMetrics
+        return ZoomMetrics(), request.session.get("tenant_id", "default")
+
     # ── 看板 ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=RedirectResponse)
     async def landing(request: Request):
@@ -767,15 +790,14 @@ def build_app() -> "FastAPI":
         return db.get_today_participants(limit=limit)
 
     @app.get("/api/v3/attendance-summary")
-    async def api_v3_attendance_summary():
+    async def api_v3_attendance_summary(request: Request):
         if settings.demo_mode:
             return _ensure_demo().get_demo_attendance_summary()
         try:
             result = db.get_today_attendance_summary()
             # If DB has no data but Zoom API has people live, use live data
             if result.get("total_members", 0) == 0:
-                from zoom_metrics import ZoomMetrics
-                zm = ZoomMetrics()
+                zm, _ = _get_tenant_zoom_metrics(request)
                 live_data = await zm.get_live()
                 online_list = live_data.get("online_list", [])
                 if online_list:
@@ -1177,7 +1199,7 @@ def build_app() -> "FastAPI":
 
 
     @app.get("/api/v3/member-aliases/discover")
-    async def api_v3_member_aliases_discover_alias():
+    async def api_v3_member_aliases_discover_alias(request: Request):
         """别名：/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
         conn = db._get_conn()
         from datetime import datetime, timezone, timedelta
@@ -1202,8 +1224,7 @@ def build_app() -> "FastAPI":
         # 获取当前在线名单
         online_names = []
         try:
-            from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics()
+            zm, _ = _get_tenant_zoom_metrics(request)
             live_data = await zm.get_live()
             for m in live_data.get("meetings", []):
                 for p in m.get("participants", []):
@@ -1221,7 +1242,7 @@ def build_app() -> "FastAPI":
         return {"ok": True, "names": names}
 
     @app.get("/api/v3/aliases/discover")
-    async def api_v3_discover():
+    async def api_v3_discover(request: Request):
         """自动发现历史 Zoom 用户名，统计出现次数和是否在线"""
         conn = db._get_conn()
         from datetime import datetime, timezone, timedelta
@@ -1259,8 +1280,7 @@ def build_app() -> "FastAPI":
         
         # 当前在线（来自 v3）
         unmapped_set = set()
-        from zoom_metrics import ZoomMetrics
-        zm = ZoomMetrics()
+        zm, _ = _get_tenant_zoom_metrics(request)
         live_data = await zm.get_live()
         # 补充来源：所有 zoom_participants 中出现过的用户名
         _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
@@ -1392,8 +1412,8 @@ def build_app() -> "FastAPI":
 
 
     @app.get("/api/v3/sharing-live")
-    async def api_v3_sharing_live():
-        """共享状态：合并 Metrics API + sharing_live 表 + webhook 事件"""
+    async def api_v3_sharing_live(request: Request):
+        """共享状态：合并 Metrics API + sharing_live 表 + webhook 事件——按当前租户 Zoom 账号查询"""
         import httpx
         import json as _json
         from datetime import datetime, timezone, timedelta
@@ -1424,8 +1444,7 @@ def build_app() -> "FastAPI":
         
         # Source 1: ZoomMetrics API (cached, deduped, consistent with Dashboard/Live)
         try:
-            from zoom_metrics import ZoomMetrics as _ZM
-            zm = _ZM()
+            zm, _ = _get_tenant_zoom_metrics(request)
             live_data = await zm.get_live()
             for m in live_data.get("meetings", []):
                 mid = m.get("meeting_id", "")
@@ -2205,19 +2224,20 @@ def build_app() -> "FastAPI":
 
 
     @app.get("/api/v3/live")
-    async def api_v3_live():
-        """Business Metrics API 实时在线数据（去重）"""
-        from zoom_metrics import ZoomMetrics
-        zm = ZoomMetrics()
+    async def api_v3_live(request: Request):
+        """Business Metrics API 实时在线数据（去重）—— 按当前租户 Zoom 账号查询"""
+        zm, _ = _get_tenant_zoom_metrics(request)
         data = await zm.get_live()
         return {"ok": True, "data": data}
 
     @app.get("/api/v3/dashboard")
-    async def api_v3_dashboard():
+    async def api_v3_dashboard(request: Request):
         """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）
         
         主数据源：Zoom Metrics API（与 /api/v3/live 一致）
         备选回退：sharing_live / zoom_participants（当 API 不可用时）
+        
+        按当前租户的 Zoom 账号查询。
         """
         conn = db._get_conn()
         report_start_utc, report_end_utc = myt_day_range_to_utc()
@@ -2232,8 +2252,7 @@ def build_app() -> "FastAPI":
 
         # ── 主源：Zoom Metrics API ──
         try:
-            from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics()
+            zm, _ = _get_tenant_zoom_metrics(request)
             live_data = await zm.get_live()
 
             online_count = live_data.get("total_online", 0)

@@ -12,14 +12,22 @@ import httpx
 from config import settings
 import db as _db
 
-_cache = {"live": {"data": None, "ts": 0}}
+_cache = {}  # account_id -> {"data": ..., "ts": ...}
 CACHE_TTL = 30
 
 
 class ZoomMetrics:
-    def __init__(self):
+    def __init__(self, zoom_account: dict | None = None):
         self._token = ""
         self._expires_at = 0.0
+        if zoom_account:
+            self._account_id = zoom_account.get("account_id", settings.zoom_account_id)
+            self._client_id = zoom_account.get("client_id", settings.zoom_client_id)
+            self._client_secret = zoom_account.get("client_secret", settings.zoom_client_secret)
+        else:
+            self._account_id = settings.zoom_account_id
+            self._client_id = settings.zoom_client_id
+            self._client_secret = settings.zoom_client_secret
 
     async def _get_token(self) -> str:
         now = time.time()
@@ -29,8 +37,8 @@ class ZoomMetrics:
             r = await client.post(
                 "https://zoom.us/oauth/token",
                 data={"grant_type": "account_credentials",
-                      "account_id": settings.zoom_account_id},
-                auth=(settings.zoom_client_id, settings.zoom_client_secret),
+                      "account_id": self._account_id},
+                auth=(self._client_id, self._client_secret),
             )
             r.raise_for_status()
             data = r.json()
@@ -54,9 +62,9 @@ class ZoomMetrics:
     async def get_live(self) -> dict:
         """获取在线数据，所有姓名经 resolve_display_name()"""
         now = time.time()
-        cached = _cache["live"]
-        if cached["data"] and now - cached["ts"] < CACHE_TTL:
-            return cached["data"]
+        account_cache = _cache.get(self._account_id, {"data": None, "ts": 0})
+        if account_cache["data"] and now - account_cache["ts"] < CACHE_TTL:
+            return account_cache["data"]
 
         meetings_data = await self._get(
             "/metrics/meetings", {"type": "live", "page_size": 100}
@@ -227,7 +235,7 @@ class ZoomMetrics:
                 else:
                     ps_map[key]["total_actions"] += 1
         result["participants_summary"] = list(ps_map.values())
-        _cache["live"] = {"data": result, "ts": now}
+        _cache[self._account_id] = {"data": result, "ts": now}
         return result
 
     async def _get_participants(self, meeting_id: str) -> list[dict]:

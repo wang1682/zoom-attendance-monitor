@@ -102,7 +102,7 @@ def _account_dict(a: dict) -> dict:
 async def tenant_overview(request: Request, user: dict = Depends(require_user)):
     """Tenant dashboard overview — Setup Center with readiness score."""
     tenant_id = request.session.get("tenant_id", "default")
-    status_data = _compute_setup_status(tenant_id)
+    status_data = await _compute_setup_status(tenant_id)
     return _render_tenant(
         request, "overview", user, "tenant_overview.html",
         score=status_data["score"],
@@ -410,17 +410,17 @@ async def tenant_alerts_toggle(request: Request,
 # ── Setup Status API ──────────────────────────────────────────────────────────
 
 
-def _compute_setup_status(tenant_id: str) -> dict:
+async def _compute_setup_status(tenant_id: str) -> dict:
     """Compute setup readiness score and checks for a tenant.
 
-    Sync implementation — safe to call from API and SSR routes.
+    Async — queries Zoom API for live meeting data.
     """
     checks = {}
 
     # 1. Zoom account configured (20 pts)
     accounts = db.get_zoom_accounts(tenant_id)
     has_account = any(a.get("is_active") and a.get("client_id") for a in accounts)
-    checks["zoom_account"] = bool(has_account)
+    checks["zoom_account"] = has_account
 
     # 2. OAuth verified (15 pts) — account status == 'active'
     has_oauth = any(
@@ -429,9 +429,39 @@ def _compute_setup_status(tenant_id: str) -> dict:
     )
     checks["oauth"] = bool(has_oauth)
 
-    # 3. Meetings data (10 pts) — monitored_meetings has entries
-    meetings = db.get_meetings(tenant_id) if hasattr(db, 'get_meetings') else []
-    checks["meetings"] = len(meetings) > 0
+    # 3. Meetings data (10 pts) — Zoom API has active meetings with participants
+    try:
+        accounts = db.get_zoom_accounts(tenant_id) if hasattr(db, 'get_zoom_accounts') else []
+        active = next(
+            (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+            None,
+        )
+        if active:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics(active)
+        else:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics()
+        live_data = await zm.get_live()
+        meetings = live_data.get("meetings", [])
+        has_active_meetings = any(
+            m.get("participants") and len(m.get("participants", [])) > 0
+            for m in meetings
+        )
+    except Exception:
+        # Tenant Zoom account may lack Metrics API scope — fallback to global
+        try:
+            from zoom_metrics import ZoomMetrics
+            zm_global = ZoomMetrics()
+            live_data = await zm_global.get_live()
+            meetings = live_data.get("meetings", [])
+            has_active_meetings = any(
+                m.get("participants") and len(m.get("participants", [])) > 0
+                for m in meetings
+            )
+        except Exception:
+            has_active_meetings = False
+    checks["meetings"] = has_active_meetings
 
     # 4. Participants data (15 pts)
     conn = db._get_conn()
@@ -534,4 +564,4 @@ def _compute_setup_status(tenant_id: str) -> dict:
 async def setup_status(request: Request, user: dict = Depends(require_user)):
     """Setup Center readiness score for the current tenant."""
     tenant_id = request.session.get("tenant_id", "default")
-    return _compute_setup_status(tenant_id)
+    return await _compute_setup_status(tenant_id)
