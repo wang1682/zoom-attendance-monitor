@@ -247,6 +247,20 @@ async def tenant_zoom_test(
         )
 
 
+@router.post("/zoom/{account_db_id}/delete")
+async def tenant_zoom_delete(
+    request: Request,
+    account_db_id: int,
+    user: dict = Depends(require_user),
+):
+    tenant_id = request.session.get("tenant_id", "default")
+    acct = db.get_zoom_account(account_db_id)
+    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
+        raise HTTPException(status_code=404)
+    db.delete_zoom_account(account_db_id)
+    return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
+
+
 @router.post("/zoom/{account_db_id}/test")
 async def tenant_zoom_test_existing(
     request: Request,

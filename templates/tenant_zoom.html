@@ -101,6 +101,7 @@
         <div style="display:flex; gap:6px;">
             <button class="btn-test" onclick="editToggle('{{ acct.id }}')">编辑</button>
             <button class="btn-test" onclick="testExisting('{{ acct.id }}')">测试连接</button>
+            <button class="btn-test" onclick="deleteAccount('{{ acct.id }}')" style="color:#f87171;">删除</button>
         </div>
     </div>
 
@@ -207,6 +208,13 @@ function testConn(form) {
             el.className = 'test-result fail';
             el.innerHTML = '❌ 请求失败: ' + e.message;
         });
+}
+
+function deleteAccount(id) {
+    if (!confirm('⚠️ 确定删除此 Zoom 账号？此操作不可恢复。')) return;
+    fetch('/dashboard/tenant/zoom/' + id + '/delete', { method: 'POST' })
+        .then(r => { window.location.reload(); })
+        .catch(e => alert('删除失败: ' + e.message));
 }
 
 function testExisting(acctId) {
