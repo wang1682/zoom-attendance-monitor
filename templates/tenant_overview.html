@@ -1,116 +1,96 @@
 {% extends "tenant_base.html" %}
-{% block title %}面板首页{% endblock %}
+{% block title %}接入中心{% endblock %}
 {% block content %}
 
 <div class="flex items-center justify-between mb-6">
-    <h1 style="font-size:1.5rem; font-weight:700;">📊 服务状态</h1>
+    <h1 style="font-size:1.5rem; font-weight:700;">🔌 接入中心</h1>
     <span style="font-size:0.85rem; color:#64748b;">{{ tenant_name }}</span>
 </div>
 
-<!-- Status cards -->
-<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:24px;">
-    <div class="stat-card">
-        <div class="stat-value" style="color:{{ 'rgb(52,211,153)' if zoom_status == 'connected' else 'rgb(251,191,36)' }};">●</div>
-        <div class="stat-label">Zoom 账号状态</div>
-        <div style="font-size:0.85rem; margin-top:4px;">
-            {% if zoom_status == 'connected' %}
-                <span style="color:#6ee7b7;">已连接</span>
-            {% else %}
-                <span style="color:#fbbf24;">未配置</span>
+<!-- 系统准备度 -->
+<div class="card" style="margin-bottom:24px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+        <h2 style="font-size:1.1rem; font-weight:600;">系统准备度</h2>
+        <div style="display:flex; align-items:baseline; gap:4px;">
+            <span style="font-size:2rem; font-weight:700; color:{% if score >= 80 %}#6ee7b7{% elif score >= 50 %}#fbbf24{% else %}#f87171{% endif %};">
+                {{ score }}
+            </span>
+            <span style="font-size:1rem; color:#64748b;">/ 100</span>
+        </div>
+    </div>
+
+    <!-- 进度条 -->
+    <div style="width:100%; height:8px; background:#1e293b; border-radius:4px; overflow:hidden; margin-bottom:20px;">
+        <div style="width:{{ score }}%; height:100%; background:{% if score >= 80 %}#6ee7b7{% elif score >= 50 %}#fbbf24{% else %}#f87171{% endif %}; border-radius:4px; transition:width 0.5s;"></div>
+    </div>
+
+    <!-- 检查项清单 -->
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-bottom:20px;">
+        {% set items = [
+            ('zoom_account', 'Zoom 账号', checks.get('zoom_account', False)),
+            ('oauth', 'OAuth 验证', checks.get('oauth', False)),
+            ('meetings', '会议数据', checks.get('meetings', False)),
+            ('participants', '参与者数据', checks.get('participants', False)),
+            ('webhook', 'Webhook 事件', checks.get('webhook', False)),
+            ('telegram', '推送频道', checks.get('telegram', False)),
+        ] %}
+        {% for key, label, value in items %}
+        <div style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px;">
+            <span style="font-size:1.1rem;">
+                {% if value is sameas true %}
+                ✅
+                {% elif value is sameas false %}
+                ❌
+                {% else %}
+                ⏳
+                {% endif %}
+            </span>
+            <span style="font-size:0.9rem; color:#cbd5e1;">{{ label }}</span>
+        </div>
+        {% endfor %}
+        <!-- 成员映射（百分比） -->
+        <div style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px;">
+            <span style="font-size:1.1rem;">
+                {% if checks.get('member_mapping', 0) >= 0.8 %}
+                ✅
+                {% elif checks.get('member_mapping', 0) > 0 %}
+                ⏳
+                {% else %}
+                ❌
+                {% endif %}
+            </span>
+            <span style="font-size:0.9rem; color:#cbd5e1;">成员映射</span>
+            <span style="font-size:0.8rem; color:#64748b; margin-left:auto;">{{ (checks.get('member_mapping', 0) * 100)|int }}%</span>
+        </div>
+        <!-- 重复成员 -->
+        <div style="display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0f172a; border:1px solid #1e293b; border-radius:8px;">
+            <span style="font-size:1.1rem;">
+                {% if checks.get('duplicates', 0) == 0 %}
+                ✅
+                {% else %}
+                ❌
+                {% endif %}
+            </span>
+            <span style="font-size:0.9rem; color:#cbd5e1;">重复成员</span>
+            {% if checks.get('duplicates', 0) > 0 %}
+            <span style="font-size:0.8rem; color:#f87171; margin-left:auto;">{{ checks.get('duplicates', 0) }} 组</span>
             {% endif %}
-        </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value" style="color:#818cf8;">{{ channel_count }}</div>
-        <div class="stat-label">推送频道</div>
-        <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">
-            {{ enabled_channel_count }} 启用 / {{ disabled_channel_count }} 关闭
-        </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-value" style="color:#f472b6;">
-            {{ enabled_rule_count }}/{{ rule_count }}
-        </div>
-        <div class="stat-label">告警规则</div>
-        <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">
-            {{ rule_count - enabled_rule_count }} 条已关闭
         </div>
     </div>
 </div>
 
-<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
-    <!-- Zoom 连接信息 -->
-    <div class="card">
-        <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">🔗 Zoom 连接</h3>
-        {% if zoom_status == 'connected' %}
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-            <span class="badge badge-active">已连接</span>
-        </div>
-        <div style="font-size:0.85rem; color:#94a3b8;">
-            <p>邮箱: {{ zoom_email or '未知' }}</p>
-        </div>
-        {% else %}
-        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-            <span class="badge badge-inactive">未配置</span>
-        </div>
-        <p style="font-size:0.85rem; color:#64748b;">
-            暂无 Zoom 账号配置。请联系管理员完成 S2S OAuth 配置。
-        </p>
-        {% endif %}
-        <div style="margin-top:12px;">
-            <a href="/dashboard/tenant/zoom" class="btn btn-ghost btn-sm">查看详情 →</a>
-        </div>
-    </div>
-
-    <!-- 活跃推送频道 -->
-    <div class="card">
-        <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">📨 活跃推送频道</h3>
-        {% if channels %}
-        <ul style="list-style:none; padding:0; margin:0;">
-            {% for ch in channels[:5] %}
-            <li style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid #1e293b; font-size:0.85rem;">
-                <span>{{ '👥' if ch.get('is_group') else '👤' }}</span>
-                <span>{{ ch.label or ch.chat_id }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="font-size:0.85rem; color:#64748b;">暂无推送频道。</p>
-        {% endif %}
-        <div style="margin-top:12px;">
-            <a href="/dashboard/tenant/channels" class="btn btn-ghost btn-sm">管理频道 →</a>
-        </div>
-    </div>
-
-    <!-- 启用的告警规则 -->
-    <div class="card">
-        <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">🔔 已启用告警</h3>
-        {% if rules %}
-        <ul style="list-style:none; padding:0; margin:0;">
-            {% for r in rules[:6] %}
-            <li style="display:flex; align-items:center; gap:6px; padding:4px 0; font-size:0.85rem; color:#94a3b8;">
-                <span style="color:#6ee7b7;">●</span>
-                <span>{{ r.title or r.event_type }}</span>
-            </li>
-            {% endfor %}
-        </ul>
-        {% else %}
-        <p style="font-size:0.85rem; color:#64748b;">暂未启用告警规则。</p>
-        {% endif %}
-        <div style="margin-top:12px;">
-            <a href="/dashboard/tenant/alerts" class="btn btn-ghost btn-sm">管理规则 →</a>
-        </div>
-    </div>
-
-    <!-- 快速操作 -->
-    <div class="card">
-        <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">⚡ 快速操作</h3>
-        <div style="display:flex; flex-direction:column; gap:8px;">
-            <a href="/dashboard/tenant/channels" class="btn btn-primary" style="text-align:center;">➕ 添加推送频道</a>
-            <a href="/dashboard/tenant/alerts" class="btn btn-ghost" style="text-align:center;">🔔 调整告警开关</a>
-            <a href="/dashboard/tenant/zoom" class="btn btn-ghost" style="text-align:center;">🔗 查看 Zoom 状态</a>
-        </div>
-    </div>
+<!-- 下一步建议 -->
+<div class="card">
+    <h3 style="font-size:1rem; font-weight:600; margin-bottom:12px;">📋 下一步建议</h3>
+    {% if next_steps %}
+    <ol style="margin:0; padding-left:20px; display:flex; flex-direction:column; gap:8px;">
+        {% for step in next_steps %}
+        <li style="font-size:0.9rem; color:#94a3b8;">{{ step }}</li>
+        {% endfor %}
+    </ol>
+    {% else %}
+    <p style="font-size:0.9rem; color:#6ee7b7;">🎉 全部就绪！系统运行正常。</p>
+    {% endif %}
 </div>
 
 {% endblock %}

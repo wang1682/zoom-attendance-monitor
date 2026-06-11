@@ -310,6 +310,13 @@ def init_db(readonly: bool = False):
             conn.execute(col_sql)
         except Exception:
             pass
+
+    # migrate: add tenant_id to users table for simplified role model
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+    except Exception:
+        pass
+
     conn.commit()
 
     # seed default telegram alert rules
@@ -1331,16 +1338,16 @@ def run_mt_migrations(readonly: bool = False):
 # ── Auth Functions ──────────────────────────────────────────────────────
 
 def create_user(username: str, password: str, display_name: str = "",
-                role: str = "viewer") -> int:
+                role: str = "super_admin", tenant_id: str = "default") -> int:
     """Create user. Returns user id. Raises on duplicate username."""
     conn = _get_conn()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     pw_hash = _hash_pw(password)
     cur = conn.execute(
-        "INSERT INTO users (username, password_hash, display_name, role, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, 1, ?, ?)",
-        (username, pw_hash, display_name, role, now, now),
+        "INSERT INTO users (username, password_hash, display_name, role, is_active, tenant_id, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, ?, ?, ?)",
+        (username, pw_hash, display_name, role, tenant_id, now, now),
     )
     conn.commit()
     return cur.lastrowid
@@ -1520,7 +1527,8 @@ def toggle_user(target_id: int) -> bool:
     return True
 
 
-def update_user(target_id: int, display_name: str = None, role: str = None) -> bool:
+def update_user(target_id: int, display_name: str = None, role: str = None,
+                tenant_id: str = None) -> bool:
     conn = _get_conn()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
@@ -1532,6 +1540,9 @@ def update_user(target_id: int, display_name: str = None, role: str = None) -> b
     if role is not None:
         fields.append("role = ?")
         vals.append(role)
+    if tenant_id is not None:
+        fields.append("tenant_id = ?")
+        vals.append(tenant_id)
     vals.append(target_id)
     conn.execute(
         f"UPDATE users SET {', '.join(fields)} WHERE id = ?",

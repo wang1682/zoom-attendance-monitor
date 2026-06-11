@@ -2837,17 +2837,19 @@ def build_app() -> "FastAPI":
         if not user.get("is_active"):
             return RedirectResponse(url="/login?error=账号已被禁用", status_code=303)
         request.session["user_id"] = user["id"]
-        # 根据用户实际所属租户设置 tenant_id
-        user_tenants = db.get_user_tenants(user["id"])
-        if user["role"] == "admin":
-            # admin 默认指向 default 租户（可通过 switch 切换）
-            request.session["tenant_id"] = "default"
-        elif user_tenants:
-            # 普通用户指向其绑定的第一个活跃租户
-            request.session["tenant_id"] = user_tenants[0]["tenant_id"]
+        # 简化角色模型：super_admin 走 admin 后台，tenant 走租户面板
+        role = user.get("role", "super_admin")
+        if role == "super_admin":
+            request.session["tenant_id"] = user.get("tenant_id", "default")
         else:
-            request.session["tenant_id"] = "default"
-        return RedirectResponse(url="/dashboard", status_code=303)
+            # tenant 用户直接使用其绑定的 tenant_id
+            request.session["tenant_id"] = user.get("tenant_id", "default")
+        # 根据角色决定重定向目标
+        if role == "super_admin":
+            redirect_url = "/dashboard"
+        else:
+            redirect_url = "/dashboard/tenant"
+        return RedirectResponse(url=redirect_url, status_code=303)
 
     @app.post("/logout")
     async def logout(request: Request):

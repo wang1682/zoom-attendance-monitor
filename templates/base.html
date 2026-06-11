@@ -184,6 +184,13 @@ a{color:var(--pr);text-decoration:none}
       <div class="ng"><div class="nh" onclick="tN('a',this)"><i data-lucide="bar-chart-3" style="width:14px;height:14px"></i><span style="flex:1">分析</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="a">
         <a href="/events" class="ni {% if request.url.path == '/events' %}act{% endif %}"><i data-lucide="list" class="ic"></i><span>事件记录</span></a>
       </div></div>
+      <div class="st-label">SETUP</div>
+      <div class="ng"><div class="nh" onclick="tN('t',this)"><i data-lucide="building-2" style="width:14px;height:14px"></i><span style="flex:1">接入中心</span><i data-lucide="chevron-right" class="cv op"></i></div><div class="ns" id="t">
+        <a href="/dashboard/tenant" class="ni {% if request.url.path == '/dashboard/tenant' or request.url.path == '/dashboard/tenant/' %}act{% endif %}"><i data-lucide="layout-dashboard" class="ic"></i><span>接入中心</span></a>
+        <a href="/dashboard/tenant/zoom" class="ni {% if request.url.path == '/dashboard/tenant/zoom' %}act{% endif %}"><i data-lucide="radio" class="ic"></i><span>Zoom 配置</span></a>
+        <a href="/dashboard/tenant/channels" class="ni {% if request.url.path == '/dashboard/tenant/channels' %}act{% endif %}"><i data-lucide="send" class="ic"></i><span>推送频道</span></a>
+        <a href="/dashboard/tenant/alerts" class="ni {% if request.url.path == '/dashboard/tenant/alerts' %}act{% endif %}"><i data-lucide="bell" class="ic"></i><span>告警规则</span></a>
+      </div></div>
       <div class="st-label">SETTINGS</div>
       <div class="ng"><div class="nh" onclick="tN('s',this)"><i data-lucide="settings" style="width:14px;height:14px"></i><span style="flex:1">设置</span><i data-lucide="chevron-right" class="cv"></i></div><div class="ns cl" id="s">
         <a href="/settings/system" class="ni {% if request.url.path == '/settings/system' %}act{% endif %}"><i data-lucide="sliders" class="ic"></i><span>系统设置</span></a>

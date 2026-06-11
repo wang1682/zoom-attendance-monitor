@@ -100,32 +100,15 @@ def _account_dict(a: dict) -> dict:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def tenant_overview(request: Request, user: dict = Depends(require_user)):
-    """Tenant dashboard overview — status summary."""
+    """Tenant dashboard overview — Setup Center with readiness score."""
     tenant_id = request.session.get("tenant_id", "default")
-
-    accounts = db.get_zoom_accounts(tenant_id)
-    active_account = next((a for a in accounts if a.get("is_active") and a.get("status") == "active"), None)
-    zoom_status = "connected" if active_account else "not_configured"
-    zoom_email = active_account.get("host_email", "") if active_account else ""
-
-    channels = db.get_tenant_channels(tenant_id)
-    enabled_channels = [c for c in channels if c.get("is_enabled")]
-    disabled_channels = [c for c in channels if not c.get("is_enabled")]
-
-    rules = db.get_telegram_rules_by_tenant(tenant_id)
-    enabled_rules = [r for r in rules if r["enabled"]]
-
+    status_data = _compute_setup_status(tenant_id)
     return _render_tenant(
         request, "overview", user, "tenant_overview.html",
-        zoom_status=zoom_status,
-        zoom_email=zoom_email,
-        channel_count=len(channels),
-        enabled_channel_count=len(enabled_channels),
-        disabled_channel_count=len(disabled_channels),
-        channels=enabled_channels,
-        rule_count=len(rules),
-        enabled_rule_count=len(enabled_rules),
-        rules=enabled_rules,
+        score=status_data["score"],
+        status_label=status_data["status"],
+        checks=status_data["checks"],
+        next_steps=status_data["next_steps"],
     )
 
 
@@ -223,3 +206,133 @@ async def tenant_alerts_toggle(request: Request,
         "target_chat_id": target_chat_id or "",
     })
     return RedirectResponse(url="/dashboard/tenant/alerts", status_code=303)
+
+
+# ── Setup Status API ──────────────────────────────────────────────────────────
+
+
+def _compute_setup_status(tenant_id: str) -> dict:
+    """Compute setup readiness score and checks for a tenant.
+
+    Sync implementation — safe to call from API and SSR routes.
+    """
+    checks = {}
+
+    # 1. Zoom account configured (20 pts)
+    accounts = db.get_zoom_accounts(tenant_id)
+    has_account = any(a.get("is_active") and a.get("client_id") for a in accounts)
+    checks["zoom_account"] = bool(has_account)
+
+    # 2. OAuth verified (15 pts) — account status == 'active'
+    has_oauth = any(
+        a.get("is_active") and a.get("status") == "active"
+        for a in accounts
+    )
+    checks["oauth"] = bool(has_oauth)
+
+    # 3. Meetings data (10 pts) — monitored_meetings has entries
+    meetings = db.get_meetings(tenant_id) if hasattr(db, 'get_meetings') else []
+    checks["meetings"] = len(meetings) > 0
+
+    # 4. Participants data (15 pts)
+    conn = db._get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM zoom_participants WHERE tenant_id = ?",
+        (tenant_id,),
+    ).fetchone()
+    participant_count = row["c"] if row else 0
+    checks["participants"] = participant_count > 0
+
+    # 5. Webhook recent 24h (15 pts)
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ?",
+        (cutoff,),
+    ).fetchone()
+    webhook_count = row["c"] if row else 0
+    checks["webhook"] = webhook_count > 0
+
+    # 6. Telegram configured (10 pts)
+    channels = db.get_tenant_channels(tenant_id)
+    has_telegram = any(c.get("is_enabled") for c in channels)
+    checks["telegram"] = bool(has_telegram)
+
+    # 7. Member mapping rate (10 pts)
+    all_rows = conn.execute(
+        "SELECT COUNT(*) AS c FROM member_display WHERE tenant_id = ?",
+        (tenant_id,),
+    ).fetchone()
+    unmapped = conn.execute(
+        "SELECT COUNT(*) AS c FROM member_display "
+        "WHERE tenant_id = ? AND display_name = raw_name",
+        (tenant_id,),
+    ).fetchone()
+    total_members = all_rows["c"] if all_rows else 0
+    unmapped_count = unmapped["c"] if unmapped else 0
+    if total_members > 0:
+        mapped_rate = (total_members - unmapped_count) / total_members
+    else:
+        mapped_rate = 0
+    checks["member_mapping"] = round(mapped_rate, 2)
+
+    # 8. No duplicates (5 pts)
+    dup_rows = conn.execute(
+        "SELECT display_name, COUNT(*) as c FROM member_display "
+        "WHERE tenant_id = ? GROUP BY display_name HAVING c > 1",
+        (tenant_id,),
+    ).fetchall()
+    checks["duplicates"] = len(dup_rows)
+
+    # Score calculation
+    weights = {
+        "zoom_account": 20,
+        "oauth": 15,
+        "meetings": 10,
+        "participants": 15,
+        "webhook": 15,
+        "telegram": 10,
+        "member_mapping": 10,
+        "duplicates": 5,
+    }
+    score = 0
+    for key, weight in weights.items():
+        if key == "member_mapping" and isinstance(checks[key], (int, float)):
+            score += int(weight * checks[key])
+        elif key == "duplicates" and checks[key] == 0:
+            score += weight
+        elif isinstance(checks[key], bool) and checks[key]:
+            score += weight
+
+    if score >= 80:
+        status_label = "good"
+    elif score >= 50:
+        status_label = "partial"
+    else:
+        status_label = "poor"
+
+    next_steps = []
+    if not checks["zoom_account"]:
+        next_steps.append("配置 Zoom 账号（S2S App）")
+    if not checks["oauth"] and checks["zoom_account"]:
+        next_steps.append("完成 OAuth 授权验证")
+    if not checks["webhook"]:
+        next_steps.append("配置 Webhook（接收实时事件）")
+    if not checks["telegram"]:
+        next_steps.append("创建推送频道")
+    if isinstance(checks["member_mapping"], (int, float)) and checks["member_mapping"] < 0.8:
+        next_steps.append("完成成员映射（当前 {}%）".format(int(checks["member_mapping"] * 100)))
+
+    return {
+        "score": score,
+        "status": status_label,
+        "checks": checks,
+        "next_steps": next_steps,
+    }
+
+
+@router.get("/api/setup/status")
+async def setup_status(request: Request, user: dict = Depends(require_user)):
+    """Setup Center readiness score for the current tenant."""
+    tenant_id = request.session.get("tenant_id", "default")
+    return _compute_setup_status(tenant_id)
