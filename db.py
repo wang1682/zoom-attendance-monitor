@@ -1616,23 +1616,23 @@ def delete_zoom_account(account_id: int) -> bool:
     return True
 
 
-def update_zoom_account(account_id: int, **kwargs) -> bool:
-    """Update zoom_account editable fields. Accepts: label, host_email, webhook_secret, is_active, client_id, client_secret"""
-    allowed = {"label", "host_email", "webhook_secret", "is_active", "client_id", "client_secret"}
+def update_zoom_account(db_id: int, **kwargs) -> bool:
+    """Update zoom_account editable fields. Accepts: label, account_id, host_email, webhook_secret, is_active, client_id, client_secret"""
+    allowed = {"label", "account_id", "host_email", "webhook_secret", "is_active", "client_id", "client_secret"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     clauses = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [now, account_id]
+    values = list(updates.values()) + [now, db_id]
     conn = _get_conn()
     conn.execute(
         f"UPDATE zoom_accounts SET {clauses}, updated_at = ? WHERE id = ?",
         values,
     )
     conn.commit()
-    log_audit("update", "zoom_account", account_id, f"Updated Zoom account: {','.join(updates.keys())}")
+    log_audit("update", "zoom_account", db_id, f"Updated Zoom account: {','.join(updates.keys())}")
     return True
 
 

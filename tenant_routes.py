@@ -162,7 +162,7 @@ async def tenant_zoom_update(
     user: dict = Depends(require_user),
     label: str = Form(""),
     account_id: str = Form(...),
-    client_id: str = Form(...),
+    client_id: str = Form(""),
     client_secret: str = Form(""),
     webhook_secret: str = Form(""),
 ):
