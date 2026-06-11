@@ -716,6 +716,21 @@ def get_telegram_rules() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_telegram_rules_by_tenant(tenant_id: str) -> list[dict]:
+    """获取指定租户的 Telegram 告警规则（fallback 到默认规则）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE tenant_id = ? ORDER BY event_type",
+        (tenant_id,),
+    ).fetchall()
+    # If tenant has no rules yet, return default rules
+    if not rows:
+        rows = conn.execute(
+            "SELECT * FROM telegram_alert_rules WHERE tenant_id = 'default' ORDER BY event_type"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_telegram_rule(event_type: str) -> dict | None:
     """获取指定 event_type 的告警规则，不存在返回 None"""
     conn = _get_conn()

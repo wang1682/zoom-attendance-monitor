@@ -1,0 +1,78 @@
+{% extends "tenant_base.html" %}
+{% block title %}告警规则{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <h1 style="font-size:1.5rem; font-weight:700;">🔔 告警规则设置</h1>
+    <span style="font-size:0.85rem; color:#64748b;">开关控制推送事件类型</span>
+</div>
+
+{% if rules %}
+<div class="card" style="padding:0; overflow:hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>事件类型</th>
+                <th>标题</th>
+                <th>状态</th>
+                <th>推送频道</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rules %}
+            <tr>
+                <td style="font-family:monospace; font-size:0.8rem;">{{ r.event_type }}</td>
+                <td>{{ r.title or '' }}</td>
+                <td>
+                    <span class="badge {{ 'badge-active' if r.enabled else 'badge-inactive' }}">
+                        {{ '启用' if r.enabled else '关闭' }}
+                    </span>
+                </td>
+                <td style="font-size:0.85rem;">
+                    {% set target_chat = r.target_chat_id or r.target_channel_id %}
+                    {% if target_chat %}
+                        {% set found = namespace(val='') %}
+                        {% for ch in channels %}
+                            {% if ch.chat_id == target_chat|string %}
+                                {{ ch.label or ch.chat_id }}
+                            {% endif %}
+                        {% endfor %}
+                        {% if not found %}
+                            <span style="color:#94a3b8;">{{ target_chat }}</span>
+                        {% endif %}
+                    {% else %}
+                        <span style="color:#64748b;">默认频道</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/dashboard/tenant/alerts/toggle" style="display:flex; gap:6px; align-items:center;">
+                        <input type="hidden" name="event_type" value="{{ r.event_type }}">
+                        <input type="hidden" name="enabled" value="{{ '0' if r.enabled else '1' }}">
+                        <select name="target_chat_id" style="width:auto; min-width:80px; font-size:0.8rem; padding:4px 8px;">
+                            <option value="">默认</option>
+                            {% for ch in channels %}
+                            <option value="{{ ch.chat_id }}" {% if ch.chat_id == r.target_chat_id %}selected{% endif %}>
+                                {{ ch.label or ch.chat_id }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn {{ 'btn-danger' if r.enabled else 'btn-success' }} btn-sm">
+                            {{ '关闭' if r.enabled else '开启' }}
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:3rem;">
+    <div style="font-size:3rem; margin-bottom:12px;">🔔</div>
+    <h3 style="font-weight:600; margin-bottom:8px;">暂无告警规则</h3>
+    <p style="font-size:0.85rem; color:#64748b;">请联系管理员初始化告警规则。</p>
+</div>
+{% endif %}
+
+{% endblock %}

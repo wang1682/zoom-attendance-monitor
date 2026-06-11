@@ -1,0 +1,103 @@
+{% extends "tenant_base.html" %}
+{% block title %}推送频道{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <h1 style="font-size:1.5rem; font-weight:700;">📨 推送频道管理</h1>
+    <button onclick="openModal('createModal')" class="btn btn-primary">➕ 添加频道</button>
+</div>
+
+{% if channels %}
+<div class="card" style="padding:0; overflow:hidden;">
+    <table>
+        <thead>
+            <tr>
+                <th>名称</th>
+                <th>Chat ID</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ch in channels %}
+            <tr>
+                <td>
+                    <span style="display:flex; align-items:center; gap:6px;">
+                        {{ '👥' if ch.is_group == 'true' else '👤' }}
+                        {{ ch.label or '未命名' }}
+                    </span>
+                </td>
+                <td style="font-family:monospace; font-size:0.8rem;">{{ ch.chat_id }}</td>
+                <td>
+                    <span style="font-size:0.8rem; color:#94a3b8;">
+                        {{ '群组' if ch.is_group == 'true' else '私聊' }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge {{ 'badge-active' if ch.enabled == 'true' else 'badge-inactive' }}">
+                        {{ '启用' if ch.enabled == 'true' else '关闭' }}
+                    </span>
+                </td>
+                <td>
+                    <div style="display:flex; gap:6px;">
+                        <!-- Toggle -->
+                        <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/toggle" style="display:inline">
+                            <button type="submit" class="btn btn-ghost btn-sm">
+                                {{ '暂停' if ch.enabled == 'true' else '启用' }}
+                            </button>
+                        </form>
+                        <!-- Test -->
+                        <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/test" style="display:inline"
+                              onsubmit="event.preventDefault(); var f=this; fetch(f.action, {method:'POST'}).then(r=>r.json()).then(d=>{ showToast(d.ok ? '✅ 推送成功' : '❌ 推送失败: '+d.error, d.ok?'success':'error'); });">
+                            <button type="submit" class="btn btn-success btn-sm" style="background:#059669;">测试</button>
+                        </form>
+                        <!-- Delete -->
+                        <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/delete" style="display:inline"
+                              onsubmit="return confirm('确定删除频道「{{ ch.label or ch.chat_id }}」？');">
+                            <button type="submit" class="btn btn-danger btn-sm">删除</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:3rem;">
+    <div style="font-size:3rem; margin-bottom:12px;">📨</div>
+    <h3 style="font-weight:600; margin-bottom:8px;">暂无推送频道</h3>
+    <p style="font-size:0.85rem; color:#64748b;">添加一个 Telegram 群组或私聊作为推送目标。</p>
+</div>
+{% endif %}
+
+<!-- Create Modal -->
+<div id="createModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3 style="font-weight:600; margin-bottom:16px;">添加推送频道</h3>
+        <form method="post" action="/dashboard/tenant/channels/create">
+            <div style="margin-bottom:12px;">
+                <label style="font-size:0.8rem; color:#94a3b8;">Chat ID <span style="color:#ef4444;">*</span></label>
+                <input name="chat_id" required placeholder="例如: -1001234567890">
+            </div>
+            <div style="margin-bottom:12px;">
+                <label style="font-size:0.8rem; color:#94a3b8;">名称（可选）</label>
+                <input name="label" placeholder="例如: YC 预警群">
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="font-size:0.8rem; color:#94a3b8;">类型</label>
+                <select name="is_group">
+                    <option value="true">群组</option>
+                    <option value="false">私聊</option>
+                </select>
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button type="button" onclick="closeModal('createModal')" class="btn btn-ghost">取消</button>
+                <button type="submit" class="btn btn-primary">添加</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}

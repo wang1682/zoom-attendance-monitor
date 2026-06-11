@@ -1,0 +1,68 @@
+{% extends "tenant_base.html" %}
+{% block title %}Zoom 账号{% endblock %}
+{% block content %}
+
+<div class="flex items-center justify-between mb-6">
+    <h1 style="font-size:1.5rem; font-weight:700;">🔗 Zoom 账号</h1>
+    <span style="font-size:0.85rem; color:#64748b;">只读</span>
+</div>
+
+{% if accounts %}
+<div style="display:grid; gap:16px;">
+    {% for acct in accounts %}
+    <div class="card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span style="font-weight:600;">{{ acct.label or acct.account_id }}</span>
+                <span class="badge {{ 'badge-active' if acct.status == 'active' else 'badge-inactive' }}">
+                    {{ {'active':'已连接','inactive':'未连接','error':'异常'}.get(acct.status, acct.status) }}
+                </span>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; font-size:0.85rem;">
+            <div>
+                <span style="color:#64748b;">Account ID:</span>
+                <span style="color:#e2e8f0; margin-left:6px;">{{ acct.account_id }}</span>
+            </div>
+            <div>
+                <span style="color:#64748b;">邮箱:</span>
+                <span style="color:#e2e8f0; margin-left:6px;">{{ acct.host_email or '未知' }}</span>
+            </div>
+            {% if acct.last_sync %}
+            <div>
+                <span style="color:#64748b;">最后同步:</span>
+                <span style="color:#e2e8f0; margin-left:6px;">{{ acct.last_sync }}</span>
+            </div>
+            <div>
+                <span style="color:#64748b;">同步结果:</span>
+                <span style="color:{{ 'rgb(52,211,153)' if acct.status == 'active' else 'rgb(248,113,113)' }}; margin-left:6px;">
+                    {{ acct.last_sync_result or '-' }}
+                </span>
+            </div>
+            {% endif %}
+            {% if acct.webhook_last_time %}
+            <div>
+                <span style="color:#64748b;">Webhook 最近:</span>
+                <span style="color:#e2e8f0; margin-left:6px;">{{ acct.webhook_last_time }}</span>
+            </div>
+            <div>
+                <span style="color:#64748b;">最近事件:</span>
+                <span style="color:#e2e8f0; margin-left:6px;">{{ acct.webhook_last_event or '-' }}</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center; padding:3rem;">
+    <div style="font-size:3rem; margin-bottom:12px;">🔗</div>
+    <h3 style="font-weight:600; margin-bottom:8px;">暂无 Zoom 账号配置</h3>
+    <p style="font-size:0.85rem; color:#64748b; max-width:400px; margin:0 auto;">
+        请联系平台管理员在 Zoom Marketplace 中创建 Server-to-Server App，<br>
+        并将 Client ID / Client Secret / Account ID 填入后台配置。
+    </p>
+</div>
+{% endif %}
+
+{% endblock %}

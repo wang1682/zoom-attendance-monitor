@@ -28,8 +28,8 @@ services:
       - zoom_data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
-      # 容器内 8000，宿主机绑定 localhost（sub2api 已占 8080，用 8082）
-      - "127.0.0.1:8082:8000"
+      # 容器内 8000，直接宿主机 8000
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s

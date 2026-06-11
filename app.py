@@ -2819,6 +2819,10 @@ def build_app() -> "FastAPI":
     from admin_routes import router as admin_router
     app.include_router(admin_router, prefix="/dashboard")
 
+    # ── Tenant self-service routes ─────────────────────────────────────────
+    from tenant_routes import router as tenant_router
+    app.include_router(tenant_router, prefix="/dashboard/tenant")
+
     # ── Login / Logout ─────────────────────────────────────────────────────
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
