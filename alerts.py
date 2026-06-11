@@ -45,6 +45,8 @@ class TelegramNotifier:
         targets = [chat_id] if chat_id else [settings.telegram_private_chat_id]
         if group and settings.telegram_group_enabled and settings.telegram_group_chat_id:
             targets.append(settings.telegram_group_chat_id)
+        if group and settings.telegram_group2_enabled and settings.telegram_group2_chat_id:
+            targets.append(settings.telegram_group2_chat_id)
 
         # 写 alert 日志
         mtype = self._classify(text)
