@@ -186,6 +186,30 @@ async def tenant_zoom_update(
     return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
 
 
+# ── Test connection helpers ──────────────────────────────────────────────────
+
+
+def _test_result(checks: list, extra: dict = None) -> JSONResponse:
+    """Build multi-step test result with rich HTML display."""
+    icons = {"ok": "✅", "error": "❌", "warning": "⚠️", "skipped": "⏭️"}
+    lines = []
+    all_ok = True
+    for c in checks:
+        ico = icons.get(c["status"], "❓")
+        if c["status"] == "error":
+            all_ok = False
+        lines.append(f"<div style='margin:3px 0'>{ico} <strong>{c['name']}</strong></div>")
+        if c.get("detail"):
+            lines.append(f"<div style='font-size:0.8rem;color:#94a3b8;padding-left:1.5rem;white-space:pre-wrap'>{c['detail'].replace(chr(10), '<br>')}</div>")
+    payload = {"success": all_ok, "html": "\n".join(lines)}
+    if extra:
+        payload.update(extra)
+    return JSONResponse(status_code=200, content=payload)
+
+
+# ── Test Connection — new credentials (from form) ──
+
+
 @router.post("/zoom/test")
 async def tenant_zoom_test(
     request: Request,
@@ -194,57 +218,191 @@ async def tenant_zoom_test(
     client_id: str = Form(...),
     client_secret: str = Form(...),
 ):
-    """Test Zoom OAuth connection with provided credentials."""
+    """Test Zoom OAuth connection with provided credentials (multi-step)."""
     try:
         async with httpx.AsyncClient(timeout=15) as cl:
-            # Step 1: Get access token
+            # ── Step 1: OAuth Token ──
             token_url = "https://zoom.us/oauth/token"
-            payload = {
-                "grant_type": "account_credentials",
-                "account_id": account_id,
-            }
+            payload = {"grant_type": "account_credentials", "account_id": account_id}
             auth = httpx.BasicAuth(client_id, client_secret)
             tr = await cl.post(token_url, data=payload, auth=auth)
             if tr.status_code != 200:
-                detail = tr.text[:200]
-                return JSONResponse(
-                    status_code=200,
-                    content={"success": False, "message": f"OAuth 失败 (HTTP {tr.status_code}): {detail}"},
-                )
+                return _test_result([
+                    {"name": "OAuth Token", "status": "error",
+                     "detail": f"HTTP {tr.status_code}: {tr.text[:200]}"},
+                ])
             token_data = tr.json()
             access_token = token_data.get("access_token", "")
+            checks = [{"name": "OAuth Token", "status": "ok", "detail": "Token 获取成功"}]
 
-            # Step 2: Verify with /users/me
+            # ── Step 2: User Info ──
             ur = await cl.get(
                 "https://api.zoom.us/v2/users/me",
                 headers={"Authorization": f"Bearer {access_token}"},
             )
             if ur.status_code != 200:
-                return JSONResponse(
-                    status_code=200,
-                    content={"success": False, "message": f"用户验证失败 (HTTP {ur.status_code})"},
-                )
-            user_data = ur.json()
-            host_email = user_data.get("email", "未知")
-            host_name = user_data.get("first_name", "") + " " + user_data.get("last_name", "")
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "message": f"连接成功！主机: {host_name.strip()} ({host_email})",
-                    "host_email": host_email,
-                },
+                checks.append({"name": "用户信息", "status": "error",
+                               "detail": f"HTTP {ur.status_code}"})
+                return _test_result(checks)
+            ud = ur.json()
+            email = ud.get("email", "未知")
+            name = f"{ud.get('first_name', '')} {ud.get('last_name', '')}".strip()
+            checks.append({"name": "用户信息", "status": "ok",
+                           "detail": f"主机: {name} ({email})"})
+
+            # ── Step 3: Metrics/Meetings scope ──
+            mr = await cl.get(
+                "https://api.zoom.us/v2/metrics/meetings?page_size=1",
+                headers={"Authorization": f"Bearer {access_token}"},
             )
+            if mr.status_code == 200:
+                checks.append({"name": "实时会议", "status": "ok",
+                               "detail": "Dashboard 权限正常，可读取实时会议列表"})
+                # ── Step 4: Participants (conditional) ──
+                meetings = mr.json().get("meetings", [])
+                if meetings:
+                    pr = await cl.get(
+                        f"https://api.zoom.us/v2/metrics/meetings/{meetings[0]['id']}/participants?page_size=1",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                    )
+                    if pr.status_code == 200:
+                        checks.append({"name": "参会者数据", "status": "ok",
+                                       "detail": "参会者数据可读"})
+                    else:
+                        checks.append({"name": "参会者数据", "status": "warning",
+                                       "detail": f"读取失败 (HTTP {pr.status_code})"})
+                else:
+                    checks.append({"name": "参会者数据", "status": "skipped",
+                                   "detail": "当前无活跃会议，自动跳过"})
+            elif mr.status_code == 4711:
+                checks.append({
+                    "name": "实时会议", "status": "error",
+                    "detail": "缺少 Dashboard Metrics 权限：dashboard:read:list_meetings:admin\n请在 Zoom S2S App > Scopes 中补充 Dashboard/Metrics 权限后重新授权。",
+                })
+                checks.append({"name": "参会者数据", "status": "skipped",
+                               "detail": "依赖实时会议权限"})
+            else:
+                checks.append({"name": "实时会议", "status": "error",
+                               "detail": f"读取失败 (HTTP {mr.status_code})"})
+                checks.append({"name": "参会者数据", "status": "skipped",
+                               "detail": "依赖实时会议权限"})
+
+            return _test_result(checks, {"host_email": email})
+
     except httpx.TimeoutException:
-        return JSONResponse(
-            status_code=200,
-            content={"success": False, "message": "连接超时，请检查 Zoom 服务状态"},
-        )
+        return _test_result([{"name": "连接", "status": "error",
+                              "detail": "连接超时，请检查 Zoom 服务状态"}])
     except Exception as e:
-        return JSONResponse(
-            status_code=200,
-            content={"success": False, "message": f"测试失败: {type(e).__name__}: {str(e)[:200]}"},
-        )
+        return _test_result([{"name": "测试", "status": "error",
+                              "detail": f"{type(e).__name__}: {str(e)[:200]}"}])
+
+
+# ── Test Connection — existing account (from DB) ──
+
+
+@router.post("/zoom/{account_db_id}/test")
+async def tenant_zoom_test_existing(
+    request: Request,
+    account_db_id: int,
+    user: dict = Depends(require_user),
+):
+    """Test connection for an existing account (multi-step)."""
+    tenant_id = request.session.get("tenant_id", "default")
+    acct = db.get_zoom_account(account_db_id)
+    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
+        return _test_result([{"name": "权限", "status": "error",
+                              "detail": "账号不存在或无权访问"}])
+    if not acct.get("client_id") or not acct.get("client_secret") or not acct.get("account_id"):
+        return _test_result([{"name": "凭据", "status": "error",
+                              "detail": "账号凭据不完整，请重新编辑"}])
+    try:
+        async with httpx.AsyncClient(timeout=15) as cl:
+            # ── Step 1: OAuth Token ──
+            token_url = "https://zoom.us/oauth/token"
+            payload = {"grant_type": "account_credentials", "account_id": acct["account_id"]}
+            auth = httpx.BasicAuth(acct["client_id"], acct["client_secret"])
+            tr = await cl.post(token_url, data=payload, auth=auth)
+            if tr.status_code != 200:
+                return _test_result([
+                    {"name": "OAuth Token", "status": "error",
+                     "detail": f"HTTP {tr.status_code}"},
+                ])
+            token_data = tr.json()
+            access_token = token_data.get("access_token", "")
+            checks = [{"name": "OAuth Token", "status": "ok", "detail": "Token 获取成功"}]
+
+            # ── Step 2: User Info ──
+            ur = await cl.get(
+                "https://api.zoom.us/v2/users/me",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if ur.status_code != 200:
+                checks.append({"name": "用户信息", "status": "error",
+                               "detail": f"HTTP {ur.status_code}"})
+                return _test_result(checks)
+            ud = ur.json()
+            email = ud.get("email", "未知")
+            name = f"{ud.get('first_name', '')} {ud.get('last_name', '')}".strip()
+            checks.append({"name": "用户信息", "status": "ok",
+                           "detail": f"主机: {name} ({email})"})
+
+            # ── Step 3: Metrics/Meetings scope ──
+            mr = await cl.get(
+                "https://api.zoom.us/v2/metrics/meetings?page_size=1",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            if mr.status_code == 200:
+                checks.append({"name": "实时会议", "status": "ok",
+                               "detail": "Dashboard 权限正常，可读取实时会议列表"})
+                # ── Step 4: Participants (conditional) ──
+                meetings = mr.json().get("meetings", [])
+                if meetings:
+                    pr = await cl.get(
+                        f"https://api.zoom.us/v2/metrics/meetings/{meetings[0]['id']}/participants?page_size=1",
+                        headers={"Authorization": f"Bearer {access_token}"},
+                    )
+                    if pr.status_code == 200:
+                        checks.append({"name": "参会者数据", "status": "ok",
+                                       "detail": "参会者数据可读"})
+                    else:
+                        checks.append({"name": "参会者数据", "status": "warning",
+                                       "detail": f"读取失败 (HTTP {pr.status_code})"})
+                else:
+                    checks.append({"name": "参会者数据", "status": "skipped",
+                                   "detail": "当前无活跃会议，自动跳过"})
+            elif mr.status_code == 4711:
+                checks.append({
+                    "name": "实时会议", "status": "error",
+                    "detail": "缺少 Dashboard Metrics 权限：dashboard:read:list_meetings:admin\n请在 Zoom S2S App > Scopes 中补充 Dashboard/Metrics 权限后重新授权。",
+                })
+                checks.append({"name": "参会者数据", "status": "skipped",
+                               "detail": "依赖实时会议权限"})
+            else:
+                checks.append({"name": "实时会议", "status": "error",
+                               "detail": f"读取失败 (HTTP {mr.status_code})"})
+                checks.append({"name": "参会者数据", "status": "skipped",
+                               "detail": "依赖实时会议权限"})
+
+            # Persist status if all basic steps succeeded
+            all_ok = all(c["status"] == "ok" for c in checks if c["name"] != "参会者数据")
+            if all_ok:
+                from datetime import datetime, timezone
+                db.update_zoom_account(
+                    account_db_id,
+                    status="active",
+                    host_email=email,
+                    last_sync=datetime.now(timezone.utc).isoformat(),
+                    last_sync_result="OK",
+                )
+
+            return _test_result(checks, {"host_email": email if all_ok else None})
+
+    except httpx.TimeoutException:
+        return _test_result([{"name": "连接", "status": "error",
+                              "detail": "连接超时"}])
+    except Exception as e:
+        return _test_result([{"name": "测试", "status": "error",
+                              "detail": f"{str(e)[:200]}"}])
 
 
 @router.post("/zoom/{account_db_id}/delete")
@@ -259,67 +417,6 @@ async def tenant_zoom_delete(
         raise HTTPException(status_code=404)
     db.delete_zoom_account(account_db_id)
     return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
-
-
-@router.post("/zoom/{account_db_id}/test")
-async def tenant_zoom_test_existing(
-    request: Request,
-    account_db_id: int,
-    user: dict = Depends(require_user),
-):
-    """Test connection for an existing account using DB-stored credentials."""
-    tenant_id = request.session.get("tenant_id", "default")
-    acct = db.get_zoom_account(account_db_id)
-    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
-        return JSONResponse(status_code=200, content={"success": False, "message": "账号不存在或无权访问"})
-    if not acct.get("client_id") or not acct.get("client_secret") or not acct.get("account_id"):
-        return JSONResponse(status_code=200, content={"success": False, "message": "账号凭据不完整，请重新编辑"})
-    try:
-        async with httpx.AsyncClient(timeout=15) as cl:
-            token_url = "https://zoom.us/oauth/token"
-            payload = {"grant_type": "account_credentials", "account_id": acct["account_id"]}
-            auth = httpx.BasicAuth(acct["client_id"], acct["client_secret"])
-            tr = await cl.post(token_url, data=payload, auth=auth)
-            if tr.status_code != 200:
-                return JSONResponse(
-                    status_code=200,
-                    content={"success": False, "message": f"OAuth 失败 (HTTP {tr.status_code})"},
-                )
-            token_data = tr.json()
-            access_token = token_data.get("access_token", "")
-            ur = await cl.get(
-                "https://api.zoom.us/v2/users/me",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if ur.status_code != 200:
-                return JSONResponse(
-                    status_code=200,
-                    content={"success": False, "message": f"用户验证失败 (HTTP {ur.status_code})"},
-                )
-            user_data = ur.json()
-            host_email = user_data.get("email", "未知")
-            host_name = f"{user_data.get('first_name', '')} {user_data.get('last_name', '')}".strip()
-            # Persist successful connection status
-            from datetime import datetime, timezone
-            db.update_zoom_account(
-                account_db_id,
-                status="active",
-                host_email=host_email,
-                last_sync=datetime.now(timezone.utc).isoformat(),
-                last_sync_result="OK",
-            )
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "message": f"连接成功！主机: {host_name} ({host_email})",
-                    "host_email": host_email,
-                },
-            )
-    except httpx.TimeoutException:
-        return JSONResponse(status_code=200, content={"success": False, "message": "连接超时"})
-    except Exception as e:
-        return JSONResponse(status_code=200, content={"success": False, "message": f"测试失败: {str(e)[:200]}"})
 
 
 # ── Telegram 频道管理 ────────────────────────────────────────────────────────

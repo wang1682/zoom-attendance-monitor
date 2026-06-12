@@ -202,7 +202,7 @@ function testConn(form) {
         .then(r => r.json())
         .then(j => {
             el.className = 'test-result ' + (j.success ? 'success' : 'fail');
-            el.innerHTML = j.success ? '✅ ' + j.message : '❌ ' + j.message;
+            el.innerHTML = j.html || (j.success ? '✅ ' + j.message : '❌ ' + j.message);
         })
         .catch(e => {
             el.className = 'test-result fail';
@@ -227,7 +227,7 @@ function testExisting(acctId) {
         .then(r => r.json())
         .then(j => {
             el.className = 'test-result ' + (j.success ? 'success' : 'fail');
-            el.innerHTML = j.success ? '✅ ' + j.message : '❌ ' + j.message;
+            el.innerHTML = j.html || (j.success ? '✅ ' + j.message : '❌ ' + j.message);
         })
         .catch(e => {
             el.className = 'test-result fail';
