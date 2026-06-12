@@ -2302,7 +2302,9 @@ def build_app() -> "FastAPI":
             participant_count = len(participants)
 
             # Sharing count from Metrics API (is_sharing flag on each participant)
-            sharing_count = len([p for p in live_data.get("online_list", []) if p.get("is_sharing")])
+            # Dedup by name — same person across multiple meetings counted once
+            unique_sharing = {p.get("name", "") for p in live_data.get("online_list", []) if p.get("is_sharing")}
+            sharing_count = len(unique_sharing)
 
             # Also try sharing_live for any webhook-captured sharing data (secondary)
             try:
