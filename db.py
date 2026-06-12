@@ -333,22 +333,28 @@ def init_db(readonly: bool = False):
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
 
-def save_webhook_event(event_type: str, payload: dict) -> int:
+def save_webhook_event(event_type: str, payload: dict, tenant_id: str = "unknown") -> int:
     import json
     conn = _get_conn()
     cur = conn.execute(
-        "INSERT INTO zoom_events (event_type, payload) VALUES (?, ?)",
-        (event_type, json.dumps(payload, ensure_ascii=False)),
+        "INSERT INTO zoom_events (event_type, payload, tenant_id) VALUES (?, ?, ?)",
+        (event_type, json.dumps(payload, ensure_ascii=False), tenant_id),
     )
     conn.commit()
     return cur.lastrowid
 
 
-def get_recent_events(limit: int = 50) -> list[dict]:
+def get_recent_events(limit: int = 50, tenant_id: str = None) -> list[dict]:
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM zoom_events ORDER BY id DESC LIMIT ?", (limit,)
-    ).fetchall()
+    if tenant_id:
+        rows = conn.execute(
+            "SELECT * FROM zoom_events WHERE tenant_id = ? ORDER BY id DESC LIMIT ?",
+            (tenant_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM zoom_events ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -358,7 +364,7 @@ def save_participant(
     meeting_id: str, name: str, email: str,
     action: str, action_time: datetime,
     source: str = "poll",
-    tenant_id: str = "default",
+    tenant_id: str = "unknown",
 ) -> int:
     conn = _get_conn()
     cur = conn.execute(
@@ -370,13 +376,19 @@ def save_participant(
     return cur.lastrowid
 
 
-def get_today_participants(limit: int = 200) -> list[dict]:
+def get_today_participants(limit: int = 200, tenant_id: str = None) -> list[dict]:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY action_time DESC LIMIT ?",
-        (today, limit),
-    ).fetchall()
+    if tenant_id:
+        rows = conn.execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? ORDER BY action_time DESC LIMIT ?",
+            (today, tenant_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY action_time DESC LIMIT ?",
+            (today, limit),
+        ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -404,7 +416,7 @@ def _myt_short(utc_str: str) -> str:
         return utc_str[:5]
 
 
-def get_today_attendance_summary() -> dict:
+def get_today_attendance_summary(tenant_id: str = None) -> dict:
     """今日参会汇总 — 每人一行，聚合 Join/Leave 事件
     
     用 resolve_display_name 标准化名字，计算累计时长、进出次数、当前状态。
@@ -419,10 +431,16 @@ def get_today_attendance_summary() -> dict:
     today_start_utc = today_start_myt - timedelta(hours=8)
     today_utc_str = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
 
-    rows = _get_conn().execute(
-        "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY name, action_time",
-        (today_utc_str,),
-    ).fetchall()
+    if tenant_id:
+        rows = _get_conn().execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? ORDER BY name, action_time",
+            (today_utc_str, tenant_id),
+        ).fetchall()
+    else:
+        rows = _get_conn().execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY name, action_time",
+            (today_utc_str,),
+        ).fetchall()
     raw = [dict(r) for r in rows]
 
     # ── 按 resolve_display_name 分组 ──
@@ -573,17 +591,21 @@ def log_alert_sent(alert_id: int, sent_to: str, success: bool, error: str = ""):
     conn.commit()
 
 
-def get_recent_alerts(limit: int = 50, alert_type: str = None) -> list[dict]:
+def get_recent_alerts(limit: int = 50, alert_type: str = None, tenant_id: str = None) -> list[dict]:
     conn = _get_conn()
+    params = []
+    clauses = []
     if alert_type:
-        rows = conn.execute(
-            "SELECT * FROM alerts WHERE alert_type = ? ORDER BY id DESC LIMIT ?",
-            (alert_type, limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        clauses.append("alert_type = ?")
+        params.append(alert_type)
+    if tenant_id:
+        clauses.append("tenant_id = ?")
+        params.append(tenant_id)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM alerts {where} ORDER BY id DESC LIMIT ?",
+        (*params, limit),
+    ).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -630,20 +652,24 @@ def set_bot_state(key: str, value: str):
 
 
 
-_display_cache = {"mapping": {}, "ts": 0}
+_display_cache = {"mapping": {}, "ts": 0, "tenant_id": None}
 
-def resolve_display_name(raw_name: str) -> dict:
+def resolve_display_name(raw_name: str, tenant_id: str = None) -> dict:
     """返回 {display_name, count_enabled, raw_name}"""
     import time, re
     now = time.time()
-    if not _display_cache["mapping"] or now - _display_cache["ts"] > 30:
+    if not _display_cache["mapping"] or now - _display_cache["ts"] > 30 or _display_cache.get("tenant_id") != tenant_id:
         conn = _get_conn()
-        rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display").fetchall()
+        if tenant_id:
+            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display WHERE tenant_id = ?", (tenant_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display").fetchall()
         _display_cache["mapping"] = {
             r[0]: {"display": r[1], "key": r[2], "enabled": bool(r[3]), "aliases": json.loads(r[4] or "[]")}
             for r in rows
         }
         _display_cache["ts"] = now
+        _display_cache["tenant_id"] = tenant_id
     
     name = raw_name.strip()
     if not name:
@@ -1763,3 +1789,17 @@ def delete_tenant_channel(channel_id: int) -> bool:
     conn.execute("DELETE FROM tenant_channels WHERE id = ?", (channel_id,))
     conn.commit()
     return True
+
+
+def get_tenant_id_by_zoom_account(zoom_account_id: str) -> str | None:
+    """通过 Zoom account_id 反向查找所属 tenant_id。
+
+    用于 Webhook 事件路由：当 Zoom 发送 webhook 时，
+    通过 payload 中的 account_id 确定该事件属于哪个租户。
+    """
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT tenant_id FROM zoom_accounts WHERE account_id = ? LIMIT 1",
+        (zoom_account_id,),
+    ).fetchone()
+    return row[0] if row else None
