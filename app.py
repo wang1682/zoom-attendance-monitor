@@ -272,9 +272,10 @@ def build_app() -> "FastAPI":
         """根据请求会话中的 tenant_id，获取该租户的 ZoomMetrics 实例。
 
         Returns:
-            (ZoomMetrics, tenant_id)
-            仅当请求来自已验证的租户（role == "tenant"）时使用其自配置的 Zoom 账号，
-            否则回退到全局环境变数（未登录 / 管理员 / 公共 API）。
+            (ZoomMetrics | None, tenant_id | None)
+            - tenant 用户且拥有活跃 Zoom 账号: (ZoomMetrics(账号), tenant_id)
+            - tenant 用户但无活跃账号: (None, tenant_id) — 不再回退全局
+            - 非 tenant（super admin / 未登录）: (ZoomMetrics(全局 .env), None)
         """
         user_role = request.session.get("role")
         if user_role == "tenant":
@@ -287,8 +288,10 @@ def build_app() -> "FastAPI":
             if active:
                 from zoom_metrics import ZoomMetrics
                 return ZoomMetrics(active), tenant_id
+            return None, tenant_id  # No active account → 空数据, 无回退
+        # 非 tenant：使用全局 .env ZoomMetrics（super admin / 未登录）
         from zoom_metrics import ZoomMetrics
-        return ZoomMetrics(), request.session.get("tenant_id", "default")
+        return ZoomMetrics(), None
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=RedirectResponse)
@@ -305,8 +308,9 @@ def build_app() -> "FastAPI":
             alerts = demo.get_demo_alerts()
             stats = demo.get_demo_stats()
         else:
-            participants = dedup_participants(db.get_today_participants(limit=100))
-            alerts = db.get_recent_alerts(limit=20)
+            tid = request.session.get("tenant_id")
+            participants = dedup_participants(db.get_today_participants(limit=100, tenant_id=tid))
+            alerts = db.get_recent_alerts(limit=20, tenant_id=tid)
             stats = {
                 "participant_count": len(participants),
                 "alert_count": len(alerts),
@@ -361,7 +365,7 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             events = _ensure_demo().get_demo_events()
         else:
-            events = db.get_recent_events(limit=100)
+            events = db.get_recent_events(limit=100, tenant_id=request.session.get("tenant_id"))
         return tmpl.TemplateResponse(request, "events.html", {
             "events": events,
             "brand": BRAND,
@@ -380,7 +384,7 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             alerts = _ensure_demo().get_demo_alerts()
         else:
-            alerts = db.get_recent_alerts(limit=100)
+            alerts = db.get_recent_alerts(limit=100, tenant_id=request.session.get("tenant_id"))
         return tmpl.TemplateResponse(request, "alerts.html", {
             "alerts": alerts,
             "brand": BRAND,
@@ -784,20 +788,23 @@ def build_app() -> "FastAPI":
         return {"ok": True, "trend": trend, "top": [{"name": r[0], "count": r[1]} for r in top]}
 
     @app.get("/api/participants")
-    async def api_participants(limit: int = 200):
+    async def api_participants(request: Request, limit: int = 200):
         if settings.demo_mode:
             return _ensure_demo().get_demo_participants(limit=limit)
-        return db.get_today_participants(limit=limit)
+        return db.get_today_participants(limit=limit, tenant_id=request.session.get("tenant_id"))
 
     @app.get("/api/v3/attendance-summary")
     async def api_v3_attendance_summary(request: Request):
         if settings.demo_mode:
             return _ensure_demo().get_demo_attendance_summary()
         try:
-            result = db.get_today_attendance_summary()
+            tenant_id = request.session.get("tenant_id")
+            result = db.get_today_attendance_summary(tenant_id=tenant_id)
             # If DB has no data but Zoom API has people live, use live data
             if result.get("total_members", 0) == 0:
                 zm, _ = _get_tenant_zoom_metrics(request)
+                if zm is None:
+                    return result
                 live_data = await zm.get_live()
                 online_list = live_data.get("online_list", [])
                 if online_list:
@@ -834,16 +841,16 @@ def build_app() -> "FastAPI":
             return {"ok": False, "error": str(e)}
 
     @app.get("/api/alerts")
-    async def api_alerts(limit: int = 50):
+    async def api_alerts(request: Request, limit: int = 50):
         if settings.demo_mode:
             return _ensure_demo().get_demo_alerts(limit=limit)
-        return db.get_recent_alerts(limit=limit)
+        return db.get_recent_alerts(limit=limit, tenant_id=request.session.get("tenant_id"))
 
     @app.get("/api/events")
-    async def api_events(limit: int = 50):
+    async def api_events(request: Request, limit: int = 50):
         if settings.demo_mode:
             return _ensure_demo().get_demo_events(limit=limit)
-        return db.get_recent_events(limit=limit)
+        return db.get_recent_events(limit=limit, tenant_id=request.session.get("tenant_id"))
 
     @app.get("/api/reports")
     async def api_reports():
@@ -858,11 +865,12 @@ def build_app() -> "FastAPI":
         return {}
 
     @app.get("/api/stats")
-    async def api_stats():
+    async def api_stats(request: Request):
         if settings.demo_mode:
             return _ensure_demo().get_demo_stats()
-        participants = db.get_today_participants(limit=200)
-        alerts = db.get_recent_alerts(limit=50)
+        tenant_id = request.session.get("tenant_id")
+        participants = db.get_today_participants(limit=200, tenant_id=tenant_id)
+        alerts = db.get_recent_alerts(limit=50, tenant_id=tenant_id)
         return {
             "participant_count": len(participants),
             "alert_count": len(alerts),
@@ -918,8 +926,14 @@ def build_app() -> "FastAPI":
                 raise HTTPException(403, "signature mismatch")
 
         event_type = payload.get("event", "")
-        db.save_webhook_event(event_type, payload)
-        sys.stdout.write(f"[WEBHOOK] {event_type}\n")
+        # 提取 Zoom account_id → 反查 tenant_id → 数据隔离
+        account_id = payload.get("payload", {}).get("account_id", "") or payload.get("account_id", "")
+        webhook_tenant_id = db.get_tenant_id_by_zoom_account(account_id) if account_id else None
+        db.save_webhook_event(event_type, payload, tenant_id=webhook_tenant_id or "unknown")
+        sys.stdout.write(f"[WEBHOOK] {event_type}")
+        if webhook_tenant_id:
+            sys.stdout.write(f" tenant={webhook_tenant_id}")
+        sys.stdout.write(f" account={account_id[:20] if account_id else 'none'}\n")
         sys.stdout.flush()
 
         if "participant_joined" in event_type or "participant_left" in event_type:
@@ -934,7 +948,7 @@ def build_app() -> "FastAPI":
             action_time = datetime.now(timezone.utc)
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
-                                    source="webhook")
+                                    source="webhook", tenant_id=webhook_tenant_id or "unknown")
 
         # Sharing events
         if "sharing_started" in event_type or "sharing_ended" in event_type:
@@ -1225,7 +1239,10 @@ def build_app() -> "FastAPI":
         online_names = []
         try:
             zm, _ = _get_tenant_zoom_metrics(request)
-            live_data = await zm.get_live()
+            if zm is None:
+                live_data = {"meetings": []}
+            else:
+                live_data = await zm.get_live()
             for m in live_data.get("meetings", []):
                 for p in m.get("participants", []):
                     online_names.append(p.get("name", ""))
@@ -1281,7 +1298,7 @@ def build_app() -> "FastAPI":
         # 当前在线（来自 v3）
         unmapped_set = set()
         zm, _ = _get_tenant_zoom_metrics(request)
-        live_data = await zm.get_live()
+        live_data = await zm.get_live() if zm else {"meetings": []}
         # 补充来源：所有 zoom_participants 中出现过的用户名
         _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
         for (an,) in _all_names:
@@ -1439,25 +1456,27 @@ def build_app() -> "FastAPI":
             return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
         
         conn = db._get_conn()
-        merged = {}  # user_id -> sharing_info
+        merged = {}  # normalized_name -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         
         # Source 1: ZoomMetrics API (cached, deduped, consistent with Dashboard/Live)
         try:
             zm, _ = _get_tenant_zoom_metrics(request)
-            live_data = await zm.get_live()
+            live_data = await zm.get_live() if zm else {"meetings": []}
             for m in live_data.get("meetings", []):
                 mid = m.get("meeting_id", "")
                 for p in m.get("participants", []):
                     if not p.get("is_sharing"):
                         continue
-                    uid = p.get("user_id", "")
-                    if not uid or uid in merged:
-                        continue
                     raw = p.get("raw_name", "")
+                    name = p.get("name", "") or raw
+                    norm_key = re.sub(r"\s+", "", name.lower())
+                    if not norm_key or norm_key in merged:
+                        continue
+                    uid = p.get("user_id", "")
                     content = p.get("sharing_content", "desktop")
-                    merged[uid] = {
-                        "name": p.get("name", ""), "raw_name": raw,
+                    merged[norm_key] = {
+                        "name": name, "raw_name": raw,
                         "user_id": uid, "meeting_id": mid,
                         "content": content, "start_time": p.get("join_time", ""),
                         "source": "metrics_api"
@@ -1485,23 +1504,26 @@ def build_app() -> "FastAPI":
                         continue
                     if age > STALE_CUTOFF:
                         # stale but within 24h → keep as recent only
-                        if uid not in merged:
-                            raw = d.get("user_name", "")
-                            _rm = resolve_member(raw)
-                            dn = _rm["standard_name"]
-                            merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
+                        raw = d.get("user_name", "")
+                        _rm = resolve_member(raw)
+                        dn = _rm["standard_name"]
+                        norm_key = re.sub(r"\s+", "", dn.lower())
+                        if norm_key and norm_key not in merged:
+                            merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
                                            "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
                                            "_stale": True}
                             sources["sharing_live"] += 1
                         continue
                 except: pass
-            if uid and uid not in merged:
+            if uid:
                 raw = d.get("user_name", "")
                 _rm = resolve_member(raw)
                 dn = _rm["standard_name"]
-                merged[uid] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                               "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
-                sources["sharing_live"] += 1
+                norm_key = re.sub(r"\s+", "", dn.lower())
+                if norm_key and norm_key not in merged:
+                    merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
+                                   "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
+                    sources["sharing_live"] += 1
         
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
@@ -1552,10 +1574,11 @@ def build_app() -> "FastAPI":
                 except:
                     pass
             uid = key[1]
-            if uid not in merged:
-                _rm = resolve_member(info["raw_name"])
-                dn = _rm["standard_name"]
-                merged[uid] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
+            _rm = resolve_member(info["raw_name"])
+            dn = _rm["standard_name"]
+            norm_key = re.sub(r"\s+", "", dn.lower())
+            if uid and norm_key and norm_key not in merged:
+                merged[norm_key] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
                                "meeting_id": info.get("meeting_id", ""),
                                "content": info.get("content", ""), "start_time": info.get("start_time", ""),
                                "source": "webhook_recovery"}
@@ -1564,13 +1587,13 @@ def build_app() -> "FastAPI":
         # Build output: split into active (current) and recent (stale but <24h, shown as history)
         active = []
         recent = []
-        for uid, info in merged.items():
+        for _key, info in merged.items():
             st = info.get("start_time", "")
             m = max(0, mins_between(st))
             entry = {
                 "name": info.get("name", ""),
                 "raw_name": info.get("raw_name", ""),
-                "user_id": uid,
+                "user_id": info.get("user_id", ""),
                 "meeting_id": info.get("meeting_id", ""),
                 "content": info.get("content", ""),
                 "start_time": st,
@@ -1709,9 +1732,10 @@ def build_app() -> "FastAPI":
         return tmpl.TemplateResponse(request, "sharing.html", {"brand": BRAND})
 
     @app.get("/api/v3/member-discover")
-    async def api_v3_member_discover():
+    async def api_v3_member_discover(request: Request):
         """自动发现历史 Zoom 用户名"""
         conn = db._get_conn()
+        tenant_id = request.session.get("tenant_id")
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         rows = conn.execute(
@@ -1729,7 +1753,7 @@ def build_app() -> "FastAPI":
         
         results = []
         for name, cnt, last_seen in rows:
-            resolved = db.resolve_display_name(name)
+            resolved = db.resolve_display_name(name, tenant_id=tenant_id)
             results.append({
                 "raw_name": name,
                 "display_name": resolved["display_name"],
@@ -2227,6 +2251,8 @@ def build_app() -> "FastAPI":
     async def api_v3_live(request: Request):
         """Business Metrics API 实时在线数据（去重）—— 按当前租户 Zoom 账号查询"""
         zm, _ = _get_tenant_zoom_metrics(request)
+        if zm is None:
+            return {"ok": True, "data": {"meetings": [], "online_list": [], "total_online": 0}}
         data = await zm.get_live()
         return {"ok": True, "data": data}
 
@@ -2253,7 +2279,7 @@ def build_app() -> "FastAPI":
         # ── 主源：Zoom Metrics API ──
         try:
             zm, _ = _get_tenant_zoom_metrics(request)
-            live_data = await zm.get_live()
+            live_data = await zm.get_live() if zm else {"meetings": [], "online_list": [], "total_online": 0}
 
             online_count = live_data.get("total_online", 0)
 
@@ -2848,13 +2874,10 @@ def build_app() -> "FastAPI":
         if not user.get("is_active"):
             return RedirectResponse(url="/login?error=账号已被禁用", status_code=303)
         request.session["user_id"] = user["id"]
-        # 简化角色模型：super_admin 走 admin 后台，tenant 走租户面板
-        role = user.get("role", "super_admin")
-        if role == "super_admin":
-            request.session["tenant_id"] = user.get("tenant_id", "default")
-        else:
-            # tenant 用户直接使用其绑定的 tenant_id
-            request.session["tenant_id"] = user.get("tenant_id", "default")
+        request.session["username"] = user["username"]
+        request.session["role"] = user.get("role") or "tenant"
+        request.session["tenant_id"] = user.get("tenant_id") or "default"
+        role = request.session["role"]
         # 根据角色决定重定向目标
         if role == "super_admin":
             redirect_url = "/dashboard"
