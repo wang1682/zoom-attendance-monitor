@@ -2303,19 +2303,9 @@ def build_app() -> "FastAPI":
 
             # Sharing count from Metrics API (is_sharing flag on each participant)
             # Dedup by name — same person across multiple meetings counted once
+            # NOT using sharing_live table as override: stale active entries inflate count
             unique_sharing = {p.get("name", "") for p in live_data.get("online_list", []) if p.get("is_sharing")}
             sharing_count = len(unique_sharing)
-
-            # Also try sharing_live for any webhook-captured sharing data (secondary)
-            try:
-                live_rows = conn.execute(
-                    "SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1"
-                ).fetchall()
-                _sc = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
-                if _sc > sharing_count:
-                    sharing_count = _sc
-            except Exception:
-                pass
         except Exception:
             # ── Fallback: sharing_live + zoom_participants ──
             try:
