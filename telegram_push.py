@@ -8,10 +8,10 @@ import requests
 from config import settings
 
 
-def send_message(text: str, chat_id: str = None) -> dict:
+def send_message(text: str, chat_id: str = None, bot_token: str = None) -> dict:
     """Send message to Telegram, return {ok, error}"""
     target = chat_id or settings.telegram_group_chat_id or settings.telegram_private_chat_id
-    token = settings.telegram_bot_token
+    token = bot_token or settings.telegram_bot_token
     if not token or not target:
         return {"ok": False, "error": "Telegram not configured"}
     try:

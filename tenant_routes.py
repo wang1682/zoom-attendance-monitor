@@ -76,6 +76,7 @@ def _channel_dict(c: dict) -> dict:
         "label": c.get("label", ""),
         "is_group": "true" if c.get("is_group") else "false",
         "enabled": "true" if c.get("is_enabled") else "false",
+        "has_bot_token": "true" if c.get("bot_token") else "false",
     }
 
 
@@ -434,9 +435,10 @@ async def tenant_channels_create(request: Request,
                                   chat_id: str = Form(...),
                                   label: str = Form(""),
                                   is_group: str = Form("false"),
+                                  bot_token: str = Form(""),
                                   user: dict = Depends(require_user)):
     tenant_id = request.session.get("tenant_id", "default")
-    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true")
+    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true", bot_token.strip())
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
@@ -463,8 +465,8 @@ async def tenant_channels_test(request: Request, channel_id: int,
     target = next((c for c in channels if c["id"] == channel_id), None)
     if not target:
         return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
-    # Send a simple Telegram message directly
-    token = settings.telegram_bot_token
+    # Use per-channel bot_token if set, fallback to global
+    token = target.get("bot_token") or settings.telegram_bot_token
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -476,6 +478,20 @@ async def tenant_channels_test(request: Request, channel_id: int,
             return JSONResponse({"ok": data.get("ok", False), "chat_id": target["chat_id"]})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.post("/channels/{channel_id}/bot-token")
+async def tenant_channels_bot_token(request: Request, channel_id: int,
+                                     bot_token: str = Form(""),
+                                     user: dict = Depends(require_user)):
+    """Update per-channel bot token."""
+    tenant_id = request.session.get("tenant_id", "default")
+    channels = db.get_tenant_channels(tenant_id)
+    target = next((c for c in channels if c["id"] == channel_id), None)
+    if not target:
+        return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
+    db.update_tenant_channel_bot_token(channel_id, bot_token.strip())
+    return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
 # ── 告警规则开关 ───────────────────────────────────────────────────────────────

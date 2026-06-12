@@ -14,6 +14,7 @@
             <tr>
                 <th>名称</th>
                 <th>Chat ID</th>
+                <th>推送 Bot</th>
                 <th>类型</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -29,6 +30,13 @@
                     </span>
                 </td>
                 <td style="font-family:monospace; font-size:0.8rem;">{{ ch.chat_id }}</td>
+                <td style="font-size:0.8rem;">
+                    {% if ch.has_bot_token == 'true' %}
+                        <span style="color:#059669;">✅ 自定义</span>
+                    {% else %}
+                        <span style="color:#94a3b8;">系统默认</span>
+                    {% endif %}
+                </td>
                 <td>
                     <span style="font-size:0.8rem; color:#94a3b8;">
                         {{ '群组' if ch.is_group == 'true' else '私聊' }}
@@ -41,6 +49,8 @@
                 </td>
                 <td>
                     <div style="display:flex; gap:6px;">
+                        <!-- Bot Token -->
+                        <button onclick="openBotTokenModal('{{ ch.id }}', '{{ ch.label or ch.chat_id }}')" class="btn btn-ghost btn-sm">🤖 Token</button>
                         <!-- Toggle -->
                         <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/toggle" style="display:inline">
                             <button type="submit" class="btn btn-ghost btn-sm">
@@ -85,6 +95,11 @@
                 <label style="font-size:0.8rem; color:#94a3b8;">名称（可选）</label>
                 <input name="label" placeholder="例如: YC 预警群">
             </div>
+            <div style="margin-bottom:12px;">
+                <label style="font-size:0.8rem; color:#94a3b8;">Bot Token（可选）</label>
+                <input name="bot_token" placeholder="留空则使用系统默认 Bot">
+                <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">自定义推送机器人 Token。留空 = 使用系统全局 Bot。</div>
+            </div>
             <div style="margin-bottom:20px;">
                 <label style="font-size:0.8rem; color:#94a3b8;">类型</label>
                 <select name="is_group">
@@ -99,5 +114,34 @@
         </form>
     </div>
 </div>
+
+<!-- Bot Token Edit Modal -->
+<div id="botTokenModal" class="modal-overlay">
+    <div class="modal-content">
+        <h3 style="font-weight:600; margin-bottom:16px;">🤖 设置 Bot Token</h3>
+        <p style="font-size:0.85rem; color:#64748b; margin-bottom:16px;">
+            为频道 <strong id="botTokenChannelName"></strong> 设置自定义推送机器人。
+        </p>
+        <form id="botTokenForm" method="post" action="">
+            <div style="margin-bottom:12px;">
+                <label style="font-size:0.8rem; color:#94a3b8;">Bot Token</label>
+                <input name="bot_token" id="botTokenInput" placeholder="留空则使用系统默认 Bot">
+            </div>
+            <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button type="button" onclick="closeModal('botTokenModal')" class="btn btn-ghost">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openBotTokenModal(channelId, channelName) {
+    document.getElementById('botTokenChannelName').textContent = channelName;
+    document.getElementById('botTokenForm').action = '/dashboard/tenant/channels/' + channelId + '/bot-token';
+    document.getElementById('botTokenInput').value = '';
+    openModal('botTokenModal');
+}
+</script>
 
 {% endblock %}
