@@ -1783,14 +1783,14 @@ def delete_meeting(meeting_id_db: int) -> bool:
 # ── Channel CRUD ────────────────────────────────────────────────────────
 
 def create_tenant_channel(tenant_id: str, chat_id: str, label: str = "",
-                          is_group: bool = False, bot_token: str = "") -> int:
+                          is_group: bool = False) -> int:
     conn = _get_conn()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     cur = conn.execute(
-        "INSERT INTO tenant_channels (tenant_id, chat_id, label, is_group, bot_token, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (tenant_id, chat_id, label, 1 if is_group else 0, bot_token, now),
+        "INSERT INTO tenant_channels (tenant_id, chat_id, label, is_group, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (tenant_id, chat_id, label, 1 if is_group else 0, now),
     )
     conn.commit()
     log_audit("create", "channel", cur.lastrowid, f"Created channel: {chat_id}")
@@ -1820,13 +1820,6 @@ def toggle_tenant_channel(channel_id: int) -> bool:
 def delete_tenant_channel(channel_id: int) -> bool:
     conn = _get_conn()
     conn.execute("DELETE FROM tenant_channels WHERE id = ?", (channel_id,))
-    conn.commit()
-    return True
-
-
-def update_tenant_channel_bot_token(channel_id: int, bot_token: str) -> bool:
-    conn = _get_conn()
-    conn.execute("UPDATE tenant_channels SET bot_token = ? WHERE id = ?", (bot_token, channel_id))
     conn.commit()
     return True
 
