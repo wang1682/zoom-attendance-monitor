@@ -76,7 +76,6 @@ def _channel_dict(c: dict) -> dict:
         "label": c.get("label", ""),
         "is_group": "true" if c.get("is_group") else "false",
         "enabled": "true" if c.get("is_enabled") else "false",
-        "has_bot_token": "true" if c.get("bot_token") else "false",
     }
 
 
@@ -427,7 +426,9 @@ async def tenant_zoom_delete(
 async def tenant_channels_page(request: Request, user: dict = Depends(require_user)):
     tenant_id = request.session.get("tenant_id", "default")
     channels = [_channel_dict(c) for c in db.get_tenant_channels(tenant_id)]
-    return _render_tenant(request, "channels", user, "tenant_channels.html", channels=channels)
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    return _render_tenant(request, "channels", user, "tenant_channels.html",
+                          channels=channels, bot_config=bot_config)
 
 
 @router.post("/channels/create")
@@ -435,10 +436,9 @@ async def tenant_channels_create(request: Request,
                                   chat_id: str = Form(...),
                                   label: str = Form(""),
                                   is_group: str = Form("false"),
-                                  bot_token: str = Form(""),
                                   user: dict = Depends(require_user)):
     tenant_id = request.session.get("tenant_id", "default")
-    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true", bot_token.strip())
+    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true")
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
@@ -465,8 +465,9 @@ async def tenant_channels_test(request: Request, channel_id: int,
     target = next((c for c in channels if c["id"] == channel_id), None)
     if not target:
         return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
-    # Use per-channel bot_token if set, fallback to global
-    token = target.get("bot_token") or settings.telegram_bot_token
+    # Use tenant's bot token if configured, fallback to global
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    token = bot_config["token"] or settings.telegram_bot_token
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -480,17 +481,64 @@ async def tenant_channels_test(request: Request, channel_id: int,
         return JSONResponse({"ok": False, "error": str(e)})
 
 
-@router.post("/channels/{channel_id}/bot-token")
-async def tenant_channels_bot_token(request: Request, channel_id: int,
-                                     bot_token: str = Form(""),
-                                     user: dict = Depends(require_user)):
-    """Update per-channel bot token."""
+@router.post("/channels/bot-test")
+async def tenant_bot_test(request: Request,
+                           bot_token: str = Form(...),
+                           user: dict = Depends(require_user)):
+    """Test a bot token via getMe, return bot info."""
+    url = f"https://api.telegram.org/bot{bot_token.strip()}/getMe"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            data = resp.json()
+            if data.get("ok"):
+                bot = data["result"]
+                return JSONResponse({
+                    "ok": True,
+                    "id": bot.get("id"),
+                    "username": bot.get("username", ""),
+                    "first_name": bot.get("first_name", ""),
+                })
+            return JSONResponse({"ok": False, "error": data.get("description", "getMe failed")})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.post("/channels/bot-config")
+async def tenant_bot_config_save(request: Request,
+                                   bot_token: str = Form(""),
+                                   user: dict = Depends(require_user)):
+    """Save tenant's bot token. If empty, do not overwrite (edit-safe)."""
     tenant_id = request.session.get("tenant_id", "default")
-    channels = db.get_tenant_channels(tenant_id)
-    target = next((c for c in channels if c["id"] == channel_id), None)
-    if not target:
-        return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
-    db.update_tenant_channel_bot_token(channel_id, bot_token.strip())
+    token = bot_token.strip()
+    if not token:
+        # Edit-safe: empty means "don't change"
+        return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
+    # Verify via getMe
+    url = f"https://api.telegram.org/bot{token}/getMe"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            data = resp.json()
+            if data.get("ok"):
+                bot = data["result"]
+                username = bot.get("username", "")
+                db.update_tenant_bot_config(tenant_id, token, username,
+                                              datetime.utcnow().isoformat())
+            else:
+                # Token invalid — still save but with empty username (show as broken)
+                db.update_tenant_bot_config(tenant_id, token)
+    except Exception:
+        db.update_tenant_bot_config(tenant_id, token)
+    return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
+
+
+@router.post("/channels/bot-config/clear")
+async def tenant_bot_config_clear(request: Request,
+                                    user: dict = Depends(require_user)):
+    """Clear tenant's bot config."""
+    tenant_id = request.session.get("tenant_id", "default")
+    db.update_tenant_bot_config(tenant_id, "", "", "")
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 

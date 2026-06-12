@@ -1264,6 +1264,9 @@ MT_MIGRATIONS = [
     "ALTER TABLE member_group_members ADD COLUMN tenant_id TEXT DEFAULT 'default'",
     "ALTER TABLE audit_logs ADD COLUMN tenant_id TEXT DEFAULT 'default'",
     "ALTER TABLE tenant_channels ADD COLUMN bot_token TEXT DEFAULT ''",
+    "ALTER TABLE tenants ADD COLUMN telegram_bot_token TEXT DEFAULT ''",
+    "ALTER TABLE tenants ADD COLUMN telegram_bot_username TEXT DEFAULT ''",
+    "ALTER TABLE tenants ADD COLUMN telegram_bot_verified_at TEXT DEFAULT ''",
 ]
 
 MT_TABLES = [
@@ -1529,6 +1532,35 @@ def regenerate_tenant_token(tenant_id: str) -> str:
     conn.execute("UPDATE tenants SET api_token = ? WHERE id = ?", (api_token, tenant_id))
     conn.commit()
     return api_token
+
+
+def get_tenant_bot_config(tenant_id: str) -> dict:
+    """Get tenant's Telegram bot config."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT telegram_bot_token, telegram_bot_username, telegram_bot_verified_at "
+        "FROM tenants WHERE id = ?", (tenant_id,)
+    ).fetchone()
+    if not row:
+        return {"token": "", "username": "", "verified_at": ""}
+    return {
+        "token": row[0] or "",
+        "username": row[1] or "",
+        "verified_at": row[2] or "",
+    }
+
+
+def update_tenant_bot_config(tenant_id: str, token: str, username: str = "",
+                              verified_at: str = "") -> bool:
+    """Save tenant's Telegram bot config."""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE tenants SET telegram_bot_token = ?, telegram_bot_username = ?, "
+        "telegram_bot_verified_at = ? WHERE id = ?",
+        (token, username, verified_at, tenant_id),
+    )
+    conn.commit()
+    return True
 
 
 # ── User CRUD (admin) ────────────────────────────────────────────────────

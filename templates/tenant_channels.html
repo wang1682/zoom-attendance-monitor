@@ -7,6 +7,59 @@
     <button onclick="openModal('createModal')" class="btn btn-primary">➕ 添加频道</button>
 </div>
 
+{# ── Bot 配置区 ──────────────────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:1.5rem;" id="botConfigCard">
+    <h3 style="font-weight:600; margin-bottom:12px;">🤖 Telegram Bot 配置</h3>
+    {% set has_bot = bot_config.username and bot_config.verified_at %}
+    {% set bc = bot_config %}
+
+    <div id="botConfigStatus" style="display:flex; flex-direction:column; gap:8px;">
+        {% if has_bot %}
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="badge badge-active">✅ 已连接</span>
+                <span style="font-weight:500;">@{{ bc.username }}</span>
+            </div>
+            <div style="font-size:0.8rem; color:#64748b;">
+                Token: <span style="font-family:monospace;">{{ bc.token[:4] }}...{{ bc.token[-4:] if bc.token|length > 8 else '****' }}</span>
+                &middot; 已验证: {{ bc.verified_at[:16] if bc.verified_at else '—' }}
+            </div>
+            <div style="display:flex; gap:8px; margin-top:4px;">
+                <button onclick="toggleBotEdit()" class="btn btn-ghost btn-sm">✏️ 更换 Bot</button>
+                <form method="post" action="/dashboard/tenant/channels/bot-config/clear" style="display:inline"
+                      onsubmit="return confirm('清除 Bot 配置后，推送将使用系统默认 Bot Token。确定？');">
+                    <button type="submit" class="btn btn-danger btn-sm">🗑️ 清除</button>
+                </form>
+            </div>
+        {% else %}
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                <span class="badge badge-inactive">❌ 未配置</span>
+                <span style="font-size:0.85rem; color:#64748b;">推送将使用系统默认 Bot Token</span>
+            </div>
+            <div id="botEditArea">
+                <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+                    <input id="botTokenInput" style="flex:1; min-width:280px;" placeholder="输入 Bot Token (从 @BotFather 获取)">
+                    <button onclick="testBotToken()" class="btn btn-sm" style="background:#3b82f6; color:white;">测试 Bot</button>
+                    <button onclick="saveBotToken()" class="btn btn-sm" style="background:#059669; color:white;">保存 Bot</button>
+                </div>
+                <div id="botTestResult" style="font-size:0.8rem; margin-top:6px;"></div>
+            </div>
+        {% endif %}
+    </div>
+
+    {# Hidden edit area (shown on "更换 Bot" click) #}
+    <div id="botEditArea" style="display:none; margin-top:8px;">
+        <div style="font-size:0.8rem; color:#64748b; margin-bottom:6px;">输入新的 Bot Token（留空 = 不修改）</div>
+        <div style="display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap;">
+            <input id="botTokenInput" style="flex:1; min-width:280px;" placeholder="新 Token，留空不修改">
+            <button onclick="testBotToken()" class="btn btn-sm" style="background:#3b82f6; color:white;">测试</button>
+            <button onclick="saveBotToken()" class="btn btn-sm" style="background:#059669; color:white;">保存</button>
+            <button onclick="hideBotEdit()" class="btn btn-sm btn-ghost">取消</button>
+        </div>
+        <div id="botTestResult" style="font-size:0.8rem; margin-top:6px;"></div>
+    </div>
+</div>
+
+{# ── 频道列表 ─────────────────────────────────────────────────────────── #}
 {% if channels %}
 <div class="card" style="padding:0; overflow:hidden;">
     <table>
@@ -14,7 +67,6 @@
             <tr>
                 <th>名称</th>
                 <th>Chat ID</th>
-                <th>推送 Bot</th>
                 <th>类型</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -30,13 +82,6 @@
                     </span>
                 </td>
                 <td style="font-family:monospace; font-size:0.8rem;">{{ ch.chat_id }}</td>
-                <td style="font-size:0.8rem;">
-                    {% if ch.has_bot_token == 'true' %}
-                        <span style="color:#059669;">✅ 自定义</span>
-                    {% else %}
-                        <span style="color:#94a3b8;">系统默认</span>
-                    {% endif %}
-                </td>
                 <td>
                     <span style="font-size:0.8rem; color:#94a3b8;">
                         {{ '群组' if ch.is_group == 'true' else '私聊' }}
@@ -49,8 +94,6 @@
                 </td>
                 <td>
                     <div style="display:flex; gap:6px;">
-                        <!-- Bot Token -->
-                        <button onclick="openBotTokenModal('{{ ch.id }}', '{{ ch.label or ch.chat_id }}')" class="btn btn-ghost btn-sm">🤖 Token</button>
                         <!-- Toggle -->
                         <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/toggle" style="display:inline">
                             <button type="submit" class="btn btn-ghost btn-sm">
@@ -82,7 +125,7 @@
 </div>
 {% endif %}
 
-<!-- Create Modal -->
+{# ── Create Modal ─────────────────────────────────────────────────────── #}
 <div id="createModal" class="modal-overlay">
     <div class="modal-content">
         <h3 style="font-weight:600; margin-bottom:16px;">添加推送频道</h3>
@@ -94,11 +137,6 @@
             <div style="margin-bottom:12px;">
                 <label style="font-size:0.8rem; color:#94a3b8;">名称（可选）</label>
                 <input name="label" placeholder="例如: YC 预警群">
-            </div>
-            <div style="margin-bottom:12px;">
-                <label style="font-size:0.8rem; color:#94a3b8;">Bot Token（可选）</label>
-                <input name="bot_token" placeholder="留空则使用系统默认 Bot">
-                <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">自定义推送机器人 Token。留空 = 使用系统全局 Bot。</div>
             </div>
             <div style="margin-bottom:20px;">
                 <label style="font-size:0.8rem; color:#94a3b8;">类型</label>
@@ -115,32 +153,78 @@
     </div>
 </div>
 
-<!-- Bot Token Edit Modal -->
-<div id="botTokenModal" class="modal-overlay">
-    <div class="modal-content">
-        <h3 style="font-weight:600; margin-bottom:16px;">🤖 设置 Bot Token</h3>
-        <p style="font-size:0.85rem; color:#64748b; margin-bottom:16px;">
-            为频道 <strong id="botTokenChannelName"></strong> 设置自定义推送机器人。
-        </p>
-        <form id="botTokenForm" method="post" action="">
-            <div style="margin-bottom:12px;">
-                <label style="font-size:0.8rem; color:#94a3b8;">Bot Token</label>
-                <input name="bot_token" id="botTokenInput" placeholder="留空则使用系统默认 Bot">
-            </div>
-            <div style="display:flex; gap:8px; justify-content:flex-end;">
-                <button type="button" onclick="closeModal('botTokenModal')" class="btn btn-ghost">取消</button>
-                <button type="submit" class="btn btn-primary">保存</button>
-            </div>
-        </form>
-    </div>
-</div>
-
 <script>
-function openBotTokenModal(channelId, channelName) {
-    document.getElementById('botTokenChannelName').textContent = channelName;
-    document.getElementById('botTokenForm').action = '/dashboard/tenant/channels/' + channelId + '/bot-token';
-    document.getElementById('botTokenInput').value = '';
-    openModal('botTokenModal');
+// ── Bot Config UI ──────────────────────────────────────────────────────
+let botTestedOk = false;
+let botTestData = null;
+
+function toggleBotEdit() {
+    document.getElementById('botConfigStatus').style.display = 'none';
+    document.getElementById('botEditArea').style.display = 'block';
+    document.getElementById('botTestResult').textContent = '';
+    botTestedOk = false;
+    botTestData = null;
+}
+
+function hideBotEdit() {
+    document.getElementById('botEditArea').style.display = 'none';
+    document.getElementById('botConfigStatus').style.display = 'flex';
+    document.getElementById('botTestResult').textContent = '';
+}
+
+function testBotToken() {
+    const token = document.getElementById('botTokenInput').value.trim();
+    if (!token) {
+        document.getElementById('botTestResult').innerHTML = '<span style="color:#ef4444;">请输入 Bot Token</span>';
+        return;
+    }
+    const resultArea = document.getElementById('botTestResult');
+    resultArea.innerHTML = '<span style="color:#94a3b8;">⏳ 测试中...</span>';
+
+    var formData = new FormData();
+    formData.append('bot_token', token);
+
+    fetch('/dashboard/tenant/channels/bot-test', { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.ok) {
+                botTestedOk = true;
+                botTestData = d;
+                resultArea.innerHTML = '<span style="color:#059669;">✅ 验证成功 — @' + d.username + ' (ID: ' + d.id + ')</span>';
+            } else {
+                botTestedOk = false;
+                botTestData = null;
+                resultArea.innerHTML = '<span style="color:#ef4444;">❌ ' + (d.error || '验证失败') + '</span>';
+            }
+        })
+        .catch(function(e) {
+            botTestedOk = false;
+            botTestData = null;
+            resultArea.innerHTML = '<span style="color:#ef4444;">❌ 请求失败: ' + e.message + '</span>';
+        });
+}
+
+function saveBotToken() {
+    const token = document.getElementById('botTokenInput').value.trim();
+    if (!token) {
+        showToast('请输入 Bot Token', 'error');
+        return;
+    }
+    var formData = new FormData();
+    formData.append('bot_token', token);
+
+    fetch('/dashboard/tenant/channels/bot-config', { method: 'POST', body: formData })
+        .then(function(r) {
+            if (r.redirected || r.ok) {
+                showToast('✅ Bot 配置已保存', 'success');
+                setTimeout(function() { window.location.reload(); }, 1000);
+            } else {
+                showToast('❌ 保存失败', 'error');
+            }
+        })
+        .catch(function(e) {
+            showToast('❌ 请求失败: ' + e.message, 'error');
+        });
 }
 </script>
 
