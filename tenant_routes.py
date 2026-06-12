@@ -725,8 +725,8 @@ async def _compute_setup_status(tenant_id: str) -> dict:
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     row = conn.execute(
-        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ?",
-        (cutoff,),
+        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+        (cutoff, tenant_id),
     ).fetchone()
     webhook_count = row["c"] if row else 0
     checks["webhook"] = webhook_count > 0

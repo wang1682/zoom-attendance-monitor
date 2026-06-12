@@ -883,7 +883,8 @@ def build_app() -> "FastAPI":
         return {"ok": True, "message": "webhook active"}
 
     @app.post("/webhook")
-    async def zoom_webhook(request: Request):
+    @app.post("/webhook/{tenant_id:str}")
+    async def zoom_webhook(request: Request, tenant_id: str = None):
         if settings.demo_mode:
             return {"ok": True, "demo": True}
 
@@ -895,29 +896,49 @@ def build_app() -> "FastAPI":
 
         import hashlib as _hashlib
         import hmac as _hmac
-        # Zoom URL Challenge（验证端点）
         event_type = payload.get("event", "")
         sys.stdout.write(f"[WEBHOOK] Received event: {event_type}\n")
         sys.stdout.write(f"[WEBHOOK] Body preview: {body[:300].decode()}\n")
         sys.stdout.flush()
+
+        # ── URL Challenge（验证端点）支持 per-account webhook_secret ──
         if event_type == "endpoint.url_validation":
             plain_token = payload.get("payload", {}).get("plainToken", "")
-            enc = _hmac.new(settings.zoom_webhook_secret.encode(), plain_token.encode(), _hashlib.sha256).hexdigest()
+            _secret = settings.zoom_webhook_secret
+            if tenant_id:
+                _accts = db.get_zoom_accounts(tenant_id)
+                _active = next((a for a in _accts if a.get("is_active")), None)
+                if _active and _active.get("webhook_secret"):
+                    _secret = _active["webhook_secret"]
+                    sys.stdout.write(f"[WEBHOOK:{tenant_id}] Using per-account webhook_secret\n")
+            enc = _hmac.new(_secret.encode(), plain_token.encode(), _hashlib.sha256).hexdigest()
             sys.stdout.write(f"[WEBHOOK] Challenge OK: pt={plain_token[:10]}... enc={enc[:10]}...\n")
             sys.stdout.flush()
             return {"plainToken": plain_token, "encryptedToken": enc}
+
+        # ── 从 payload 中提取 account_id → 反查 per-account secret ──
+        # 放在签名验证之前，因为每个 Zoom App 有自己的 webhook_secret
+        _sig_account_id = payload.get("payload", {}).get("account_id", "") or payload.get("account_id", "")
+        _sig_secret = settings.zoom_webhook_secret
+        if _sig_account_id:
+            _sig_tenant = db.get_tenant_id_by_zoom_account(_sig_account_id)
+            if _sig_tenant:
+                _accts = db.get_zoom_accounts(_sig_tenant)
+                _active = next((a for a in _accts if a.get("is_active") and a.get("account_id") == _sig_account_id), None)
+                if _active and _active.get("webhook_secret"):
+                    _sig_secret = _active["webhook_secret"]
 
         signature = request.headers.get("x-zm-signature", "")
         ts = request.headers.get("x-zm-request-timestamp", "")
         sys.stdout.write(f"[WEBHOOK] Headers: sig={signature[:50]}... ts={ts}\n")
         sys.stdout.write(f"[WEBHOOK] Body for sig: {body[:200]}\n")
-        if settings.zoom_webhook_secret and signature:
+        if _sig_secret and signature:
             ts = request.headers.get("x-zm-request-timestamp", "")
             sys.stdout.write(f"[WEBHOOK] sig check: ts={ts} body_len={len(body)}\n")
             sys.stdout.flush()
             # Zoom 签名: v0=HMAC_SHA256(secret, "v0:" + timestamp + ":" + body)
             msg = f"v0:{ts}:".encode() + body
-            expected = hmac.new(settings.zoom_webhook_secret.encode(), msg, _hashlib.sha256).hexdigest()
+            expected = hmac.new(_sig_secret.encode(), msg, _hashlib.sha256).hexdigest()
             if not hmac.compare_digest(signature, f"v0={expected}"):
                 sys.stderr.write(f"[WEBHOOK] 签名验证失败: v0={expected[:30]}... got={signature[:40]}...\n")
                 body_text = body.decode() if isinstance(body, bytes) else str(body)
