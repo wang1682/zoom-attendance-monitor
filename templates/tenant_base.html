@@ -49,6 +49,7 @@
 <body>
     {% set nav_items = {
         'overview': '/dashboard/tenant',
+        'setup': '/dashboard/tenant/setup',
         'zoom': '/dashboard/tenant/zoom',
         'channels': '/dashboard/tenant/channels',
         'alerts': '/dashboard/tenant/alerts',
@@ -60,7 +61,7 @@
             <span style="color:#818cf8; font-weight:700;">Zoom Monitor</span>
             {% for key, url in nav_items.items() %}
             <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">
-                {{ {'overview':'首页','zoom':'Zoom 账号','channels':'推送频道','alerts':'告警规则'}[key] }}
+                {{ {'overview':'首页','setup':'接入中心','zoom':'Zoom 账号','channels':'推送频道','alerts':'告警规则'}[key] }}
             </a>
             {% endfor %}
         </div>

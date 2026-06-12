@@ -3,7 +3,7 @@ Mounted as an APIRouter under /dashboard/tenant in the main app.
 Tenants see only their own data and can manage channels + alert rules."""
 
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -94,17 +94,105 @@ def _account_dict(a: dict) -> dict:
     }
 
 
-# ── Overview ──────────────────────────────────────────────────────────────────
+# ── Overview (运营面板) ─────────────────────────────────────────────────────
+
+
+async def _compute_kpi_data(tenant_id: str) -> dict:
+    """Compute KPI data for tenant dashboard — all queries tenant-isolated."""
+    # 今日参与者
+    today_participants = len(db.get_today_participants(limit=10000, tenant_id=tenant_id))
+
+    # 当前在线 + 活跃会议 (from Zoom API)
+    current_online = 0
+    active_meetings = []
+    try:
+        accounts = db.get_zoom_accounts(tenant_id)
+        active = next(
+            (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+            None,
+        )
+        if active:
+            from zoom_metrics import ZoomMetrics
+            zm = ZoomMetrics(active)
+            live_data = await zm.get_live()
+            current_online = live_data.get("total_online", 0)
+            meetings_raw = live_data.get("meetings", [])
+            active_meetings = [
+                {
+                    "id": m.get("id", ""),
+                    "topic": m.get("topic", ""),
+                    "participant_count": len(m.get("participants", [])),
+                    "start_time": m.get("start_time", ""),
+                }
+                for m in meetings_raw
+            ]
+    except Exception:
+        pass
+
+    # 今日事件
+    conn = db._get_conn()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+        (today, tenant_id),
+    ).fetchone()
+    today_events = row["c"] if row else 0
+
+    # 今日告警
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ?",
+        (tenant_id,),
+    ).fetchone()
+    today_alerts = row["c"] if row else 0
+
+    # 最近事件 (top 10)
+    recent_events = db.get_recent_events(limit=10, tenant_id=tenant_id)
+
+    # 推送状态
+    channels = db.get_tenant_channels(tenant_id)
+    push_configured = any(c.get("is_enabled") for c in channels)
+    push_channel_count = len([c for c in channels if c.get("is_enabled")])
+
+    return {
+        "today_participants": today_participants,
+        "current_online": current_online,
+        "today_events": today_events,
+        "today_alerts": today_alerts,
+        "recent_events": recent_events,
+        "active_meetings": active_meetings,
+        "push_configured": push_configured,
+        "push_channel_count": push_channel_count,
+    }
 
 
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
-async def tenant_overview(request: Request, user: dict = Depends(require_user)):
-    """Tenant dashboard overview — Setup Center with readiness score."""
+async def tenant_dashboard(request: Request, user: dict = Depends(require_user)):
+    """Tenant operational dashboard — KPIs, active meetings, recent events."""
+    tenant_id = request.session.get("tenant_id", "default")
+    status_data = await _compute_setup_status(tenant_id)
+    kpi_data = await _compute_kpi_data(tenant_id)
+    return _render_tenant(
+        request, "overview", user, "tenant_dashboard.html",
+        score=status_data["score"],
+        status_label=status_data["status"],
+        checks=status_data["checks"],
+        next_steps=status_data["next_steps"],
+        kpi=kpi_data,
+        active_meetings=kpi_data["active_meetings"],
+        recent_events=kpi_data["recent_events"],
+        push_configured=kpi_data["push_configured"],
+        push_channel_count=kpi_data["push_channel_count"],
+    )
+
+
+@router.get("/setup", response_class=HTMLResponse)
+async def tenant_setup_center(request: Request, user: dict = Depends(require_user)):
+    """Setup center — Zoom account, channels, member mapping wizard."""
     tenant_id = request.session.get("tenant_id", "default")
     status_data = await _compute_setup_status(tenant_id)
     return _render_tenant(
-        request, "overview", user, "tenant_overview.html",
+        request, "setup", user, "tenant_overview.html",
         score=status_data["score"],
         status_label=status_data["status"],
         checks=status_data["checks"],

@@ -995,7 +995,16 @@ def build_app() -> "FastAPI":
                 MYT = _dt.timezone(_dt.timedelta(hours=8))
                 now_utc = _dt.datetime.now(_dt.timezone.utc)
                 now_myt_str = now_utc.astimezone(MYT).strftime("%m-%d %H:%M:%S")
-                
+
+                # 查租户级 bot_token（优先于全局）
+                _bot_token = ""
+                if webhook_tenant_id:
+                    _row = p_conn.execute(
+                        "SELECT telegram_bot_token FROM tenants WHERE id=?", (webhook_tenant_id,)
+                    ).fetchone()
+                    if _row and _row[0]:
+                        _bot_token = _row[0]
+
                 # Build dedup key
                 obj = payload.get("payload", {}).get("object", payload.get("object", {}))
                 participant = obj.get("participant", {})
@@ -1109,7 +1118,7 @@ def build_app() -> "FastAPI":
                                 _targets = [None]  # 保底走 settings
                             result = {"ok": False, "error": "no targets"}
                             for _cid in _targets:
-                                result = send_message(text, chat_id=_cid)
+                                result = send_message(text, chat_id=_cid, bot_token=_bot_token or None)
                                 sys.stderr.write(f"[PUSH] send to {_cid}: " + str(result) + "\n")
                                 sys.stderr.flush()
                             if result.get("ok"):

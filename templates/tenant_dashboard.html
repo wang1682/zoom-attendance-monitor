@@ -1,0 +1,199 @@
+{% extends "tenant_base.html" %}
+{% block title %}运营面板{% endblock %}
+{% block content %}
+
+<style>
+.kpi-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+.kpi-label {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin-top: 4px;
+}
+.kpi-card {
+    background: #1a1a2e;
+    border: 1px solid #2d2d4a;
+    border-radius: 12px;
+    padding: 1.25rem;
+    text-align: center;
+    min-width: 0;
+}
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: #64748b;
+    font-size: 0.9rem;
+}
+.empty-state .icon {
+    font-size: 2rem;
+    margin-bottom: 12px;
+}
+</style>
+
+<!-- ── 准备度小条 ── -->
+<a href="/dashboard/tenant/setup" style="display:block; text-decoration:none; margin-bottom:24px;">
+    <div class="card" style="display:flex; align-items:center; gap:16px; padding:12px 20px;">
+        <div style="flex-shrink:0; font-size:0.75rem; font-weight:600; color:#94a3b8;">准备度</div>
+        <div style="flex-shrink:0; font-size:1.3rem; font-weight:700; color:{% if score >= 80 %}#6ee7b7{% elif score >= 50 %}#fbbf24{% else %}#f87171{% endif %};">
+            {{ score }}
+        </div>
+        <div style="flex:1; height:6px; background:#1e293b; border-radius:3px; overflow:hidden; max-width:200px;">
+            <div style="width:{{ score }}%; height:100%; background:{% if score >= 80 %}#6ee7b7{% elif score >= 50 %}#fbbf24{% else %}#f87171{% endif %}; border-radius:3px;"></div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            {% set check_labels = {
+                'zoom_account': 'Zoom',
+                'oauth': 'OAuth',
+                'meetings': '会议',
+                'participants': '参与者',
+                'webhook': 'Webhook',
+            } %}
+            {% for key, label in check_labels.items() %}
+            <span style="font-size:0.75rem;">
+                {% if checks.get(key) is sameas true %}
+                <span style="color:#6ee7b7;">✅</span>
+                {% else %}
+                <span style="color:#f87171;">❌</span>
+                {% endif %}
+                {{ label }}
+            </span>
+            {% endfor %}
+        </div>
+        <span style="font-size:0.75rem; color:#818cf8; flex-shrink:0;">查看详情 →</span>
+    </div>
+</a>
+
+<!-- ── KPI 卡片 ── -->
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:16px; margin-bottom:24px;">
+    <div class="kpi-card">
+        <div class="kpi-value" style="color:#818cf8;">{{ kpi.today_participants }}</div>
+        <div class="kpi-label">今日参与者</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value" style="color:#6ee7b7;">{{ kpi.current_online }}</div>
+        <div class="kpi-label">当前在线</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value" style="color:#fbbf24;">{{ kpi.today_events }}</div>
+        <div class="kpi-label">今日事件</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-value" style="color:#f87171;">{{ kpi.today_alerts }}</div>
+        <div class="kpi-label">今日告警</div>
+    </div>
+</div>
+
+<!-- ── 活跃会议 ── -->
+<div class="card" style="margin-bottom:24px;">
+    <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">📡 活跃会议</h3>
+    {% if active_meetings %}
+    <table>
+        <thead>
+            <tr>
+                <th>会议主题</th>
+                <th>在线人数</th>
+                <th>开始时间</th>
+                <th>Meeting ID</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in active_meetings %}
+            <tr>
+                <td style="font-weight:500;">{{ m.topic }}</td>
+                <td><span class="badge badge-active">{{ m.participant_count }} 人</span></td>
+                <td style="font-size:0.85rem; color:#94a3b8;">{{ m.start_time }}</td>
+                <td style="font-size:0.8rem; color:#64748b; font-family:monospace;">{{ m.id }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">📭</div>
+        <div>当前无活跃会议</div>
+        <div style="font-size:0.8rem; margin-top:8px;">等待 Zoom 会议开始后自动显示</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ── 最近事件 ── -->
+<div class="card" style="margin-bottom:24px;">
+    <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">📋 最近事件</h3>
+    {% if recent_events %}
+    <table>
+        <thead>
+            <tr>
+                <th>类型</th>
+                <th>参与者</th>
+                <th>会议</th>
+                <th>时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for e in recent_events %}
+            <tr>
+                <td>
+                    {% set event_icons = {'join':'🟢','leave':'🔴','alert':'⚠️'} %}
+                    <span>{{ event_icons.get(e.event_type, '📌') }}</span>
+                    <span style="font-size:0.85rem;">{{ e.event_type }}</span>
+                </td>
+                <td>{{ e.participant_name or '—' }}</td>
+                <td style="font-size:0.85rem; color:#94a3b8; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ e.meeting_topic or e.meeting_id or '—' }}</td>
+                <td style="font-size:0.85rem; color:#64748b; white-space:nowrap;">{{ e.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <div class="icon">📭</div>
+        <div>暂无事件数据，等待 Zoom 会议事件进入</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- ── 推送状态 + 下一步 ── -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px;">
+    <div class="card">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:12px;">📨 推送状态</h3>
+        {% if push_configured %}
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span class="status-dot" style="background:#6ee7b7;"></span>
+            <span style="font-size:0.9rem; color:#6ee7b7;">已配置</span>
+            <span style="font-size:0.8rem; color:#64748b; margin-left:auto;">{{ push_channel_count }} 个频道</span>
+        </div>
+        {% else %}
+        <div>
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                <span class="status-dot" style="background:#f87171;"></span>
+                <span style="font-size:0.9rem; color:#f87171;">未配置推送频道</span>
+            </div>
+            <a href="/dashboard/tenant/channels" class="btn btn-primary btn-sm">配置推送</a>
+        </div>
+        {% endif %}
+    </div>
+    <div class="card">
+        <h3 style="font-size:1rem; font-weight:600; margin-bottom:12px;">📋 下一步建议</h3>
+        {% if next_steps %}
+        <ul style="margin:0; padding-left:18px; display:flex; flex-direction:column; gap:6px;">
+            {% for step in next_steps %}
+            <li style="font-size:0.85rem; color:#94a3b8;">{{ step }}</li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p style="font-size:0.85rem; color:#6ee7b7;">🎉 全部就绪！系统运行正常。</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
