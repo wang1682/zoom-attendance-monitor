@@ -777,7 +777,7 @@ def resolve_display_name(raw_name: str, tenant_id: str = None) -> dict:
     if name in mapping:
         m = mapping[name]
         return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
-    
+
     # 2. Match on match_key (lowercase, no spaces)
     key = re.sub(r'\s+', '', name.lower())
     for raw, m in mapping.items():
@@ -790,7 +790,15 @@ def resolve_display_name(raw_name: str, tenant_id: str = None) -> dict:
         if name_lower in [a.lower().replace(" ", "") for a in m.get("aliases", [])]:
             return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
 
-    # 4. No match, return as-is
+    # 4. No match — try dedup: check if another entry exists with same match_key
+    if not mapping:
+        # mapping is empty, just return as-is
+        return {"display_name": name, "count_enabled": True, "raw_name": name}
+    for raw, m in mapping.items():
+        if m["key"] == key:
+            return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
+
+    # 5. Last resort: return as-is
     return {"display_name": name, "count_enabled": True, "raw_name": name}
 
 def log_command(chat_id: str, command: str, args: str = "", response: str = ""):
@@ -1291,10 +1299,22 @@ def add_member_to_group(group_id: int, member_name: str) -> bool:
             )
         else:
             match_key = member_name.strip().lower().replace(" ", "")
-            conn.execute(
-                "INSERT INTO member_display (raw_name, display_name, match_key, group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (member_name.strip(), member_name.strip(), match_key, group_id, now, now),
-            )
+            # 检查 match_key 是否已被其他记录使用
+            existing_by_key = conn.execute(
+                "SELECT id, raw_name FROM member_display WHERE match_key = ? AND raw_name != ?",
+                (match_key, member_name.strip()),
+            ).fetchone()
+            if existing_by_key:
+                # 有同 match_key 的记录，直接复用（改名 + 更新 group_id）
+                conn.execute(
+                    "UPDATE member_display SET raw_name = ?, display_name = ?, group_id = ?, updated_at = ? WHERE id = ?",
+                    (member_name.strip(), existing_by_key[1], group_id, now, existing_by_key[0]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO member_display (raw_name, display_name, match_key, group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (member_name.strip(), member_name.strip(), match_key, group_id, now, now),
+                )
         # 旧方式：同时写入 member_group_members 保持兼容
         conn.execute(
             "INSERT OR IGNORE INTO member_group_members (group_id, member_name, created_at) VALUES (?, ?, ?)",
