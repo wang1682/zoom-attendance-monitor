@@ -1868,17 +1868,15 @@ def build_app() -> "FastAPI":
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
         # ── 从 sharing_live 表统计每个人今日累计共享时长 ──
-        # 只算当天（MYT时区）范围内的记录
-        myt_start = (now_utc.astimezone(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
-                     - timedelta(hours=8)).isoformat()
-        myt_end = (now_utc.astimezone(MYT).replace(hour=23, minute=59, second=59, microsecond=0)
-                   - timedelta(hours=8)).isoformat()
-        all_share = conn.execute("""
-            SELECT user_name, start_time, end_time, is_active FROM sharing_live
-            WHERE start_time >= ? AND start_time < ?
-            ORDER BY user_name, start_time
-        """, (myt_start, myt_end)).fetchall()
-        acc_duration = {}  # norm_key -> total_minutes
+        # 查全部记录，duration只计当日（MYT）部分
+        # 跨天会议室：共享从昨天开始到今天结束，只算今天这一段
+        all_share = conn.execute(
+            "SELECT user_name, start_time, end_time, is_active FROM sharing_live ORDER BY user_name, start_time"
+        ).fetchall()
+        acc_duration = {}  # norm_key -> total_minutes (仅当日)
+        myt_today = now_utc.astimezone(MYT)
+        utc_day_start = myt_today.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        utc_day_end = myt_today.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
         for sr in all_share:
             uname = sr[0]
             _rm = resolve_member(uname)
@@ -1886,16 +1884,14 @@ def build_app() -> "FastAPI":
             nk = re.sub(r"\s+", "", dn.lower())
             if not nk or nk not in merged:
                 continue
-            st_str = sr[1]
-            et_str = sr[2]
-            is_act = sr[3]
+            st_str = sr[1]; et_str = sr[2]; is_act = sr[3]
             try:
                 sd = datetime.fromisoformat(st_str.replace("Z", "+00:00"))
-                if et_str and not is_act:
-                    ed = datetime.fromisoformat(et_str.replace("Z", "+00:00"))
-                    acc_duration[nk] = acc_duration.get(nk, 0) + int((ed - sd).total_seconds() / 60)
-                elif is_act:
-                    acc_duration[nk] = acc_duration.get(nk, 0) + int((now_utc - sd).total_seconds() / 60)
+                ed = datetime.fromisoformat(et_str.replace("Z", "+00:00")) if et_str and not is_act else now_utc
+                seg_start = max(sd, utc_day_start)
+                seg_end = min(ed, utc_day_end)
+                if seg_start < seg_end:
+                    acc_duration[nk] = acc_duration.get(nk, 0) + int((seg_end - seg_start).total_seconds() / 60)
             except:
                 pass
 
