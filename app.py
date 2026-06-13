@@ -89,6 +89,39 @@ def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
     return dt.astimezone(MYT).strftime(fmt)
 
 
+# ── 智能 MYT 格式化 ──────────────────────────────────────────────────
+
+WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+def fmt_myt(dt_str: str | None) -> str:
+    """智能格式化 MYT 显示时间
+
+    今天 → HH:mm:ss
+    昨天 → 昨天 HH:mm
+    7天内 → 周X HH:mm
+    其他 → YYYY-MM-DD HH:mm
+    """
+    if not dt_str:
+        return "—"
+    dt = parse_utc_iso(dt_str)
+    if dt is None:
+        return dt_str[:16]
+    myt_dt = dt.astimezone(MYT)
+    now_myt = myt_now()
+    today = now_myt.date()
+    d = myt_dt.date()
+
+    if d == today:
+        return myt_dt.strftime("%H:%M:%S")
+    elif d == today - timedelta(days=1):
+        return myt_dt.strftime("昨天 %H:%M")
+    elif (today - d).days < 7:
+        wd = WEEKDAY_CN[myt_dt.weekday()]
+        return myt_dt.strftime(f"{wd} %H:%M")
+    else:
+        return myt_dt.strftime("%Y-%m-%d %H:%M")
+
+
 
 def dedup_participants(participants):
     """合并连续同人的进出记录，只保留状态变化"""
@@ -186,6 +219,7 @@ def build_app() -> "FastAPI":
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
     tmpl = Jinja2Templates(directory=str(BASE_DIR / "templates"))
     tmpl.env.globals["to_myt"] = to_myt
+    tmpl.env.globals["fmt_myt"] = fmt_myt
     tmpl.env.filters["myt"] = to_myt
 
     # ── DB 初始化中间件 ─────────────────────────────────────────────────────
@@ -269,29 +303,42 @@ def build_app() -> "FastAPI":
 
     # ── 多租户 ZoomMetrics 辅助函数 ──────────────────────────────────────────
     def _get_tenant_zoom_metrics(request: Request) -> tuple:
-        """根据请求会话中的 tenant_id，获取该租户的 ZoomMetrics 实例。
+        """根据当前会话的 tenant_id 获取对应的 ZoomMetrics 实例。
+
+        规则：按视图拆分，不混合数据源。
+        - 当前租户有活跃 zoom_account → 用它的（自有 S2S 专属视图）
+        - 没有 → 回退到 default 租户的主系统账户（全局视图）
+        - 无 tenant 上下文 → 用全局 .env
 
         Returns:
-            (ZoomMetrics | None, tenant_id | None)
-            - tenant 用户且拥有活跃 Zoom 账号: (ZoomMetrics(账号), tenant_id)
-            - tenant 用户但无活跃账号: (None, tenant_id) — 不再回退全局
-            - 非 tenant（super admin / 未登录）: (ZoomMetrics(全局 .env), None)
+            (ZoomMetrics, tenant_id | None)
         """
-        user_role = request.session.get("role")
-        if user_role == "tenant":
-            tenant_id = request.session.get("tenant_id", "default")
+        from zoom_metrics import ZoomMetrics
+
+        tenant_id = request.session.get("tenant_id")
+
+        # 1) 当前 tenant 的 zoom_account（如果有，就是专属视图）
+        if tenant_id:
             accounts = db.get_zoom_accounts(tenant_id)
             active = next(
                 (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
                 None,
             )
             if active:
-                from zoom_metrics import ZoomMetrics
                 return ZoomMetrics(active), tenant_id
-            return None, tenant_id  # No active account → 空数据, 无回退
-        # 非 tenant：使用全局 .env ZoomMetrics（super admin / 未登录）
-        from zoom_metrics import ZoomMetrics
-        return ZoomMetrics(), None
+
+        # 2) 没有自己的账号 → 使用主系统账户（default 的 zoom_account）
+        if tenant_id and tenant_id != "default":
+            fallback = db.get_zoom_accounts("default")
+            active = next(
+                (a for a in fallback if a.get("is_active") and a.get("status") == "active"),
+                None,
+            )
+            if active:
+                return ZoomMetrics(active), tenant_id
+
+        # 3) 最终回退：全局 .env（无 tenant 上下文 / default 自己）
+        return ZoomMetrics(), tenant_id
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=RedirectResponse)
@@ -299,33 +346,203 @@ def build_app() -> "FastAPI":
         """Landing Page — 重定向到数据看板"""
         return RedirectResponse(url="/dashboard")
 
+    async def _compute_kpi_data(tid: str) -> dict:
+        """Compute KPI data for tenant dashboard — all queries tenant-isolated."""
+        today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
+        current_online = 0
+        active_meetings = []
+        try:
+            accounts = db.get_zoom_accounts(tid)
+            active = next(
+                (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+                None,
+            )
+            if active:
+                from zoom_metrics import ZoomMetrics
+                zm = ZoomMetrics(active)
+                live_data = await zm.get_live()
+                current_online = live_data.get("total_online", 0)
+                meetings_raw = live_data.get("meetings", [])
+                active_meetings = [
+                    {
+                        "id": m.get("id", ""),
+                        "topic": m.get("topic", ""),
+                        "participant_count": len(m.get("participants", [])),
+                        "start_time": m.get("start_time", ""),
+                    }
+                    for m in meetings_raw
+                ]
+        except Exception:
+            try:
+                from zoom_metrics import ZoomMetrics
+                zm_global = ZoomMetrics()
+                live_data = await zm_global.get_live()
+                current_online = live_data.get("total_online", 0)
+                active_meetings = [
+                    {
+                        "id": m.get("id", ""),
+                        "topic": m.get("topic", ""),
+                        "participant_count": len(m.get("participants", [])),
+                        "start_time": m.get("start_time", ""),
+                    }
+                    for m in live_data.get("meetings", [])
+                ]
+            except Exception:
+                pass
+        conn = db._get_conn()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+            (today, tid),
+        ).fetchone()
+        today_events = row["c"] if row else 0
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ?",
+            (tid,),
+        ).fetchone()
+        today_alerts = row["c"] if row else 0
+        recent_events = db.get_recent_events(limit=10, tenant_id=tid)
+        channels = db.get_tenant_channels(tid)
+        push_configured = any(c.get("is_enabled") for c in channels)
+        push_channel_count = len([c for c in channels if c.get("is_enabled")])
+        participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
+        return {
+            "today_participants": today_participants,
+            "current_online": current_online,
+            "today_events": today_events,
+            "today_alerts": today_alerts,
+            "active_meetings": active_meetings,
+            "recent_events": recent_events,
+            "push_configured": push_configured,
+            "push_channel_count": push_channel_count,
+            "participants": participants,
+        }
+
+    async def _compute_setup_status(tid: str) -> dict:
+        """Compute setup readiness score and checks for a tenant."""
+        checks = {}
+        accounts = db.get_zoom_accounts(tid)
+        has_account = any(a.get("is_active") and a.get("client_id") for a in accounts)
+        checks["zoom_account"] = has_account
+        has_oauth = any(
+            a.get("is_active") and a.get("status") == "active"
+            for a in accounts
+        )
+        checks["oauth"] = bool(has_oauth)
+        try:
+            accounts_db = db.get_zoom_accounts(tid) if hasattr(db, 'get_zoom_accounts') else []
+            active = next(
+                (a for a in accounts_db if a.get("is_active") and a.get("status") == "active"),
+                None,
+            )
+            if active:
+                from zoom_metrics import ZoomMetrics
+                zm = ZoomMetrics(active)
+            else:
+                from zoom_metrics import ZoomMetrics
+                zm = ZoomMetrics()
+            live_data = await zm.get_live()
+            meetings = live_data.get("meetings", [])
+            has_active_meetings = any(
+                m.get("participants") and len(m.get("participants", [])) > 0
+                for m in meetings
+            )
+        except Exception:
+            try:
+                from zoom_metrics import ZoomMetrics
+                zm_global = ZoomMetrics()
+                live_data = await zm_global.get_live()
+                meetings = live_data.get("meetings", [])
+                has_active_meetings = any(
+                    m.get("participants") and len(m.get("participants", [])) > 0
+                    for m in meetings
+                )
+            except Exception:
+                has_active_meetings = False
+        checks["meetings"] = has_active_meetings
+        conn = db._get_conn()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM zoom_participants WHERE tenant_id = ?",
+            (tid,),
+        ).fetchone()
+        participant_count = row["c"] if row else 0
+        checks["participants"] = participant_count > 0
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+            (cutoff, tid),
+        ).fetchone()
+        webhook_count = row["c"] if row else 0
+        checks["webhook"] = webhook_count > 0
+        channels = db.get_tenant_channels(tid)
+        has_telegram = any(c.get("is_enabled") for c in channels)
+        checks["telegram"] = bool(has_telegram)
+        all_rows = conn.execute(
+            "SELECT COUNT(*) AS c FROM member_display WHERE tenant_id = ?",
+            (tid,),
+        ).fetchone()
+        unmapped = conn.execute(
+            "SELECT COUNT(*) AS c FROM member_display "
+            "WHERE tenant_id = ? AND display_name = raw_name",
+            (tid,),
+        ).fetchone()
+        total_members = all_rows["c"] if all_rows else 0
+        unmapped_count = unmapped["c"] if unmapped else 0
+        if total_members > 0:
+            mapped_rate = (total_members - unmapped_count) / total_members
+        else:
+            mapped_rate = 0
+        checks["member_mapping"] = round(mapped_rate, 2)
+        dup_rows = conn.execute(
+            "SELECT display_name, COUNT(*) as c FROM member_display "
+            "WHERE tenant_id = ? GROUP BY display_name HAVING c > 1",
+            (tid,),
+        ).fetchall()
+        checks["duplicates"] = len(dup_rows)
+        weights = {
+            "zoom_account": 20, "oauth": 15, "meetings": 10,
+            "participants": 15, "webhook": 15, "telegram": 10,
+            "member_mapping": 10, "duplicates": 5,
+        }
+        score = 0
+        for key, weight in weights.items():
+            if key == "member_mapping" and isinstance(checks[key], (int, float)):
+                score += int(weight * checks[key])
+            elif key == "duplicates" and checks[key] == 0:
+                score += weight
+            elif isinstance(checks[key], bool) and checks[key]:
+                score += weight
+        if score >= 80:
+            status_label = "good"
+        elif score >= 50:
+            status_label = "partial"
+        else:
+            status_label = "poor"
+        next_steps = []
+        if not checks["zoom_account"]:
+            next_steps.append("配置 Zoom S2S OAuth → 前往接入中心开始配置")
+        if not checks["oauth"] and checks["zoom_account"]:
+            next_steps.append("完成 OAuth 授权验证")
+        if not checks["webhook"]:
+            next_steps.append("配置 Webhook（接收实时事件）")
+        if not checks["telegram"]:
+            next_steps.append("创建推送频道")
+        if isinstance(checks["member_mapping"], (int, float)) and checks["member_mapping"] < 0.8:
+            next_steps.append("完成成员映射（当前 {}%）".format(int(checks["member_mapping"] * 100)))
+        return {
+            "score": score,
+            "status": status_label,
+            "checks": checks,
+            "next_steps": next_steps,
+        }
+
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page(request: Request):
-        if settings.demo_mode:
-            demo = _ensure_demo()
-            demo.seed_demo_data()
-            participants = demo.get_demo_participants()
-            alerts = demo.get_demo_alerts()
-            stats = demo.get_demo_stats()
-        else:
-            tid = request.session.get("tenant_id")
-            participants = dedup_participants(db.get_today_participants(limit=100, tenant_id=tid))
-            alerts = db.get_recent_alerts(limit=20, tenant_id=tid)
-            stats = {
-                "participant_count": len(participants),
-                "alert_count": len(alerts),
-                "new_face_count": 0,
-                "checkin_rate": 0,
-            }
-        return tmpl.TemplateResponse(request, "dashboard.html", {
-            "today": datetime.now(timezone.utc).astimezone(MYT).strftime("%Y-%m-%d"),
-            "participants": participants,
-            "alerts": alerts,
-            "stats": stats,
-            "brand": BRAND,
-            "demo_mode": settings.demo_mode,
-            "to_myt": to_myt,
-        })
+        # Redirect to admin_router's dashboard — the real handler lives there.
+        from starlette.responses import RedirectResponse
+        target = request.url_for("dashboard_index")
+        return RedirectResponse(url=str(target), status_code=302)
 
     # ── Demo ──────────────────────────────────────────────────────────────────
     @app.get("/demo", response_class=HTMLResponse)
@@ -358,6 +575,31 @@ def build_app() -> "FastAPI":
         demo.reset_demo()
         demo.seed_demo_data()
         return demo.get_demo_stats()
+
+    # ── Dashboard JSON API (JS polling) ───────────────────────────────────────
+    @app.get("/dashboard/data")
+    async def dashboard_data_api(request: Request):
+        """JSON endpoint for dashboard JS polling — tenant-scoped."""
+        if settings.demo_mode:
+            return {
+                "kpi": {"today_participants": 12, "online_now": 5, "today_events": 47, "today_alerts": 3},
+                "active_meetings": [{"id": "123", "topic": "Demo Meeting", "participant_count": 5, "start_time": datetime.now(timezone.utc).isoformat()}],
+                "recent_events": [],
+                "participants": [],
+            }
+        tid = request.session.get("tenant_id", "default")
+        kpi = await _compute_kpi_data(tid)
+        return {
+            "kpi": {
+                "today_participants": kpi["today_participants"],
+                "online_now": kpi["current_online"],
+                "today_events": kpi["today_events"],
+                "today_alerts": kpi["today_alerts"],
+            },
+            "active_meetings": kpi["active_meetings"],
+            "recent_events": kpi["recent_events"],
+            "participants": kpi["participants"],
+        }
 
     # ── 生产数据页面 ───────────────────────────────────────────────────────────
     @app.get("/events", response_class=HTMLResponse)
@@ -2883,6 +3125,7 @@ def build_app() -> "FastAPI":
         return {"ok": True, **results}
 
     # ── Multi-tenant admin routes ──────────────────────────────────────────
+    app.state.compute_kpi_data = _compute_kpi_data
     from admin_routes import router as admin_router
     app.include_router(admin_router, prefix="/dashboard")
 

@@ -112,8 +112,7 @@ def _channel_dict(c: dict) -> dict:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_index(request: Request, user: dict = Depends(require_user)):
-    """Main dashboard landing page — KPI summary, no long tables.
-    Initial render gets static/sync data; JS polling fills live KPI + meetings."""
+    compute_fn = request.app.state.compute_kpi_data
     tenant_id = request.session.get("tenant_id", "default")
     recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tenant_id)
     # score/checks from DB (sync, no Zoom API call)
@@ -130,36 +129,13 @@ async def dashboard_index(request: Request, user: dict = Depends(require_user)):
     channels = db.get_tenant_channels(tenant_id)
     checks["telegram"] = any(c.get("is_enabled") for c in channels)
     score = sum(1 for v in checks.values() if v) * 20
-    conn = db._get_conn()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
-        (today, tenant_id),
-    ).fetchone()
-    today_events = row["c"] if row else 0
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ?",
-        (tenant_id,),
-    ).fetchone()
-    total_alerts = row["c"] if row else 0
-    row = conn.execute(
-        "SELECT COUNT(*) AS c FROM alerts WHERE created_at >= ? AND tenant_id = ?",
-        (today, tenant_id),
-    ).fetchone()
-    today_alerts = row["c"] if row else 0
-    kpi = {
-        "today_participants": 0,
-        "current_online": 0,
-        "today_events": today_events,
-        "today_alerts": today_alerts,
-        "active_meetings": [],
-    }
+    kpi = await compute_fn(tenant_id)
     return _render_admin(request, "overview", user, "dashboard.html",
-                         kpi=kpi, active_meetings=[],
+                         kpi=kpi, active_meetings=kpi.get("active_meetings", []),
                          score=score, checks=checks,
                          recent_alerts=recent_alerts,
+                         participants=kpi.get("participants", []),
                          next_steps=[])
-
 
 @router.get("/events", response_class=HTMLResponse)
 async def dashboard_events_page(request: Request, user: dict = Depends(require_user)):
@@ -586,6 +562,8 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
     from pathlib import Path
     # Use the same templates directory as the main app
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+    from app import fmt_myt
+    templates.env.globals["fmt_myt"] = fmt_myt
 
     # Build current_user dict matching template expectations
     tenant_id = request.session.get("tenant_id", "default")

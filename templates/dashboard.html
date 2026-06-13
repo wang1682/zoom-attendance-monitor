@@ -1,160 +1,218 @@
-{% extends "base.html" %}
-{% block title %}Zoom Monitor{% endblock %}
-{% block head %}
+{% extends "tenant_base.html" %}
+{% block title %}总览 - Zoom Monitor{% endblock %}
+{% block content %}
+
+<!-- ═══════ 接入状态 + 租户摘要  ═══════ -->
+{% if score is defined and score is not none %}
+<div class="panel mb-p" style="cursor:pointer" onclick="window.location='/dashboard/settings'">
+  <div class="panel-header"><h2>系统接入状态</h2></div>
+  <div class="panel-body">
+    <div class="flex" style="align-items:center;gap:16px;flex-wrap:wrap">
+      <div class="metric" style="flex:none;min-width:100px;padding:8px 14px">
+        <div class="metric-label">接入评分</div>
+        <div class="flex" style="align-items:baseline;gap:4px">
+          <span class="metric-value {% if score >= 80 %}success{% elif score >= 50 %}warning{% else %}danger{% endif %}">{{ score }}</span>
+          <span style="font-size:11px;color:var(--text-muted)">/ 100</span>
+        </div>
+      </div>
+      <div class="flex" style="gap:6px;flex-wrap:wrap">
+        {% set checks_map = {'zoom_account':'Zoom','oauth':'OAuth','meetings':'会议','participants':'参与者','webhook':'Webhook','telegram':'推送'} %}
+        {% for key, label in checks_map.items() %}
+        <span class="badge {% if checks.get(key) %}badge-success{% else %}badge-muted{% endif %}">
+          {{ '●' if checks.get(key) else '○' }} {{ label }}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ═══════ KPI Metric Row ═══════ -->
+<div class="stats-row">
+  <div class="metric">
+    <div class="metric-label">今日参与者</div>
+    <div class="metric-value" id="kpi-today-participants">{{ kpi.today_participants if kpi else 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">当前在线</div>
+    <div class="metric-value" id="kpi-online-now">{{ kpi.current_online if kpi else 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">今日告警 <span class="badge badge-warning" style="font-size:9px;vertical-align:middle">需关注</span></div>
+    <div class="metric-value warning" id="kpi-today-alerts">{{ kpi.today_alerts if kpi else 0 }}</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">今日事件</div>
+    <div class="metric-value small" id="kpi-today-events">{{ kpi.today_events if kpi else 0 }}</div>
+  </div>
+</div>
+
+<!-- ═══════ 最近活跃成员 ═══════ -->
+<div class="panel mb-p">
+  <div class="panel-header">
+    <h2>最近活跃成员</h2>
+    <a href="/dashboard/participants" class="btn btn-sm">全部 →</a>
+  </div>
+  <div class="panel-body" id="recent-participants-list">
+    <span class="text-muted text-sm">等待数据刷新</span>
+  </div>
+</div>
+
+<!-- ═══════ 第二排：共享屏幕 + 活跃会议 ═══════ -->
+<div class="cockpit-grid halves">
+  <!-- 当前共享屏幕 -->
+  <div class="panel">
+    <div class="panel-header"><h2>当前共享屏幕</h2></div>
+    <div class="panel-body" id="screen-sharing-list">
+      <span class="text-muted text-sm">暂无共享</span>
+    </div>
+  </div>
+
+  <!-- 活跃会议 -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>活跃会议</h2>
+      <a href="/dashboard/meetings?tab=live" class="btn btn-sm">查看 →</a>
+    </div>
+    <div class="panel-body compact" id="active-meetings-table">
+      {% if active_meetings and active_meetings|length > 0 %}
+      <table class="data-table">
+        <thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead>
+        <tbody>
+        {% for m in active_meetings %}
+        <tr>
+          <td class="td-name">{{ m.topic }}</td>
+          <td class="td-num">{{ m.participant_count }}</td>
+          <td class="td-mono">{{ fmt_myt(m.start_time) }}</td>
+          <td class="td-mono">{{ m.id }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <span class="text-muted text-sm">暂无活跃会议</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 第三排：最近告警 + 最近事件 ═══════ -->
+<div class="cockpit-grid halves">
+  <!-- 最近告警 -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>最近告警</h2>
+      <a href="/dashboard/alerts" class="btn btn-sm">全部 →</a>
+    </div>
+    <div class="panel-body compact" id="recent-alerts-table">
+      {% if recent_alerts and recent_alerts|length > 0 %}
+      <table class="data-table">
+        <thead><tr><th>类型</th><th>信息</th><th>推送</th><th>时间</th></tr></thead>
+        <tbody>
+        {% for a in recent_alerts %}
+        <tr>
+          <td><span class="badge badge-{% if a.severity == 'critical' or a.severity == 'error' %}danger{% elif a.severity == 'warning' %}warning{% else %}cyan{% endif %}">{{ a.rule_name or a.alert_type }}</span></td>
+          <td class="td-name truncate" style="max-width:220px">{{ a.message }}</td>
+          <td>{% if a.pushed %}<span class="text-success">●</span>{% else %}<span class="text-muted">○</span>{% endif %}</td>
+          <td class="td-mono">{{ fmt_myt(a.created_at) }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <span class="text-muted text-sm">暂无告警</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 最近事件摘要 -->
+  <div class="panel">
+    <div class="panel-header">
+      <h2>最近事件</h2>
+      <a href="/dashboard/meetings?tab=history" class="btn btn-sm">全部 →</a>
+    </div>
+    <div class="panel-body compact">
+      <span class="text-muted text-sm">最近 Webhook 事件在此显示</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ 下一步建议 — 仅新租户 ═══════ -->
+{% if next_steps and next_steps|length > 0 and score is defined and score < 80 %}
+<div class="panel">
+  <div class="panel-header"><h2>下一步操作</h2></div>
+  <div class="panel-body">
+    <ul style="margin:0;padding-left:16px">
+    {% for step in next_steps %}
+    <li style="margin-bottom:4px;color:var(--accent);font-size:12px;font-family:var(--mono)">▶ {{ step }}</li>
+    {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
 <script>
-function formatMYT(ts){
-  if(!ts) return "";
-  try{
-    var d = new Date(ts);
-    if(isNaN(d)) return ts;
-    var pad = function(n){ return String(n).padStart(2,"0"); };
-    return pad(d.getHours()) + ":" + pad(d.getMinutes());
-  }catch(e){return ts;}
+function showToast(msg, type) {
+  var t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;top:20px;right:20px;padding:10px 20px;border:1px solid ' + (type === 'error' ? 'var(--danger)' : 'var(--success)') + ';background:var(--panel);color:var(--text);font-size:12px;z-index:100;font-family:var(--mono);border-radius:3px';
+    document.body.appendChild(t);
+  }
+  t.textContent = type === 'error' ? '✖ ' : '✔ ';
+  t.textContent += msg;
+  t.style.display = 'block';
+  t.style.borderColor = type === 'error' ? 'var(--danger)' : 'var(--success)';
+  setTimeout(function(){ t.style.display = 'none'; }, 3000);
 }
 
-async function refreshDashboard(){
-  try{
-    var r = await fetch("/api/v3/dashboard?_=" + Date.now(), {cache:"no-store"});
-    var j = await r.json();
-    if(!j.ok) return;
+async function refreshDashboard() {
+  try {
+    var resp = await fetch('/dashboard/data');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    var data = await resp.json();
 
-    document.getElementById("kpiParticipants").textContent = j.participant_count;
-    document.getElementById("kpiOnline").textContent = j.online_count;
-    document.getElementById("kpiJoin").textContent = j.join_count;
-    document.getElementById("kpiLeave").textContent = j.leave_count;
+    document.getElementById('kpi-today-participants').textContent = data.kpi.today_participants || 0;
+    document.getElementById('kpi-online-now').textContent = data.kpi.online_now || 0;
+    document.getElementById('kpi-today-alerts').textContent = data.kpi.today_alerts || 0;
+    if (document.getElementById('kpi-today-events'))
+      document.getElementById('kpi-today-events').textContent = data.kpi.today_events || 0;
 
-    var badgeP = document.getElementById("badgeParticipants");
-    if(badgeP) badgeP.textContent = j.participants.length + "人";
-    var pb = document.getElementById("participantsBody");
-    if(pb){
-      pb.innerHTML = j.participants.length ? j.participants.map(function(p){
-        var status = p.status === "在线中" ? "🟢 在线中" : "⚫ 已离线";
-        return "<tr><td class=\"nm\">" + ((p.standard_name||p.name) + (p.group_name?"\u3010"+p.group_name+"\u3011":"")) + "</td><td>" + status + "</td><td>" + (p.current_session || p.session_duration || "—") + "</td><td>" + (p.total_duration || p.today_duration || "—") + "</td><td>" + (p.leave_count || 0) + "</td><td class=\"mono\">" + formatMYT(p.last_active) + "</td></tr>";
-      }).join("") : "<tr><td colspan=\"6\" style=\"text-align:center;padding:32px;color:var(--tm)\">暂无数据</td></tr>";
+    var mhtml = '';
+    if (data.active_meetings && data.active_meetings.length > 0) {
+      mhtml = '<table class="data-table"><thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead><tbody>';
+      data.active_meetings.forEach(function(m) {
+        mhtml += '<tr><td class="td-name">' + (m.topic || '-') + '</td><td class="td-num">' + (m.participant_count || 0) + '</td><td class="td-mono">' + (to_myt(m.start_time) || '-') + '</td><td class="td-mono">' + (m.id || '-') + '</td></tr>';
+      });
+      mhtml += '</tbody></table>';
+    } else {
+      mhtml = '<span class="text-muted text-sm">暂无活跃会议</span>';
     }
+    document.getElementById('active-meetings-table').innerHTML = mhtml;
 
-    // Sharing badge from API
-    var badgeS = document.getElementById("badgeSharing");
-    if(badgeS) badgeS.textContent = (j.sharing_count || 0) + "人";
-
-    // Sharing banner
-    try{
-      var srb = await fetch("/api/v3/sharing-live?_=" + Date.now(), {cache:"no-store"});
-      var sdb = await srb.json();
-      if(badgeS && sdb.ok && sdb.active) badgeS.textContent = sdb.active.length + "人";
-      var ban = document.getElementById("sharingBanner");
-      if(ban){
-        if(sdb.ok && sdb.active && sdb.active.length){
-          var names = sdb.active.map(function(s){ return s.name || s.raw_name || "-"; }).join("、");
-          ban.innerHTML = "<div style=\"background:color-mix(in srgb,var(--da) 12%,transparent);border:1px solid color-mix(in srgb,var(--da) 30%,transparent);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px\">"
-            + "<span style=\"font-size:18px\">🖥️</span>"
-            + "<div style=\"flex:1\"><div style=\"font-size:14px;font-weight:600;color:var(--da)\">正在共享屏幕</div>"
-            + "<div style=\"font-size:12px;color:var(--ts);margin-top:2px\">" + names + "</div></div>"
-            + "<span style=\"font-size:11px;color:var(--ts);background:var(--div);padding:2px 10px;border-radius:10px\">" + sdb.current + "人</span></div>";
-          ban.style.display = "block";
-        } else {
-          ban.style.display = "none";
-        }
-      }
-    }catch(e){}
-
-    // Sharing card content
-    var sc = document.getElementById("sharingContent");
-    if(sc){
-      try{
-        var scData = await fetch("/api/v3/sharing-live?_=" + Date.now(), {cache:"no-store"});
-        var scJson = await scData.json();
-        if(scJson.ok && scJson.active && scJson.active.length){
-          sc.innerHTML = scJson.active.map(function(s){
-            return "<div style=\"display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--div)\">"
-              + "<span style=\"width:8px;height:8px;border-radius:50%;background:var(--in);flex-shrink:0\"></span>"
-              + "<span style=\"flex:1;font-size:13px;font-weight:500\">"+(s.name||s.raw_name||"-")+"</span>"
-              + "<span style=\"font-size:12px;color:var(--ts)\">"+(s.duration_display||"")+"</span></div>";
-          }).join("");
-        } else if(scJson.ok && scJson.recent && scJson.recent.length){
-          var recentList = scJson.recent.slice(0,5);
-          sc.innerHTML = "<div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:8px\">"
-            + "<span style=\"font-size:11px;color:var(--ts)\">最近共享：</span>"
-            + "<span style=\"font-size:11px;color:var(--wa)\">zoom API状态不稳定</span></div>"
-            + recentList.map(function(s){
-              var ic = s.content === "application" ? "📱" : (s.content === "desktop" ? "🖥️" : "📄");
-              return "<div style=\"display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--div)\">"
-                + "<span style=\"width:6px;height:6px;border-radius:50%;background:var(--ts);flex-shrink:0\"></span>"
-                + "<span style=\"flex:1;font-size:12px\">" + ic + " " + (s.name||s.raw_name||"-") + "</span>"
-                + "<span style=\"font-size:12px;color:var(--ts)\">" + (s.start_time_display||"") + "</span></div>";
-            }).join("")
-            + "<div style=\"font-size:11px;color:var(--wa);margin-top:8px;padding:6px 8px;background:color-mix(in srgb,var(--wa) 10%,transparent);border-radius:6px\">Zoom对分组房间共享状态不稳定，实时共享可能无法持续检测</div>";
-        } else {
-          sc.innerHTML = "<div style=\"text-align:center;padding:20px;color:var(--tm)\">当前无人共享</div>";
-        }
-      }catch(e){
-        sc.innerHTML = "<div style=\"text-align:center;padding:20px;color:var(--tm)\">当前无人共享</div>";
-      }
+    // 最近活跃成员
+    var plist = document.getElementById('recent-participants-list');
+    if (plist && data.participants && data.participants.length > 0) {
+      var phtml = '<div class="flex" style="gap:6px;flex-wrap:wrap">';
+      data.participants.slice(0, 12).forEach(function(p) {
+        var name = p.name || p.user_name || '?';
+        var online = p.in_meeting || p.is_online ? '●' : '○';
+        var color = p.in_meeting ? 'var(--success)' : 'var(--text-muted)';
+        phtml += '<span class="badge" style="color:' + color + ';font-size:12px">' + online + ' ' + name + '</span>';
+      });
+      phtml += '</div>';
+      plist.innerHTML = phtml;
+    } else if (plist) {
+      plist.innerHTML = '<span class="text-muted text-sm">暂无活跃成员记录</span>';
     }
-  }catch(e){
-    console.error("refreshDashboard error:", e);
+  } catch(e) {
+    console.error('Dashboard refresh failed:', e);
+    showToast('数据刷新失败', 'error');
   }
 }
-window.addEventListener("load", refreshDashboard);
 setInterval(refreshDashboard, 15000);
 </script>
-{% endblock %}
-{% block content %}
-<div id="sharingBanner" style="display:none"></div>
-<div class="page-container">
-  <div class="page-header">
-    <h1 class="page-title">📊 今日概况</h1>
-    <p class="page-subtitle">实时监控 · {{ today }}</p>
-  </div>
-  <div class="kpi-grid three">
-    <div class="kpi-card">
-      <div class="kpi-label">参与者</div>
-      <div class="kpi-value" id="kpiParticipants">—</div>
-      <div class="kpi-sub">今日活跃成员</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">在线</div>
-      <div class="kpi-value" id="kpiOnline" style="color:var(--sc)">—</div>
-      <div class="kpi-sub">当前会议中</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">加入</div>
-      <div class="kpi-value" id="kpiJoin" style="color:var(--in)">—</div>
-      <div class="kpi-sub">今日加入次数</div>
-    </div>
-    <div class="kpi-card">
-      <div class="kpi-label">离开</div>
-      <div class="kpi-value" id="kpiLeave" style="color:var(--wa)">—</div>
-      <div class="kpi-sub">今日离开次数</div>
-    </div>
-  </div>
-  <div class="grid-2">
-    <section class="card">
-      <div class="card-header">
-        <h2 class="card-title">🖥 当前共享</h2>
-        <span class="card-badge" id="badgeSharing">—</span>
-      </div>
-      <div id="sharingContent" style="font-size:12px;color:var(--tm);text-align:center;padding:20px">加载中...</div>
-    </section>
-  </div>
-  <section class="card" style="margin-top:0">
-    <div class="card-header">
-      <h2 class="card-title">👥 参与者</h2>
-      <span class="card-badge" id="badgeParticipants">—</span>
-    </div>
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>成员</th>
-          <th>状态</th>
-          <th>本次在线</th>
-          <th>今日累计</th>
-          <th>离开次数</th>
-          <th>最后活动</th>
-        </tr>
-      </thead>
-      <tbody id="participantsBody"></tbody>
-    </table>
-  </section>
-</div>
+
 {% endblock %}
