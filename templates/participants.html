@@ -2,6 +2,29 @@
 {% block title %}成员中心 - Zoom Monitor{% endblock %}
 {% block content %}
 
+<style>
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
+.modal-overlay.active{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.modal-box h2{margin:0 0 16px;font-size:16px}
+.modal-box .form-group{margin-bottom:12px}
+.modal-box .form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px}
+.modal-box .form-group input,.modal-box .form-group textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:13px}
+.modal-box .form-group textarea{min-height:60px;resize:vertical}
+.modal-box .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.modal-box .modal-actions .btn{padding:6px 16px;font-size:12px}
+.group-list{max-height:300px;overflow-y:auto;margin:8px 0}
+.group-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border-light);font-size:13px}
+.group-item:last-child{border-bottom:none}
+.group-item .group-info{flex:1}
+.group-item .group-name{font-weight:500}
+.group-item .group-desc{font-size:11px;color:var(--text-muted)}
+.group-item .group-actions{display:flex;gap:4px;flex-shrink:0}
+.btn-icon{background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;color:var(--text-muted);font-size:13px}
+.btn-icon:hover{background:var(--bg3);color:var(--text)}
+.btn-icon.danger:hover{color:var(--danger)}
+</style>
+
 <div class="page-header">
   <div class="flex" style="justify-content:space-between;align-items:flex-start">
     <div>
@@ -13,6 +36,8 @@
       <span class="text-sm"><span class="status-dot offline" style="vertical-align:middle;margin-right:4px"></span>离线 <strong class="text-muted">{{ offline_count }}</strong></span>
       <span class="text-sm text-muted">总时长 <strong class="text-accent">{{ total_duration }}</strong></span>
       <span class="text-sm text-muted">均时 <strong class="text-accent">{{ avg_duration }}</strong></span>
+      <button class="btn btn-sm" onclick="openGroupManager()">📁 管理组</button>
+      <button class="btn btn-sm btn-primary" onclick="openAddMember()">+ 添加成员</button>
     </div>
   </div>
 </div>
@@ -42,7 +67,7 @@
 <div class="panel">
   {% if members|length > 0 %}
   <div class="overflow-x">
-    <table class="data-table">
+    <table class="data-table" id="memberTable">
       <thead>
         <tr>
           <th>成员</th>
@@ -53,11 +78,13 @@
           <th>离开</th>
           <th>首次</th>
           <th>最近活动</th>
+          <th>电邮</th>
+          <th style="width:80px">操作</th>
         </tr>
       </thead>
       <tbody>
       {% for m in members %}
-      <tr>
+      <tr data-member="{{ m.standard_name }}">
         <td>
           <div class="flex" style="gap:8px;align-items:center">
             <div style="width:22px;height:22px;border-radius:2px;border:1px solid var(--border-light);background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--text-muted);flex-shrink:0">
@@ -73,17 +100,29 @@
           </span>
         </td>
         <td>
-          {% if m.group_name %}
-          <span class="badge badge-cyan">{{ m.group_name }}</span>
-          {% else %}
-          <span class="text-muted">—</span>
-          {% endif %}
+          <span class="member-group-badge" data-member="{{ m.standard_name }}">
+            {% if m.group_name %}
+            <span class="badge badge-cyan">{{ m.group_name }}</span>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
+          </span>
         </td>
         <td class="td-mono text-accent">{{ m.today_total_duration }}</td>
         <td class="text-success">{{ m.join_count }}</td>
         <td class="text-danger">{{ m.leave_count }}</td>
         <td class="td-mono">{{ m.first_join_display }}</td>
         <td class="td-mono">{{ m.last_activity_display }}</td>
+        <td><span class="td-mono text-muted" style="font-size:11px">{{ m.email if m.email else '—' }}</span></td>
+        <td>
+          <select class="group-select" data-member="{{ m.standard_name }}" onchange="assignGroup(this)" style="font-size:11px;padding:2px 4px;max-width:90px">
+            <option value="">—</option>
+            {% for g in groups %}
+            <option value="{{ g.id }}" {% if m.group_id == g.id %}selected{% endif %}>{{ g.name }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn-icon danger" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员">🗑</button>
+        </td>
       </tr>
       {% endfor %}
       </tbody>
@@ -109,5 +148,204 @@
   </div>
   {% endif %}
 </div>
+
+<!-- ── 管理组弹窗 ── -->
+<div class="modal-overlay" id="groupManagerModal">
+  <div class="modal-box">
+    <h2>📁 管理分组</h2>
+    <div class="group-list" id="groupList">
+      <div style="text-align:center;padding:20px;color:var(--text-muted)">加载中...</div>
+    </div>
+    <div style="border-top:1px solid var(--border-light);padding-top:12px;margin-top:8px">
+      <div class="flex" style="gap:8px;align-items:center">
+        <input type="text" id="newGroupName" placeholder="新分组名称" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
+        <input type="text" id="newGroupDesc" placeholder="可选描述" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
+        <button class="btn btn-sm btn-primary" onclick="createGroup()">创建</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('groupManagerModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 添加成员弹窗 ── -->
+<div class="modal-overlay" id="addMemberModal">
+  <div class="modal-box">
+    <h2>+ 添加成员</h2>
+    <div class="form-group">
+      <label>成员名称（必填）</label>
+      <input type="text" id="addMemberName" placeholder="输入成员原始名称">
+    </div>
+    <div class="form-group">
+      <label>显示名称（可选）</label>
+      <input type="text" id="addMemberDisplay" placeholder="留空则使用成员名称">
+    </div>
+    <div class="form-group">
+      <label>备注（可选）</label>
+      <textarea id="addMemberNote" placeholder="可选备注信息"></textarea>
+    </div>
+    <div id="addMemberResult" style="font-size:12px;padding:4px 0"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('addMemberModal')">取消</button>
+      <button class="btn btn-primary" onclick="submitAddMember()">添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 编辑组弹窗 ── -->
+<div class="modal-overlay" id="editGroupModal">
+  <div class="modal-box">
+    <h2>✏️ 编辑分组</h2>
+    <input type="hidden" id="editGroupId">
+    <div class="form-group">
+      <label>分组名称</label>
+      <input type="text" id="editGroupName">
+    </div>
+    <div class="form-group">
+      <label>描述</label>
+      <textarea id="editGroupDesc"></textarea>
+    </div>
+    <div id="editGroupResult" style="font-size:12px;padding:4px 0"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal('editGroupModal')">取消</button>
+      <button class="btn btn-primary" onclick="submitEditGroup()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 组管理 ──
+function openGroupManager() {
+  document.getElementById('groupManagerModal').classList.add('active');
+  loadGroups();
+}
+function loadGroups() {
+  fetch('/dashboard/participants/json_groups').then(r=>r.json()).then(groups=>{
+    renderGroups(groups);
+  }).catch(()=>{
+    document.getElementById('groupList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">加载失败</div>';
+  });
+}
+function renderGroups(groups) {
+  const el = document.getElementById('groupList');
+  if (!groups || groups.length === 0) {
+    el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">暂无分组，创建一个吧</div>';
+    return;
+  }
+  el.innerHTML = groups.map(g => `
+    <div class="group-item">
+      <div class="group-info">
+        <div class="group-name">${g.name}</div>
+        ${g.description ? `<div class="group-desc">${g.description}</div>` : ''}
+      </div>
+      <div class="group-actions">
+        <button class="btn-icon" onclick="editGroup(${g.id},'${g.name.replace(/'/g,"\\'")}','${(g.description||'').replace(/'/g,"\\'")}')" title="编辑">✏️</button>
+        <button class="btn-icon danger" onclick="deleteGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除">🗑</button>
+      </div>
+    </div>
+  `).join('');
+}
+function createGroup() {
+  const name = document.getElementById('newGroupName').value.trim();
+  const desc = document.getElementById('newGroupDesc').value.trim();
+  if (!name) return alert('请输入分组名称');
+  fetch('/dashboard/members/groups/create', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, description:desc})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      document.getElementById('newGroupName').value='';
+      document.getElementById('newGroupDesc').value='';
+      loadGroups();
+      location.reload();
+    } else alert(d.message);
+  });
+}
+function editGroup(id, name, desc) {
+  document.getElementById('editGroupId').value = id;
+  document.getElementById('editGroupName').value = name;
+  document.getElementById('editGroupDesc').value = desc;
+  document.getElementById('editGroupResult').textContent = '';
+  document.getElementById('editGroupModal').classList.add('active');
+}
+function submitEditGroup() {
+  const id = parseInt(document.getElementById('editGroupId').value);
+  const name = document.getElementById('editGroupName').value.trim();
+  const desc = document.getElementById('editGroupDesc').value.trim();
+  if (!name) return alert('请输入分组名称');
+  fetch('/dashboard/members/groups/update', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({group_id:id, name, description:desc})
+  }).then(r=>r.json()).then(d=>{
+    document.getElementById('editGroupResult').textContent = d.message;
+    if(d.ok){ setTimeout(()=>{ closeModal('editGroupModal'); loadGroups(); }, 500); }
+  });
+}
+function deleteGroup(id, name) {
+  if(!confirm(`确定删除分组「${name}」？`)) return;
+  fetch('/dashboard/members/groups/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({group_id:id})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){ loadGroups(); location.reload(); }
+    else alert(d.message);
+  });
+}
+
+// ── 分组分配 ──
+function assignGroup(sel) {
+  const member = sel.dataset.member;
+  const groupId = sel.value;
+  fetch('/dashboard/members/assign-group', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({member_name:member, group_id:groupId || 0})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.ok) alert(d.message);
+  });
+}
+
+// ── 添加成员 ──
+function openAddMember() {
+  document.getElementById('addMemberName').value = '';
+  document.getElementById('addMemberDisplay').value = '';
+  document.getElementById('addMemberNote').value = '';
+  document.getElementById('addMemberResult').textContent = '';
+  document.getElementById('addMemberModal').classList.add('active');
+}
+function submitAddMember() {
+  const name = document.getElementById('addMemberName').value.trim();
+  const display = document.getElementById('addMemberDisplay').value.trim();
+  const note = document.getElementById('addMemberNote').value.trim();
+  if (!name) return alert('请输入成员名称');
+  const btn = document.querySelector('#addMemberModal .btn-primary');
+  btn.textContent = '添加中...'; btn.disabled = true;
+  fetch('/dashboard/members/add', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({raw_name:name, display_name:display||null, note})
+  }).then(r=>r.json()).then(d=>{
+    document.getElementById('addMemberResult').textContent = d.message;
+    document.getElementById('addMemberResult').style.color = d.ok ? 'var(--success)' : 'var(--danger)';
+    if(d.ok) setTimeout(()=>{ closeModal('addMemberModal'); location.reload(); }, 800);
+  }).finally(()=>{ btn.textContent = '添加'; btn.disabled = false; });
+}
+
+// ── 删除成员 ──
+function deleteMember(name) {
+  if(!confirm(`确定删除成员「${name}」？此操作不可撤销。`)) return;
+  fetch('/dashboard/members/delete', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({raw_name:name})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok) location.reload();
+    else alert(d.message);
+  });
+}
+
+// ── 辅助 ──
+function closeModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+</script>
 
 {% endblock %}

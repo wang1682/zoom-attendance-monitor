@@ -513,6 +513,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 "leave_count": 0,
                 "last_activity": None,
                 "last_action": None,
+                "email": "",
                 "raw_events": [],
             }
 
@@ -528,7 +529,8 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             m["leave_count"] += 1
             m["last_action"] = "leave"
 
-        m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"]})
+        # ── 更新 email：用今天数据里最新一条（按 action_time） ──
+        m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": e.get("email", "")})
         m["last_activity"] = at
 
     # ── 计算时长 & 状态 ──
@@ -562,6 +564,20 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         m["today_total_seconds"] = int(total_seconds)
         m["today_total_duration"] = _fmt_dur(int(total_seconds))
         m["status"] = "online" if m["last_action"] == "enter" else "offline"
+
+        # ── 策略C：从今天 raw_events 取最新一条有 email 的记录 ──
+        for ev in reversed(m["raw_events"]):
+            if ev.get("email"):
+                m["email"] = ev["email"]
+                break
+        # ── 今天没有 email，查全局历史最近 ──
+        if not m["email"]:
+            row = _get_conn().execute(
+                "SELECT email FROM zoom_participants WHERE name = ? AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                (m["standard_name"],),
+            ).fetchone()
+            if row:
+                m["email"] = row[0]
 
     # ── 排序：在线优先 → 时长降序 ──
     sorted_members = sorted(
