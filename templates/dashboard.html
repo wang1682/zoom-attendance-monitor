@@ -236,11 +236,13 @@ async function refreshDashboard() {
     if (eventsEl) {
       if (data.recent_events && data.recent_events.length > 0) {
         var ehtml = '<table class="data-table" style="font-size:12px"><tbody>';
-        data.recent_events.slice(0, 8).forEach(function(ev) {
-          var icon = ev.event_type && ev.event_type.includes('joined') ? '+' : '−';
+        data.recent_events.slice(0, 5).forEach(function(ev) {
+          var et = ev.event_type || '';
+          var icon = et.includes('joined') || et.includes('admitted') ? '+' : '−';
+          var label = (et.includes('joined') || et.includes('admitted')) ? '进入' : '离开';
           var name = ev.user_name || '?';
           var t = ev.event_time || ev.created_at || '';
-          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + to_myt(t) + '</td></tr>';
+          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name" style="font-size:11px;color:var(--text-muted)">' + label + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + to_myt(t) + '</td></tr>';
         });
         ehtml += '</tbody></table>';
         eventsEl.innerHTML = ehtml;

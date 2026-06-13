@@ -405,7 +405,8 @@ def build_app() -> "FastAPI":
             (tid,),
         ).fetchone()
         today_alerts = row["c"] if row else 0
-        recent_events = db.get_recent_events(limit=10, tenant_id=tid)
+        recent_events = db.get_recent_events(limit=5, tenant_id=tid)
+        recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tid)
         channels = db.get_tenant_channels(tid)
         push_configured = any(c.get("is_enabled") for c in channels)
         push_channel_count = len([c for c in channels if c.get("is_enabled")])
