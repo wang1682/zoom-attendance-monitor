@@ -132,8 +132,8 @@
       <h2>最近事件</h2>
       <a href="/dashboard/meetings?tab=history" class="btn btn-sm">全部 →</a>
     </div>
-    <div class="panel-body compact">
-      <span class="text-muted text-sm">最近 Webhook 事件在此显示</span>
+    <div class="panel-body compact" id="dashboard-events-list">
+      <span class="text-muted text-sm">暂无 Webhook 事件</span>
     </div>
   </div>
 </div>
@@ -229,6 +229,24 @@ async function refreshDashboard() {
       }
     } catch(e) {
       console.error('Sharing refresh failed:', e);
+    }
+
+    // 最近事件
+    var eventsEl = document.getElementById('dashboard-events-list');
+    if (eventsEl) {
+      if (data.recent_events && data.recent_events.length > 0) {
+        var ehtml = '<table class="data-table" style="font-size:12px"><tbody>';
+        data.recent_events.slice(0, 8).forEach(function(ev) {
+          var icon = ev.event_type && ev.event_type.includes('joined') ? '+' : '−';
+          var name = ev.user_name || '?';
+          var t = ev.event_time || ev.created_at || '';
+          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + to_myt(t) + '</td></tr>';
+        });
+        ehtml += '</tbody></table>';
+        eventsEl.innerHTML = ehtml;
+      } else {
+        eventsEl.innerHTML = '<span class=\"text-muted text-sm\">暂无 Webhook 事件</span>';
+      }
     }
   } catch(e) {
     console.error('Dashboard refresh failed:', e);

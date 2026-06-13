@@ -360,15 +360,14 @@ def get_recent_events(limit: int = 50, tenant_id: str = None) -> list[dict]:
         d = dict(r)
         # 从 payload 提取 user_name 和 event_time
         try:
-            top = json.loads(d["payload"])
-            # 兼容两种结构：直接 {payload:{...}} 或 {object:{...}}
-            payload = top.get("payload", top)
+            payload = json.loads(d["payload"])
             obj = payload.get("object", {})
             part = obj.get("participant", {})
             user_name = part.get("user_name") or obj.get("user_name", "")
             if not user_name:
                 user_name = part.get("participant_user_name", "")
             d["user_name"] = user_name
+            # event_time 取 participant.join_time，其次取 created_at
             join_time = part.get("join_time") or ""
             if join_time:
                 d["event_time"] = join_time
