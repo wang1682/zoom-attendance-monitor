@@ -504,7 +504,9 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
     now_myt = now_utc + timedelta(hours=8)
     today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start_utc = today_start_myt - timedelta(hours=8)
-    today_utc_str = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    # 往前多查 6 小时，覆盖 MYT 00:00 前就已在线的参会者
+    query_start_utc = today_start_utc - timedelta(hours=6)
+    today_utc_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
 
     if tenant_id:
         rows = _get_conn().execute(
@@ -572,6 +574,9 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             ev = deduped[i]
             if ev["action"] in ("enter", "joined"):
                 enter_dt = datetime.fromisoformat(ev["action_time"])
+                # 只算今日 MYT 范围内的时长
+                if enter_dt < today_start_utc:
+                    enter_dt = today_start_utc
                 leave_dt = None
                 for j in range(i + 1, len(deduped)):
                     if deduped[j]["action"] in ("leave", "left"):
