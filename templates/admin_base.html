@@ -48,7 +48,6 @@
         'alerts': '/dashboard/alerts',
         'settings': '/dashboard/settings',
         'admin': '/dashboard/admin/tenants',
-        'aliases': '/dashboard/admin/aliases',
     } %}
 
     <!-- Topbar -->
@@ -56,7 +55,7 @@
         <div class="flex items-center gap-4">
             <span style="color:#818cf8; font-weight:700;">Zoom Monitor</span>
             {% for key, url in nav_items.items() %}
-            <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">{{ {'dashboard':'首页','events':'事件','participants':'参会','alerts':'告警','settings':'设置','admin':'管理','aliases':'别名'}[key] }}</a>
+            <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">{{ {'dashboard':'首页','events':'事件','participants':'参会','alerts':'告警','settings':'设置','admin':'管理'}[key] }}</a>
             {% endfor %}
         </div>
         <form method="post" action="/logout" style="display:inline">

@@ -589,38 +589,6 @@ async def admin_channels_test(request: Request, channel_id: int,
         return JSONResponse({"ok": False, "error": str(e)})
 
 
-# ── Admin: Member Aliases ─────────────────────────────────────────────────────
-
-
-@router.get("/admin/aliases", response_class=HTMLResponse)
-async def admin_aliases(request: Request, user: dict = Depends(require_user)):
-    """Member alias management page."""
-    tenant_id = request.session.get("tenant_id", "default")
-    members = db.get_member_display_list(tenant_id)
-    # 获取所有分组用于下拉筛选
-    groups = db.get_all_groups()
-    return _render_admin(request, "admin", user, "admin_aliases.html",
-                         members=members, groups=groups)
-
-
-@router.post("/admin/aliases/{member_id}/update")
-async def admin_aliases_update(request: Request, member_id: int,
-                               display_name: str = Form(""),
-                               note: str = Form(""),
-                               count_enabled: str = Form("1"),
-                               aliases: str = Form("[]"),
-                               user: dict = Depends(require_user)):
-    """Update a member's alias/display name."""
-    ok = db.update_member_display(
-        member_id,
-        display_name=display_name.strip() or None,
-        note=note.strip() or None,
-        count_enabled=(count_enabled == "1"),
-        aliases_json=aliases.strip() or "[]",
-    )
-    return RedirectResponse(url="/dashboard/admin/aliases", status_code=303)
-
-
 # ── Rendering helper ──────────────────────────────────────────────────────────
 
 def _render_admin(request: Request, active: str, user: dict, template_name: str,
