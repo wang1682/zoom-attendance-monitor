@@ -1867,12 +1867,17 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
-        # ── 从 sharing_live 表统计每个人累计共享时长 ──
-        # 查询所有 sharing_live 记录（不分租户，因为表中可能部分记录缺 tenant_id）
+        # ── 从 sharing_live 表统计每个人今日累计共享时长 ──
+        # 只算当天（MYT时区）范围内的记录
+        myt_start = (now_utc.astimezone(MYT).replace(hour=0, minute=0, second=0, microsecond=0)
+                     - timedelta(hours=8)).isoformat()
+        myt_end = (now_utc.astimezone(MYT).replace(hour=23, minute=59, second=59, microsecond=0)
+                   - timedelta(hours=8)).isoformat()
         all_share = conn.execute("""
             SELECT user_name, start_time, end_time, is_active FROM sharing_live
+            WHERE start_time >= ? AND start_time < ?
             ORDER BY user_name, start_time
-        """).fetchall()
+        """, (myt_start, myt_end)).fetchall()
         acc_duration = {}  # norm_key -> total_minutes
         for sr in all_share:
             uname = sr[0]
