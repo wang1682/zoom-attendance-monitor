@@ -143,6 +143,20 @@ async def poll_account(zoom: ZoomAPI, meeting_ids: list[str],
     return new_entries, leaves, stranger_warnings
 
 
+def _push_by_rule(event_type: str, text: str, default_tg: TelegramNotifier):
+    """按告警规则推送，优先用频道 Bot，回退全局 Bot"""
+    from db import get_rule_push_target
+    _bot_token, _chat_id = get_rule_push_target(event_type)
+    if _bot_token:
+        _tg = TelegramNotifier(token=_bot_token)
+        return asyncio.ensure_future(_tg.send(text, chat_id=_chat_id))
+    elif _chat_id:
+        return asyncio.ensure_future(default_tg.send(text, chat_id=_chat_id))
+    else:
+        # 没有配置目标 → 兼容旧逻辑直接用全局 Bot
+        return None
+
+
 async def monitor_loop():
     zoom_default = ZoomAPI()
     tg = TelegramNotifier()
@@ -211,7 +225,9 @@ async def monitor_loop():
                     )
                 msg = (tmpl.render("stranger_header", count=str(len(d_strangers))) +
                        "\n".join(lines))
-                await tg.send(msg)
+                _fut = _push_by_rule("unknown_user", msg, tg)
+                if not _fut:
+                    await tg.send(msg)
 
             # ── 推送：新进 ──
             if d_new and push_now:
@@ -227,7 +243,9 @@ async def monitor_loop():
                                     room=room) + late
                     )
                 msg = "\n".join(filter(None, lines))
-                await tg.send(msg, group=True)
+                _fut = _push_by_rule("participant_joined", msg, tg)
+                if not _fut:
+                    await tg.send(msg, group=True)
 
             # ── 推送：离开 ──
             if d_leaves and push_now:
@@ -241,7 +259,9 @@ async def monitor_loop():
                                     room=room)
                     )
                 msg = "\n".join(filter(None, lines))
-                await tg.send(msg, group=True)
+                _fut = _push_by_rule("participant_left", msg, tg)
+                if not _fut:
+                    await tg.send(msg, group=True)
 
             # ── 日志 ──
             parts = []
@@ -335,21 +355,43 @@ async def monitor_loop():
                         "SELECT target_channel_id FROM telegram_alert_rules WHERE event_type='periodic_online_report'"
                     ).fetchone()
                     _yc_chat_id = ""
+                    _yc_bot_token = ""
                     if _rule_row and _rule_row[0]:
                         _ch_row = _conn.execute(
-                            "SELECT chat_id FROM telegram_channels WHERE id=?", (_rule_row[0],)
+                            "SELECT chat_id, bot_token FROM telegram_channels WHERE id=?", (_rule_row[0],)
                         ).fetchone()
-                        if _ch_row and _ch_row[0]:
-                            _yc_chat_id = _ch_row[0]
-                    sys.stdout.write(f"[PERIODIC REPORT] YC群 chat_id={_yc_chat_id or 'private'}\n")
+                        if _ch_row:
+                            _yc_chat_id = _ch_row[0] or ""
+                            _yc_bot_token = _ch_row[1] or ""
+                    sys.stdout.write(f"[PERIODIC REPORT] YC群 chat_id={_yc_chat_id or 'private'} bot_token={'有' if _yc_bot_token else '无(用全局)'}\n")
                     sys.stdout.flush()
-                    await tg.send(_report_text, chat_id=_yc_chat_id)
+                    if _yc_bot_token:
+                        _yc_tg = TelegramNotifier(bot_token=_yc_bot_token)
+                        await _yc_tg.send(_report_text, chat_id=_yc_chat_id)
+                    else:
+                        await tg.send(_report_text, chat_id=_yc_chat_id)
                     _M._LAST_ONLINE_REPORT = _nr
 
                 if _tj_due and settings.telegram_group2_enabled and settings.telegram_group2_chat_id:
-                    sys.stdout.write(f"[PERIODIC REPORT] TJ群 chat_id={settings.telegram_group2_chat_id}\n")
+                    _tj_chat_id = settings.telegram_group2_chat_id
+                    _tj_bot_token = ""
+                    try:
+                        import db as _db2
+                        _conn2 = _db2._get_conn()
+                        _tj_row = _conn2.execute(
+                            "SELECT bot_token FROM telegram_channels WHERE chat_id=?", (_tj_chat_id,)
+                        ).fetchone()
+                        if _tj_row and _tj_row[0]:
+                            _tj_bot_token = _tj_row[0]
+                    except Exception:
+                        pass
+                    sys.stdout.write(f"[PERIODIC REPORT] TJ群 chat_id={_tj_chat_id} bot_token={'有' if _tj_bot_token else '无(用全局)'}\n")
                     sys.stdout.flush()
-                    await tg.send(_report_text, chat_id=settings.telegram_group2_chat_id)
+                    if _tj_bot_token:
+                        _tj_tg = TelegramNotifier(bot_token=_tj_bot_token)
+                        await _tj_tg.send(_report_text, chat_id=_tj_chat_id)
+                    else:
+                        await tg.send(_report_text, chat_id=_tj_chat_id)
                     _M._LAST_ONLINE_REPORT_TJ = _nr
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")

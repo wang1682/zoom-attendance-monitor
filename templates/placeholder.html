@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title|default('建设中') }} - Zoom Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f0f1a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+        .card { background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 12px; padding: 2rem; }
+        .nav-link { color: #94a3b8; padding: 8px 16px; border-radius: 8px; font-size: 0.875rem; transition: all 0.15s; }
+        .nav-link:hover { background: #1e293b; color: #e2e8f0; }
+        .nav-link.active { background: #312e81; color: #a5b4fc; }
+        .topbar { background: #1a1a2e; border-bottom: 1px solid #2d2d4a; padding: 0.75rem 1.5rem; }
+    </style>
+</head>
+<body>
+    <!-- Topbar nav -->
+    <div class="topbar flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <span style="color:#818cf8; font-weight:700; margin-right:8px;">Zoom Monitor</span>
+            <a href="/dashboard" class="nav-link {% if active == 'overview' %}active{% endif %}">🏠 总览</a>
+            <a href="/dashboard/participants" class="nav-link {% if active == 'participants' %}active{% endif %}">👥 成员</a>
+            <a href="/dashboard/meetings" class="nav-link {% if active == 'meetings' %}active{% endif %}">📡 会议</a>
+            <a href="/dashboard/alerts" class="nav-link {% if active == 'alerts' %}active{% endif %}">🔔 预警</a>
+            <a href="/dashboard/settings" class="nav-link {% if active == 'settings' %}active{% endif %}">⚙️ 设置</a>
+        </div>
+        <div class="flex items-center gap-3">
+            <span style="color:#64748b; font-size:0.8rem;">
+                👤 {{ request.session.get('username','') }}
+            </span>
+            <form method="post" action="/logout" style="display:inline">
+                <button type="submit" style="background:transparent; border:1px solid #334155; color:#94a3b8; padding:4px 12px; border-radius:8px; cursor:pointer; font-size:0.8rem;">退出</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Content -->
+    <div class="max-w-3xl mx-auto px-6 py-20 text-center">
+        <div class="card">
+            <div style="font-size:3rem; margin-bottom:1rem;">🚧</div>
+            <h2 style="font-size:1.5rem; font-weight:600; margin-bottom:0.5rem;">{{ title }}</h2>
+            <p style="color:#64748b; margin-bottom:1.5rem;">{{ message }}</p>
+            <a href="/dashboard" class="btn" style="background:#6366f1; color:white; text-decoration:none;">返回总览</a>
+        </div>
+    </div>
+</body>
+</html>

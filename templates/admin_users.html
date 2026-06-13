@@ -3,26 +3,23 @@
 <div class="flex items-center justify-between mb-6">
     <div>
         <h1 class="text-2xl font-bold">后台用户</h1>
-        <p class="text-sm text-gray-400 mt-1">
-            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
-        </p>
+        <p class="text-sm text-gray-400 mt-1">所有系统用户列表</p>
     </div>
-    <div class="flex gap-3">
-        <a href="/dashboard/admin/tenants" class="btn btn-ghost">客户管理</a>
-        <a href="/dashboard/admin/accounts" class="btn btn-ghost">Zoom 账号</a>
-        <a href="/dashboard/admin/channels" class="btn btn-ghost">推送频道</a>
-        <button onclick="document.getElementById('userModal').classList.add('active')" class="btn btn-primary">新增用户</button>
+    <div class="flex gap-2">
+        <a href="/dashboard/admin/tenants" class="btn btn-ghost">← 客户管理</a>
+        <button onclick="openCreateModal()" class="btn btn-primary">+ 创建用户</button>
     </div>
 </div>
 
-<!-- User list -->
 <div class="card">
     <table>
         <thead>
             <tr>
+                <th>ID</th>
                 <th>用户名</th>
                 <th>显示名称</th>
                 <th>角色</th>
+                <th>租户</th>
                 <th>状态</th>
                 <th>创建时间</th>
                 <th>操作</th>
@@ -31,70 +28,90 @@
         <tbody>
             {% for u in users %}
             <tr>
-                <td style="font-family:monospace;">{{ u.username }}</td>
-                <td>{{ u.display_name }}</td>
+                <td style="font-family:monospace; font-size:0.8rem;">{{ u.id }}</td>
+                <td><strong>{{ u.username }}</strong></td>
+                <td>{{ u.display_name or '-' }}</td>
                 <td>
-                    <span class="badge {{ 'badge-owner' if u.role == 'owner' else 'badge-admin' if u.role == 'admin' else 'badge-viewer' }}">
-                        {{ {'owner':'拥有者','admin':'管理员','viewer':'只读'}.get(u.role, u.role) }}
+                    {% set role_map = {'super_admin':'超级管理员','tenant_admin':'租户管理员','tenant':'租户','viewer':'查看者'} %}
+                    <span class="badge {{ 'badge-owner' if u.role == 'super_admin' else 'badge-admin' if u.role == 'tenant_admin' else 'badge-active' if u.role == 'tenant' else 'badge-viewer' }}">
+                        {{ role_map.get(u.role, u.role) }}
                     </span>
                 </td>
+                <td><code style="font-size:0.75rem;">{{ u.tenant_id }}</code></td>
                 <td>
-                    <span class="badge {{ 'badge-active' if u.active == 'true' else 'badge-inactive' }}">
-                        {{ '启用' if u.active == 'true' else '停用' }}
+                    <span class="badge {{ 'badge-active' if u.is_active == 1 else 'badge-inactive' }}">
+                        {{ '启用' if u.is_active == 1 else '停用' }}
                     </span>
                 </td>
                 <td style="color:#64748b; font-size:0.8rem;">{{ u.created_at[:10] if u.created_at else '' }}</td>
                 <td>
-                    <div class="flex gap-2">
-                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle" style="display:inline">
-                            <button type="submit" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">
-                                {{ '停用' if u.active == 'true' else '启用' }}
+                    {% if u.role != 'super_admin' or u.id != 1 %}
+                    <div style="display:flex; gap:4px;">
+                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/toggle" style="display:inline;">
+                            <button type="submit" class="btn btn-sm {{ 'btn-warning' if u.is_active == 1 else 'btn-success' }}">
+                                {{ '停用' if u.is_active == 1 else '启用' }}
                             </button>
                         </form>
-                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="display:inline"
-                              onsubmit="return confirm('确认删除用户 {{ u.username }}？')">
-                            <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
+                        <form method="post" action="/dashboard/admin/users/{{ u.id }}/delete" style="display:inline;" onsubmit="return confirm('确认删除用户 {{ u.username }}？')">
+                            <button type="submit" class="btn btn-sm btn-danger">删除</button>
                         </form>
                     </div>
+                    {% endif %}
                 </td>
             </tr>
-            {% else %}
-            <tr><td colspan="6" style="text-align:center; color:#64748b; padding:2rem;">暂无后台用户</td></tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
 
-<!-- Create user modal -->
-<div id="userModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
-    <div class="modal-content">
-        <h2 class="text-xl font-bold mb-4">新增后台用户</h2>
+<!-- 创建用户弹窗 -->
+<div id="createModal" class="modal" style="display:none;">
+    <div class="modal-backdrop" onclick="closeCreateModal()"></div>
+    <div class="modal-content" style="max-width:420px;">
+        <div class="modal-header">
+            <h3>创建用户</h3>
+            <button onclick="closeCreateModal()" class="modal-close">&times;</button>
+        </div>
         <form method="post" action="/dashboard/admin/users/create">
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">用户名 <span style="color:#ef4444;">*</span></label>
-                <input type="text" name="username" required placeholder="例如: admin">
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" name="username" required class="form-control" placeholder="如 customer_zs">
+                </div>
+                <div class="form-group">
+                    <label>密码</label>
+                    <input type="text" name="password" required class="form-control" placeholder="留空自动生成">
+                </div>
+                <div class="form-group">
+                    <label>显示名称</label>
+                    <input type="text" name="display_name" class="form-control" placeholder="如 张三">
+                </div>
+                <div class="form-group">
+                    <label>角色</label>
+                    <select name="role" class="form-control">
+                        <option value="tenant">租户</option>
+                        <option value="tenant_admin">租户管理员</option>
+                        <option value="viewer">查看者</option>
+                    </select>
+                </div>
+                <div style="font-size:0.8rem; color:#64748b; margin-top:8px;">
+                    新用户将分配到当前租户。
+                </div>
             </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">密码 <span style="color:#ef4444;">*</span></label>
-                <input type="password" name="password" required>
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">显示名称</label>
-                <input type="text" name="display_name" placeholder="管理员">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">角色</label>
-                <select name="role">
-                    <option value="owner">Owner — 拥有者（完全控制）</option>
-                    <option value="admin">Admin — 管理员（配置管理）</option>
-                    <option value="viewer" selected>Viewer — 只读查看</option>
-                </select>
-            </div>
-            <div class="flex gap-3 justify-end">
-                <button type="button" class="btn btn-ghost" onclick="document.getElementById('userModal').classList.remove('active')">取消</button>
+            <div class="modal-footer">
+                <button type="button" onclick="closeCreateModal()" class="btn btn-ghost">取消</button>
                 <button type="submit" class="btn btn-primary">创建</button>
             </div>
         </form>
     </div>
 </div>
+
+<script>
+function openCreateModal() {
+    document.getElementById('createModal').style.display = 'flex';
+}
+function closeCreateModal() {
+    document.getElementById('createModal').style.display = 'none';
+}
+</script>
 {% endblock %}

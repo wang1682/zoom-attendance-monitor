@@ -988,6 +988,42 @@ def log_audit(action: str, entity_type: str = "telegram_alert_rule",
     conn.commit()
 
 
+def get_rule_push_target(event_type: str) -> tuple[str, str]:
+    """根据告警规则 event_type 查询推送目标和 Bot Token
+    
+    返回 (bot_token, chat_id)
+    - bot_token 为空字符串表示使用全局 Bot
+    - chat_id 为空字符串表示没有配置目标
+    - 规则不存在或未启用也返回 ("", "")
+    """
+    conn = _get_conn()
+    rule = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    if not rule:
+        return ("", "")
+    rule = dict(rule)
+    if not rule.get("enabled", 0):
+        return ("", "")
+    
+    target_channel_id = rule.get("target_channel_id")
+    if not target_channel_id:
+        # 没有指定频道，用默认行为
+        return ("", "")
+    
+    ch = conn.execute(
+        "SELECT bot_token, chat_id FROM telegram_channels WHERE id = ?",
+        (target_channel_id,),
+    ).fetchone()
+    if not ch:
+        return ("", "")
+    
+    bot_token = ch["bot_token"] or ""
+    chat_id = ch["chat_id"] or ""
+    return (bot_token, chat_id)
+
+
 # ── Telegram Channels ─────────────────────────────────────────────────────
 
 def _seed_default_telegram_channel():
@@ -1061,7 +1097,7 @@ def upsert_telegram_channel(data: dict) -> int:
         # Update
         fields = []
         values = []
-        for key in ("chat_id", "enabled", "is_default", "notes"):
+        for key in ("chat_id", "enabled", "is_default", "notes", "bot_token", "bot_username"):
             if key in data:
                 fields.append(f"{key} = ?")
                 values.append(data[key])
@@ -1083,14 +1119,17 @@ def upsert_telegram_channel(data: dict) -> int:
             conn.execute("UPDATE telegram_channels SET is_default = 0")
 
         cur = conn.execute(
-            "INSERT INTO telegram_channels (name, chat_id, enabled, is_default, notes, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO telegram_channels (name, chat_id, enabled, is_default, notes, "
+            "bot_token, bot_username, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 name,
                 chat_id,
                 data.get("enabled", 1),
                 data.get("is_default", 0),
                 data.get("notes", ""),
+                data.get("bot_token", ""),
+                data.get("bot_username", ""),
                 now,
                 now,
             ),
@@ -1835,14 +1874,16 @@ def delete_meeting(meeting_id_db: int) -> bool:
 # ── Channel CRUD ────────────────────────────────────────────────────────
 
 def create_tenant_channel(tenant_id: str, chat_id: str, label: str = "",
-                          is_group: bool = False) -> int:
+                          is_group: bool = False,
+                          bot_token: str = "",
+                          bot_username: str = "") -> int:
     conn = _get_conn()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     cur = conn.execute(
-        "INSERT INTO tenant_channels (tenant_id, chat_id, label, is_group, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (tenant_id, chat_id, label, 1 if is_group else 0, now),
+        "INSERT INTO tenant_channels (tenant_id, chat_id, label, is_group, bot_token, bot_username, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (tenant_id, chat_id, label, 1 if is_group else 0, bot_token, bot_username, now),
     )
     conn.commit()
     log_audit("create", "channel", cur.lastrowid, f"Created channel: {chat_id}")

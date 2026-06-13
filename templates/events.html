@@ -1,17 +1,161 @@
-<!-- TEMPLATE: events.html v082-polish -->
-{% extends "base.html" %}
-{% block title %}事件记录{% endblock %}
-{% block content %}
-<div class="page-container">
-<div class="page-header"><h1 class="page-title">事件记录</h1><p class="page-subtitle">系统事件流水</p></div>
-<div class="card">
-  {% if events %}
-  <table class="data-table"><thead><tr><th>时间</th><th>事件类型</th><th>内容</th></tr></thead><tbody>
-  {% for e in events %}<tr><td class="td-mono">{{ to_myt(e.created_at) }}</td><td class="td-name">{{ e.event_type[:40] }}</td><td style="max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ts);font-size:12px">{{ (e.payload or "")[:80] }}{% if (e.payload or "")|length > 80 %}...{% endif %}</td></tr>
-  {% endfor %}</tbody></table>
-  {% else %}
-  <div class="empty-state"><div class="es-icon">📭</div><div class="es-title">暂无事件</div><div class="es-desc">系统运行正常</div></div>
-  {% endif %}
-</div>
-</div>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>事件记录 - Zoom Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f0f1a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+        .card { background: #1a1a2e; border: 1px solid #2d2d4a; border-radius: 12px; padding: 1.5rem; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 10px 12px; font-size: 0.75rem; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #2d2d4a; }
+        td { padding: 10px 12px; font-size: 0.875rem; border-bottom: 1px solid #1e1e32; }
+        tr:hover td { background: #1e1e35; }
+        .badge { padding: 2px 10px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; white-space: nowrap; }
+        .badge-meeting { background: #1e3a5f; color: #60a5fa; }
+        .badge-participant { background: #1e3a2f; color: #34d399; }
+        .badge-sharing { background: #3b1e3a; color: #c084fc; }
+        .badge-screen { background: #3b2e1e; color: #fbbf24; }
+        .badge-system { background: #1e1e2e; color: #94a3b8; }
+        .btn { padding: 6px 16px; border-radius: 8px; font-weight: 500; font-size: 0.875rem; transition: all 0.15s; cursor: pointer; border: none; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-primary:hover { background: #4f46e5; }
+        .btn-outline { background: transparent; color: #94a3b8; border: 1px solid #334155; }
+        .btn-outline:hover { background: #1e1e35; border-color: #475569; }
+        .pagination { display: flex; gap: 4px; align-items: center; margin-top: 1rem; }
+        .page-btn { padding: 6px 12px; border-radius: 6px; font-size: 0.8rem; background: transparent; color: #94a3b8; border: 1px solid #2d2d4a; cursor: pointer; }
+        .page-btn:hover { background: #1e1e35; }
+        .page-btn.active { background: #6366f1; color: white; border-color: #6366f1; }
+        .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .search-box { background: #16162a; border: 1px solid #2d2d4a; border-radius: 8px; padding: 8px 14px; color: #e2e8f0; width: 250px; font-size: 0.875rem; }
+        .search-box:focus { outline: none; border-color: #6366f1; }
+        select.filter-select { background: #16162a; border: 1px solid #2d2d4a; border-radius: 8px; padding: 8px 14px; color: #e2e8f0; font-size: 0.875rem; cursor: pointer; }
+        select.filter-select:focus { outline: none; border-color: #6366f1; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 24px; border-radius: 8px; color: white; font-size: 0.875rem; z-index: 100; display: none; }
+        .toast.success { background: #065f46; }
+        .toast.error { background: #7f1d1d; }
+        .event-payload { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: #64748b; font-family: 'SF Mono', 'Fira Code', monospace; }
+    </style>
+</head>
+<body>
+    {% include "tenant_nav.html" ignore missing %}
+    <div id="toast" class="toast"></div>
+    <div style="max-width: 1200px; margin: 2rem auto; padding: 0 1.5rem;">
+
+        <!-- 面包屑 + 标题 -->
+        <div style="margin-bottom: 1.5rem; display: flex; align-items: center; justify-content: space-between;">
+            <div>
+                <span style="font-size: 0.8rem; color: #64748b;">
+                    <a href="/dashboard" style="color: #64748b; text-decoration: none;">运营面板</a> / 事件记录
+                </span>
+                <h1 style="font-size: 1.5rem; font-weight: 700; margin: 0.25rem 0 0 0;">📋 事件记录</h1>
+            </div>
+            <div style="font-size: 0.8rem; color: #64748b;">
+                当前租户: <strong style="color: #e2e8f0;">{{ tenant_name }}</strong>
+                <span style="margin-left: 8px; background: #1e1e35; padding: 2px 10px; border-radius: 9999px;" id="total-badge">共 {{ total }} 条</span>
+            </div>
+        </div>
+
+        <!-- 搜索 + 筛选 -->
+        <div class="card" style="margin-bottom: 1rem; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <input type="text" class="search-box" id="search-input" placeholder="搜索事件内容..." value="{{ search or '' }}">
+            <select class="filter-select" id="type-filter">
+                <option value="">全部类型</option>
+                {% for t in event_types %}
+                <option value="{{ t }}" {% if type_filter == t %}selected{% endif %}>{{ t }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-primary" onclick="applyFilters()">筛选</button>
+            <button class="btn btn-outline" onclick="clearFilters()">重置</button>
+        </div>
+
+        <!-- 事件列表 -->
+        <div class="card" style="padding: 0; overflow: hidden;">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 50px;">ID</th>
+                        <th style="width: 160px;">时间</th>
+                        <th style="width: 180px;">事件类型</th>
+                        <th>内容</th>
+                        <th style="width: 80px; text-align: center;">来源</th>
+                    </tr>
+                </thead>
+                <tbody id="events-tbody">
+                    {% for e in events %}
+                    <tr>
+                        <td style="color: #64748b; font-size: 0.75rem;">{{ e.id }}</td>
+                        <td style="white-space: nowrap; font-size: 0.8rem;">{{ fmt_myt(e.created_at) }}</td>
+                        <td>
+                            {% set type_class = 'badge-meeting' if 'meeting' in (e.event_type or '') else
+                                                   'badge-sharing' if 'sharing' in (e.event_type or '') else
+                                                   'badge-participant' if 'participant' in (e.event_type or '') or 'join' in (e.event_type or '') or 'left' in (e.event_type or '') else
+                                                   'badge-screen' if 'screen' in (e.event_type or '') else
+                                                   'badge-system' %}
+                            <span class="badge {{ type_class }}">{{ e.event_type or '-' }}</span>
+                        </td>
+                        <td>
+                            {% if e.payload %}
+                            <div class="event-payload" title="{{ e.payload[:500] }}">{{ e.payload[:200] }}</div>
+                            {% else %}
+                            <span style="color: #475569;">-</span>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: center; font-size: 0.75rem; color: #64748b;">{{ e.source or 'webhook' }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not events %}
+                    <tr><td colspan="5" style="text-align: center; padding: 3rem; color: #475569;">暂无事件记录</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div class="pagination">
+            <button class="page-btn" onclick="goPage(1)" {% if page <= 1 %}disabled{% endif %}>&laquo;</button>
+            <button class="page-btn" onclick="goPage({{ page - 1 }})" {% if page <= 1 %}disabled{% endif %}>&lsaquo;</button>
+            {% for p in page_range %}
+            <button class="page-btn {% if p == page %}active{% endif %}" onclick="goPage({{ p }})">{{ p }}</button>
+            {% endfor %}
+            <button class="page-btn" onclick="goPage({{ page + 1 }})" {% if page >= total_pages %}disabled{% endif %}>&rsaquo;</button>
+            <button class="page-btn" onclick="goPage({{ total_pages }})" {% if page >= total_pages %}disabled{% endif %}>&raquo;</button>
+            <span style="margin-left: 12px; font-size: 0.8rem; color: #64748b;">第 {{ page }} / {{ total_pages }} 页</span>
+        </div>
+    </div>
+
+    <script>
+        function showToast(msg, type='success') {
+            const t = document.getElementById('toast');
+            t.textContent = msg; t.className = 'toast ' + type; t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+
+        function getParams() {
+            const s = document.getElementById('search-input').value;
+            const t = document.getElementById('type-filter').value;
+            const params = new URLSearchParams();
+            if (s) params.set('search', s);
+            if (t) params.set('type', t);
+            return params;
+        }
+
+        function applyFilters() {
+            const params = getParams();
+            params.set('page', '1');
+            window.location.href = '/dashboard/events?' + params.toString();
+        }
+
+        function clearFilters() {
+            window.location.href = '/dashboard/events';
+        }
+
+        function goPage(p) {
+            const params = getParams();
+            params.set('page', p);
+            window.location.href = '/dashboard/events?' + params.toString();
+        }
+    </script>
+</body>
+</html>

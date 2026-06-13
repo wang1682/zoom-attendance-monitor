@@ -1,0 +1,157 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">Telegram 推送频道</h1>
+        <p class="text-sm text-gray-400 mt-1">
+            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
+        </p>
+    </div>
+    <div class="flex gap-3">
+        <a href="/dashboard/admin/tenants" class="btn btn-ghost">客户管理</a>
+        <a href="/dashboard/admin/accounts" class="btn btn-ghost">Zoom 账号</a>
+        <a href="/dashboard/admin/users" class="btn btn-ghost">后台用户</a>
+        <button onclick="openChannelModal()" class="btn btn-primary">添加频道</button>
+    </div>
+</div>
+
+<!-- Channel list -->
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Chat ID</th>
+                <th>备注</th>
+                <th>类型</th>
+                <th>状态</th>
+                <th>操作</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ch in channels %}
+            <tr>
+                <td style="font-family:monospace;">{{ ch.chat_id }}</td>
+                <td>{{ ch.label }}</td>
+                <td>
+                    <span class="badge" style="background:{% if ch.is_group == 'true' %}#1e3a5f; color:#60a5fa;{% else %}#3b0764; color:#c084fc;{% endif %}">
+                        {{ '群组' if ch.is_group == 'true' else '私聊' }}
+                    </span>
+                </td>
+                <td>
+                    <span class="badge {{ 'badge-active' if ch.enabled == 'true' else 'badge-inactive' }}">
+                        {{ '启用' if ch.enabled == 'true' else '停用' }}
+                    </span>
+                </td>
+                <td>
+                    <div class="flex gap-2">
+                        <button onclick="openEditChannel({{ ch.id }}, '{{ ch.label|e }}', '{{ ch.chat_id|e }}', {{ 'true' if ch.is_group == 'true' else 'false' }})" class="btn btn-ghost" style="padding:2px 10px;font-size:0.75rem;">编辑</button>
+                        <form method="post" action="/dashboard/admin/channels/{{ ch.id }}/toggle" style="display:inline">
+                            <button type="submit" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">
+                                {{ '停用' if ch.enabled == 'true' else '启用' }}
+                            </button>
+                        </form>
+                        <form method="post" action="/dashboard/admin/channels/{{ ch.id }}/test" style="display:inline"
+                              onsubmit="event.preventDefault();var f=this;fetch(f.action,{method:'POST'}).then(function(r){return r.json()}).then(function(d){if(d.ok){alert('✅ 推送成功')}else{alert('❌ 推送失败: '+d.error)}})">
+                            <button type="submit" class="btn btn-ghost" style="padding:2px 10px;font-size:0.75rem;">测试</button>
+                        </form>
+                        <button onclick="confirmDeleteChannel({{ ch.id }}, '{{ ch.label|e or ch.chat_id|e }}')" class="btn btn-danger" style="padding:2px 10px;font-size:0.75rem;">删除</button>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" style="text-align:center; color:#64748b; padding:2rem;">暂无推送频道</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Create channel modal -->
+<div id="chModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">添加推送频道</h2>
+        <form method="post" action="/dashboard/admin/channels/create">
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Chat ID <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="chat_id" required placeholder="例如: 123456789">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
+                <input type="text" name="label" placeholder="私聊/自习室群">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">类型</label>
+                <select name="is_group">
+                    <option value="false">私聊 / 单聊</option>
+                    <option value="true">群组</option>
+                </select>
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('chModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">添加</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Edit channel modal -->
+<div id="editChannelModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content">
+        <h2 class="text-xl font-bold mb-4">编辑频道</h2>
+        <form id="editChannelForm" method="post" action="">
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">Chat ID <span style="color:#ef4444;">*</span></label>
+                <input type="text" name="chat_id" id="editChannelChatId" required placeholder="例如: 123456789">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
+                <input type="text" name="label" id="editChannelLabel" placeholder="私聊/自习室群">
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm mb-1" style="color:#94a3b8;">类型</label>
+                <select name="is_group" id="editChannelIsGroup">
+                    <option value="false">私聊 / 单聊</option>
+                    <option value="true">群组</option>
+                </select>
+            </div>
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('editChannelModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Delete confirm modal -->
+<div id="deleteChannelModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
+    <div class="modal-content" style="max-width:400px">
+        <h2 class="text-xl font-bold mb-4">确认删除</h2>
+        <p style="color:#94a3b8;margin-bottom:16px">
+            确定要删除频道「<span id="deleteChannelName" style="color:#e2e8f0"></span>」？
+        </p>
+        <form id="deleteChannelForm" method="post" action="">
+            <div class="flex gap-3 justify-end">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('deleteChannelModal').classList.remove('active')">取消</button>
+                <button type="submit" class="btn btn-danger">确认删除</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function openChannelModal(){
+    document.getElementById('chModal').classList.add('active');
+}
+function openEditChannel(id, label, chatId, isGroup){
+    document.getElementById('editChannelChatId').value = chatId;
+    document.getElementById('editChannelLabel').value = label;
+    document.getElementById('editChannelIsGroup').value = isGroup ? 'true' : 'false';
+    document.getElementById('editChannelForm').action = '/dashboard/admin/channels/' + id + '/edit';
+    document.getElementById('editChannelModal').classList.add('active');
+}
+function confirmDeleteChannel(id, name){
+    document.getElementById('deleteChannelName').textContent = name;
+    document.getElementById('deleteChannelForm').action = '/dashboard/admin/channels/' + id + '/delete';
+    document.getElementById('deleteChannelModal').classList.add('active');
+}
+</script>
+{% endblock %}

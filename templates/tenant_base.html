@@ -134,7 +134,8 @@ select option{background:var(--bg3);color:var(--text)}
     'participants':  ['成员', '/dashboard/participants'],
     'meetings':      ['会议', '/dashboard/meetings'],
     'alerts':        ['预警', '/dashboard/alerts'],
-    'settings':      ['设置', '/dashboard/settings'],
+    'settings': ['账号', '/dashboard/tenant/zoom'],
+    'channels': ['推送', '/dashboard/tenant/channels'],
 } %}
 
 <header class="topbar">
@@ -142,10 +143,13 @@ select option{background:var(--bg3);color:var(--text)}
   <span class="topbar-sep"></span>
   <nav class="topbar-nav">
     {% for key, val in nav_map.items() %}
+    {% if not (is_viewer and key in ('settings','channels')) %}
     <a href="{{ val[1] }}" class="{% if active == key %}active{% endif %}">{{ val[0] }}</a>
+    {% endif %}
     {% endfor %}
   </nav>
   <div class="topbar-right">
+    <span class="text-muted" id="myt-clock" style="font-size:10px;font-family:var(--mono);opacity:0.7">🕒 --:--:--</span>
     <span class="text-muted" style="font-size:10px;font-family:var(--mono)">{{ current_user.display_name|default('') }}</span>
     <span class="text-muted" style="border-left:1px solid var(--nav-border);padding-left:8px;font-size:10px;font-family:var(--mono)">{{ tenant_name }}</span>
     <form method="post" action="/logout" style="display:inline">
@@ -161,6 +165,29 @@ select option{background:var(--bg3);color:var(--text)}
 <div id="toast" style="position:fixed;top:20px;right:20px;padding:8px 16px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:11px;z-index:100;font-family:var(--mono);border-radius:3px;display:none"></div>
 
 <script>
+function fmtMYT(value) {
+    if (!value) return '-';
+    var d = new Date(value);
+    return d.toLocaleString('en-MY', {
+        timeZone: 'Asia/Kuala_Lumpur',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+    });
+}
+/* 兼容旧代码 */
+window.to_myt = fmtMYT;
+window.fmt_myt = fmtMYT;
+
+/* MYT 时钟 */
+function updateClock(){
+    var now = new Date();
+    var t = now.toLocaleTimeString('en-MY',{timeZone:'Asia/Kuala_Lumpur',hour12:false});
+    document.getElementById('myt-clock').textContent = '🕒 '+t;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
 function showToast(msg,type){
   var t=document.getElementById('toast');
   t.textContent=(type==='error'?'✖ ':'✔ ')+msg;

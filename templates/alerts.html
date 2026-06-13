@@ -1,17 +1,53 @@
-<!-- TEMPLATE: alerts.html v082-polish -->
 {% extends "base.html" %}
-{% block title %}告警日志{% endblock %}
+{% block title %}告警日志 - Zoom Monitor{% endblock %}
 {% block content %}
-<div class="page-container">
-<div class="page-header"><h1 class="page-title">告警日志</h1><p class="page-subtitle">监控告警记录</p></div>
-<div class="card">
+
+<div class="page-header">
+  <h1 class="page-title">告警中心</h1>
+  <p class="page-subtitle">监控告警记录 · 推送状态</p>
+</div>
+
+<div class="panel">
   {% if alerts %}
-  <table class="data-table"><thead><tr><th>类型</th><th>标题</th><th>时间</th></tr></thead><tbody>
-  {% for a in alerts %}<tr><td>{% if a.severity == 'error' %}🔴{% elif a.severity == 'warning' %}🟡{% else %}🔵{% endif %}</td><td class="td-name">{{ a.title }}</td><td class="td-mono">{{ to_myt(a.created_at) }}</td></tr>
-  {% endfor %}</tbody></table>
+  <div class="overflow-x">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>级别</th>
+          <th>类型</th>
+          <th>标题</th>
+          <th>推送</th>
+          <th>时间</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td>
+          {% if a.severity == 'critical' or a.severity == 'error' %}
+          <span class="status-dot danger"></span>
+          {% elif a.severity == 'warning' %}
+          <span class="status-dot warning"></span>
+          {% else %}
+          <span class="status-dot online"></span>
+          {% endif %}
+        </td>
+        <td><span class="badge badge-{{ 'danger' if a.severity == 'error' or a.severity == 'critical' else 'warning' if a.severity == 'warning' else 'success' }}">{{ a.severity|default('info') }}</span></td>
+        <td class="td-name">{{ a.title or a.message }}</td>
+        <td>{% if a.pushed %}<span class="text-success">● 已推送</span>{% else %}<span class="text-muted">○</span>{% endif %}</td>
+        <td class="td-mono">{{ fmt_myt(a.created_at) }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
-  <div class="empty-state"><div class="es-icon">✅</div><div class="es-title">一切正常</div><div class="es-desc">暂无告警记录</div></div>
+  <div class="empty-state">
+    <div class="es-icon">✓</div>
+    <div class="es-title">一切正常</div>
+    <div class="es-desc">暂无告警记录</div>
+  </div>
   {% endif %}
 </div>
-</div>
+
 {% endblock %}

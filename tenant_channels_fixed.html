@@ -38,7 +38,7 @@
         <span class="badge badge-muted">未配置</span>
         <span class="text-xs text-muted">推送将使用系统默认 Bot</span>
       </div>
-      <div id="botEditArea">
+      <div id="botEditArea2">
         <div class="flex gap-2" style="flex-wrap:wrap">
           <input id="botTokenInput" style="flex:1;min-width:240px" placeholder="从 @BotFather 获取的 Token">
           <button onclick="testBotToken()" class="btn btn-sm btn-primary">测试</button>
@@ -53,12 +53,12 @@
     <div id="botEditArea" style="display:none;margin-top:8px">
       <div class="text-xs text-muted" style="margin-bottom:6px">输入新的 Bot Token（留空=不修改）</div>
       <div class="flex gap-2" style="flex-wrap:wrap">
-        <input id="botTokenInput" style="flex:1;min-width:240px" placeholder="新 Token，留空不修改">
-        <button onclick="testBotToken()" class="btn btn-sm btn-primary">测试</button>
-        <button onclick="saveBotToken()" class="btn btn-sm btn-success">保存</button>
+        <input id="botTokenInput2" style="flex:1;min-width:240px" placeholder="新 Token，留空不修改">
+        <button onclick="testBotToken2()" class="btn btn-sm btn-primary">测试</button>
+        <button onclick="saveBotToken2()" class="btn btn-sm btn-success">保存</button>
         <button onclick="hideBotEdit()" class="btn btn-sm">取消</button>
       </div>
-      <div id="botTestResult" class="text-xs" style="margin-top:6px"></div>
+      <div id="botTestResult2" class="text-xs" style="margin-top:6px"></div>
     </div>
   </div>
 </div>
@@ -93,6 +93,7 @@
           </td>
           <td class="td-action">
             <div class="flex gap-1" style="justify-content:flex-end">
+              <button onclick="openEditChannel({{ ch.id }}, '{{ ch.label|e }}', '{{ ch.chat_id|e }}', {{ 'true' if ch.is_group == 'true' else 'false' }})" class="btn btn-sm">编辑</button>
               <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/toggle" style="display:inline">
                 <button type="submit" class="btn btn-sm">{{ '暂停' if ch.enabled == 'true' else '启用' }}</button>
               </form>
@@ -100,10 +101,7 @@
                     onsubmit="event.preventDefault();var f=this;fetch(f.action,{method:'POST'}).then(r=>r.json()).then(d=>{showToast(d.ok?'✔ 推送成功':'✖ 推送失败: '+d.error,d.ok?'':'error')})">
                 <button type="submit" class="btn btn-sm">测试</button>
               </form>
-              <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/delete" style="display:inline"
-                    onsubmit="return confirm('确定删除频道「{{ ch.label or ch.chat_id }}」？')">
-                <button type="submit" class="btn btn-sm btn-danger">删除</button>
-              </form>
+              <button onclick="confirmDeleteChannel({{ ch.id }}, '{{ ch.label|e or ch.chat_id|e }}')" class="btn btn-sm btn-danger">删除</button>
             </div>
           </td>
         </tr>
@@ -150,14 +148,73 @@
   </div>
 </div>
 
+{# ── Edit Modal ── #}
+<div id="editChannelModal" class="modal-overlay">
+  <div class="modal-content">
+    <button class="modal-close" onclick="closeModal('editChannelModal')">✕</button>
+    <h3>编辑频道</h3>
+    <form id="editChannelForm" method="post" action="">
+      <div class="form-group">
+        <label>Chat ID</label>
+        <input name="chat_id" id="editChannelChatId" required placeholder="-1001234567890">
+      </div>
+      <div class="form-group">
+        <label>名称</label>
+        <input name="label" id="editChannelLabel" placeholder="如：YC 预警群">
+      </div>
+      <div class="form-group">
+        <label>类型</label>
+        <select name="is_group" id="editChannelIsGroup">
+          <option value="true">群组</option>
+          <option value="false">私聊</option>
+        </select>
+      </div>
+      <div class="flex gap-2 justify-end" style="margin-top:16px">
+        <button type="button" onclick="closeModal('editChannelModal')" class="btn">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Delete Confirm Modal ── #}
+<div id="deleteChannelModal" class="modal-overlay">
+  <div class="modal-content" style="max-width:400px">
+    <button class="modal-close" onclick="closeModal('deleteChannelModal')">✕</button>
+    <h3>确认删除</h3>
+    <p style="color:var(--text-secondary);margin-bottom:16px">
+      确定要删除频道「<span id="deleteChannelName" style="color:var(--text)"></span>」？
+    </p>
+    <form id="deleteChannelForm" method="post" action="">
+      <div class="flex gap-2 justify-end">
+        <button type="button" onclick="closeModal('deleteChannelModal')" class="btn">取消</button>
+        <button type="submit" class="btn btn-danger">确认删除</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>
 var botTestedOk=false,botTestData=null;
-function toggleBotEdit(){document.getElementById('botConfigStatus').style.display='none';document.getElementById('botEditArea').style.display='block';document.getElementById('botTestResult').textContent='';botTestedOk=false;botTestData=null}
-function hideBotEdit(){document.getElementById('botEditArea').style.display='none';document.getElementById('botConfigStatus').style.display='flex';document.getElementById('botTestResult').textContent=''}
+function toggleBotEdit(){document.getElementById('botConfigStatus').style.display='none';document.getElementById('botEditArea').style.display='block';document.getElementById('botTestResult2').textContent='';botTestedOk=false;botTestData=null}
+function hideBotEdit(){document.getElementById('botEditArea').style.display='none';document.getElementById('botConfigStatus').style.display='flex';document.getElementById('botTestResult2').textContent=''}
+
 function testBotToken(){
   var t=document.getElementById('botTokenInput').value.trim();
   if(!t){document.getElementById('botTestResult').innerHTML='<span style="color:var(--danger)">请输入 Bot Token</span>';return}
   var r=document.getElementById('botTestResult');r.innerHTML='<span style="color:var(--text-muted)">⏳ 测试中...</span>';
+  var d=new FormData();d.append('bot_token',t);
+  fetch('/dashboard/tenant/channels/bot-test',{method:'POST',body:d})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if(d.ok){botTestedOk=true;botTestData=d;r.innerHTML='<span style="color:var(--success)">✔ 验证成功 — @'+d.username+' (ID: '+d.id+')</span>'}
+      else{botTestedOk=false;botTestData=null;r.innerHTML='<span style="color:var(--danger)">✖ '+(d.error||'验证失败')+'</span>'}
+    }).catch(function(e){botTestedOk=false;botTestData=null;r.innerHTML='<span style="color:var(--danger)">✖ 请求失败</span>'});
+}
+function testBotToken2(){
+  var t=document.getElementById('botTokenInput2').value.trim();
+  if(!t){document.getElementById('botTestResult2').innerHTML='<span style="color:var(--danger)">请输入 Bot Token</span>';return}
+  var r=document.getElementById('botTestResult2');r.innerHTML='<span style="color:var(--text-muted)">⏳ 测试中...</span>';
   var d=new FormData();d.append('bot_token',t);
   fetch('/dashboard/tenant/channels/bot-test',{method:'POST',body:d})
     .then(function(r){return r.json()})
@@ -173,6 +230,37 @@ function saveBotToken(){
   fetch('/dashboard/tenant/channels/bot-config',{method:'POST',body:d})
     .then(function(r){if(r.redirected||r.ok){showToast('✔ Bot 已保存');setTimeout(function(){window.location.reload()},1000)}else{showToast('✖ 保存失败','error')}})
     .catch(function(e){showToast('✖ 请求失败','error')});
+}
+function saveBotToken2(){
+  var t=document.getElementById('botTokenInput2').value.trim();
+  var d=new FormData();
+  if(t){d.append('bot_token',t)}
+  fetch('/dashboard/tenant/channels/bot-config',{method:'POST',body:d})
+    .then(function(r){if(r.redirected||r.ok){showToast('✔ Bot 已保存');setTimeout(function(){window.location.reload()},1000)}else{showToast('✖ 保存失败','error')}})
+    .catch(function(e){showToast('✖ 请求失败','error')});
+}
+
+function openModal(id){
+  document.getElementById(id).classList.remove('hidden');
+  document.getElementById(id).style.display='flex';
+}
+function closeModal(id){
+  document.getElementById(id).classList.add('hidden');
+  document.getElementById(id).style.display='none';
+}
+
+function openEditChannel(id, label, chatId, isGroup){
+  document.getElementById('editChannelChatId').value = chatId;
+  document.getElementById('editChannelLabel').value = label;
+  document.getElementById('editChannelIsGroup').value = isGroup ? 'true' : 'false';
+  document.getElementById('editChannelForm').action = '/dashboard/tenant/channels/' + id + '/edit';
+  openModal('editChannelModal');
+}
+
+function confirmDeleteChannel(id, name){
+  document.getElementById('deleteChannelName').textContent = name;
+  document.getElementById('deleteChannelForm').action = '/dashboard/tenant/channels/' + id + '/delete';
+  openModal('deleteChannelModal');
 }
 </script>
 {% endblock %}

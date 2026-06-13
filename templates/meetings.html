@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}会议中心 - Zoom Monitor{% endblock %}
+{% block content %}
+
+{% set tab_labels = {'live':'● 当前会议','history':'■ 历史会议','sharing':'◆ 共享记录'} %}
+
+<div class="page-header">
+  <div class="flex" style="justify-content:space-between;align-items:flex-start">
+    <div>
+      <h1 class="page-title">会议中心</h1>
+      <p class="page-subtitle">当前会议 · 历史会议 · 屏幕共享记录</p>
+    </div>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div class="tab-bar">
+  {% for key, label in tab_labels.items() %}
+  <a href="?tab={{ key }}" class="tab-item {% if tab == key %}active{% endif %}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<!-- ── Tab: 当前会议 ── -->
+{% if tab == 'live' %}
+  {% if live_meetings and live_meetings|length > 0 %}
+    {% for m in live_meetings %}
+    <div class="panel mb-p">
+      <div class="panel-body" style="padding:10px 14px">
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <div style="flex:1;min-width:0">
+            <div class="flex" style="gap:8px;align-items:center;margin-bottom:4px">
+              <span class="status-dot online"></span>
+              <span style="font-size:13px;font-weight:600;color:var(--text)">{{ m.topic }}</span>
+            </div>
+            <div class="flex" style="gap:16px;flex-wrap:wrap">
+              <span class="text-sm text-muted">ID: <span class="mono">{{ m.meeting_id }}</span></span>
+              <span class="text-sm text-muted">参与者: <strong class="text-accent">{{ m.participant_count }}</strong></span>
+              <span class="text-sm text-muted">在线: <strong class="text-accent">{{ m.online_count }}</strong></span>
+            </div>
+          </div>
+          <div class="text-muted text-xs" style="flex-shrink:0">最后活跃: {{ fmt_myt(m.last_activity) }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="panel">
+      <div class="empty-state">
+        <div class="es-icon">📭</div>
+        <div class="es-title">暂无活跃会议</div>
+        <div class="es-desc">当前没有进行中的会议</div>
+      </div>
+    </div>
+  {% endif %}
+
+<!-- ── Tab: 历史会议 ── -->
+{% elif tab == 'history' %}
+  <div class="flex justify-between mb-2">
+    <span class="text-sm text-muted">共 {{ total_meetings }} 个会议</span>
+  </div>
+  {% if history_meetings and history_meetings|length > 0 %}
+    <div class="panel">
+      <div class="overflow-x">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>会议主题</th>
+              <th>Meeting ID</th>
+              <th>参与者</th>
+              <th>时长</th>
+              <th>时间范围</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for m in history_meetings %}
+          <tr>
+            <td class="td-name">{{ m.topic }}</td>
+            <td class="td-mono">{{ m.meeting_id }}</td>
+            <td><span class="badge badge-cyan">{{ m.participant_count }} 人</span></td>
+            <td class="td-mono">{{ m.duration_display }}</td>
+            <td class="td-mono">{{ m.first_event_display }} → {{ m.last_event_display }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% else %}
+    <div class="panel">
+      <div class="empty-state">
+        <div class="es-icon">📋</div>
+        <div class="es-title">暂无历史会议记录</div>
+      </div>
+    </div>
+  {% endif %}
+
+<!-- ── Tab: 共享记录 ── -->
+{% elif tab == 'sharing' %}
+  {% if sharing_records and sharing_records|length > 0 %}
+    <div class="panel">
+      <div class="overflow-x">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>用户</th>
+              <th>内容</th>
+              <th>状态</th>
+              <th>时长</th>
+              <th>时间</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for s in sharing_records %}
+          <tr>
+            <td class="td-name">{{ s.user_name }}</td>
+            <td class="truncate" style="max-width:180px;font-size:11px;color:var(--text-secondary)">{{ s.content }}</td>
+            <td>
+              {% if s.is_active %}
+              <span class="badge badge-success">共享中</span>
+              {% else %}
+              <span class="badge badge-muted">已结束</span>
+              {% endif %}
+            </td>
+            <td class="td-mono">{{ s.duration }}</td>
+            <td class="td-mono">{{ s.start_time_display }} → {{ s.end_time_display }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% else %}
+    <div class="panel">
+      <div class="empty-state">
+        <div class="es-icon">🖥️</div>
+        <div class="es-title">暂无共享记录</div>
+      </div>
+    </div>
+  {% endif %}
+
+{% endif %}
+
+{% endblock %}

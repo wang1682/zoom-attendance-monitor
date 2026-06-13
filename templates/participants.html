@@ -1,200 +1,113 @@
 {% extends "base.html" %}
-{% block title %}参会明细{% endblock %}
+{% block title %}成员中心 - Zoom Monitor{% endblock %}
 {% block content %}
-<div class="page-container">
-  <div class="page-header">
-    <h1 class="page-title">参会明细</h1>
-    <p class="page-subtitle" id="subtitle">加载中...</p>
-  </div>
 
-  <!-- KPI 汇总卡片 -->
-  <div class="kg" id="kpiBar" style="display:none">
-    <div class="kc">
-      <div class="kr"><div class="ki" style="background:var(--in-b);color:var(--in)">🧑</div><span class="kv" id="kpiTotal">—</span></div>
-      <div class="kl">今日参会人数</div>
+<div class="page-header">
+  <div class="flex" style="justify-content:space-between;align-items:flex-start">
+    <div>
+      <h1 class="page-title">成员中心 <span class="highlight">{{ date }}</span></h1>
+      <p class="page-subtitle">实时考勤聚合 · 在线率 / 累计时长</p>
     </div>
-    <div class="kc">
-      <div class="kr"><div class="ki" style="background:var(--sc-b);color:var(--sc)">🟢</div><span class="kv" id="kpiOnline">—</span></div>
-      <div class="kl">当前在线</div>
-    </div>
-    <div class="kc">
-      <div class="kr"><div class="ki" style="background:var(--pr);color:#fff">⏱️</div><span class="kv" id="kpiDuration">—</span></div>
-      <div class="kl">累计在线时长</div>
-    </div>
-    <div class="kc">
-      <div class="kr"><div class="ki" style="background:var(--wa-b);color:var(--wa)">📊</div><span class="kv" id="kpiAvg">—</span></div>
-      <div class="kl">平均在线时长</div>
-    </div>
-  </div>
-
-  <!-- 筛选栏 -->
-  <div class="card" style="margin-bottom:16px;padding:12px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <div style="display:flex;gap:6px">
-      <button class="bt bt-s filter-btn active" data-filter="all" onclick="setFilter('all')">全部</button>
-      <button class="bt bt-s filter-btn" data-filter="online" onclick="setFilter('online')">🟢 在线</button>
-      <button class="bt bt-s filter-btn" data-filter="offline" onclick="setFilter('offline')">⚪ 离线</button>
-    </div>
-    <input type="text" id="searchInput" placeholder="搜索成员..." oninput="renderTable()"
-      style="flex:1;min-width:160px;padding:6px 12px;border:1px solid var(--cb);border-radius:6px;background:var(--card);color:var(--text);font-size:13px">
-    <span style="font-size:12px;color:var(--tm)" id="countBadge">—</span>
-  </div>
-
-  <!-- 参会表格 -->
-  <div class="card" id="tableCard">
-    <div class="empty-state" id="loadingState">
-      <div class="es-icon">⏳</div>
-      <div class="es-title">加载中</div>
-      <div class="es-desc">获取参会数据...</div>
-    </div>
-    <div style="display:none" id="tableWrap">
-      <table class="data-table" id="memberTable">
-        <thead><tr>
-          <th style="width:32px">#</th>
-          <th>成员</th>
-          <th>分组</th>
-          <th>状态</th>
-          <th>首次进入</th>
-          <th>今日累计</th>
-          <th>进入次数</th>
-          <th>离开次数</th>
-          <th>最后活动</th>
-        </tr></thead>
-        <tbody id="tableBody"></tbody>
-      </table>
-    </div>
-    <div class="empty-state" id="emptyState" style="display:none">
-      <div class="es-icon">📭</div>
-      <div class="es-title">暂无数据</div>
-      <div class="es-desc" id="emptyDesc">今天还没有参会记录</div>
+    <div class="flex" style="gap:12px;align-items:center;flex-shrink:0">
+      <span class="text-sm"><span class="status-dot online" style="vertical-align:middle;margin-right:4px"></span>在线 <strong class="text-accent">{{ online_count }}</strong></span>
+      <span class="text-sm"><span class="status-dot offline" style="vertical-align:middle;margin-right:4px"></span>离线 <strong class="text-muted">{{ offline_count }}</strong></span>
+      <span class="text-sm text-muted">总时长 <strong class="text-accent">{{ total_duration }}</strong></span>
+      <span class="text-sm text-muted">均时 <strong class="text-accent">{{ avg_duration }}</strong></span>
     </div>
   </div>
 </div>
 
-<style>
-.filter-btn.active{background:var(--pr);color:#fff;border-color:var(--pr)}
-td .expand-toggle{cursor:pointer;font-size:11px;color:var(--in);user-select:none;margin-left:4px}
-td .expand-toggle:hover{text-decoration:underline}
-tr.expand-row td{padding:0}
-tr.expand-row .event-list{background:var(--rh);padding:12px 16px 12px 48px;font-size:12px;color:var(--ts)}
-tr.expand-row .event-list .el-item{padding:2px 0;display:flex;align-items:center;gap:8px}
-tr.expand-row .event-list .el-item .el-act{font-weight:500}
-tr.expand-row .event-list .el-item .el-act.enter{color:var(--sc)}
-tr.expand-row .event-list .el-item .el-act.leave{color:var(--da)}
-tr.expand-row .event-list .el-item .el-time{font-family:'SF Mono','Fira Code',monospace;color:var(--tm);font-size:11px}
-.status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:middle}
-.status-dot.online{background:var(--sc)}
-.status-dot.offline{background:var(--tm)}
-</style>
+<!-- 搜索 & 筛选 -->
+<form method="GET" action="/dashboard/participants" class="flex" style="gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+  <div style="flex:1;min-width:180px">
+    <input type="text" name="search" value="{{ search }}" placeholder="搜索成员姓名..." style="width:100%">
+  </div>
+  <select name="group" onchange="this.form.submit()">
+    <option value="">全部组</option>
+    {% for g in groups %}
+    <option value="{{ g.name }}" {% if group_filter == g.name %}selected{% endif %}>{{ g.name }}</option>
+    {% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="">全部状态</option>
+    <option value="online" {% if status_filter == 'online' %}selected{% endif %}>在线</option>
+    <option value="offline" {% if status_filter == 'offline' %}selected{% endif %}>离线</option>
+  </select>
+  {% if search or group_filter or status_filter %}
+  <a href="/dashboard/participants" class="btn btn-sm">✕ 清除</a>
+  {% endif %}
+</form>
 
-<script>
-let data = null;
-let currentFilter = 'all';
+<!-- 成员列表 -->
+<div class="panel">
+  {% if members|length > 0 %}
+  <div class="overflow-x">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>成员</th>
+          <th>状态</th>
+          <th>分组</th>
+          <th>今日累计</th>
+          <th>进入</th>
+          <th>离开</th>
+          <th>首次</th>
+          <th>最近活动</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for m in members %}
+      <tr>
+        <td>
+          <div class="flex" style="gap:8px;align-items:center">
+            <div style="width:22px;height:22px;border-radius:2px;border:1px solid var(--border-light);background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--text-muted);flex-shrink:0">
+              {{ m.standard_name[:1] }}
+            </div>
+            <span class="td-name">{{ m.standard_name }}</span>
+          </div>
+        </td>
+        <td>
+          <span class="badge {% if m.status == 'online' %}badge-success{% else %}badge-muted{% endif %}">
+            <span class="status-dot {% if m.status == 'online' %}online{% else %}offline{% endif %}" style="margin-right:2px"></span>
+            {% if m.status == 'online' %}在线{% else %}离线{% endif %}
+          </span>
+        </td>
+        <td>
+          {% if m.group_name %}
+          <span class="badge badge-cyan">{{ m.group_name }}</span>
+          {% else %}
+          <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+        <td class="td-mono text-accent">{{ m.today_total_duration }}</td>
+        <td class="text-success">{{ m.join_count }}</td>
+        <td class="text-danger">{{ m.leave_count }}</td>
+        <td class="td-mono">{{ m.first_join_display }}</td>
+        <td class="td-mono">{{ m.last_activity_display }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="es-icon">📋</div>
+    <div class="es-title">
+      {% if search or group_filter or status_filter %}
+      没有匹配的成员记录
+      {% else %}
+      暂无今日参与记录
+      {% endif %}
+    </div>
+    <div class="es-desc">
+      {% if search or group_filter or status_filter %}
+      <a href="/dashboard/participants" class="btn btn-sm">清除筛选条件</a>
+      {% else %}
+      会议数据尚未采集，等待 Zoom Webhook 事件写入
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
 
-async function loadData() {
-  try {
-    const r = await fetch('/api/v3/attendance-summary');
-    data = await r.json();
-    if (!data.ok) { showError(data.error || '请求失败'); return; }
-    document.getElementById('subtitle').textContent = data.date + ' 成员参会汇总';
-    document.getElementById('kpiBar').style.display = 'grid';
-    document.getElementById('kpiTotal').textContent = data.total_members;
-    document.getElementById('kpiOnline').textContent = data.online_count;
-    document.getElementById('kpiDuration').textContent = data.total_duration;
-    document.getElementById('kpiAvg').textContent = data.avg_duration;
-    document.getElementById('loadingState').style.display = 'none';
-    renderTable();
-  } catch(e) {
-    showError(e.message);
-  }
-}
-
-function showError(msg) {
-  document.getElementById('loadingState').style.display = 'none';
-  document.getElementById('emptyState').style.display = 'block';
-  document.getElementById('emptyDesc').textContent = '加载失败：' + msg;
-}
-
-function setFilter(f) {
-  currentFilter = f;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
-  renderTable();
-}
-
-function renderTable() {
-  if (!data || !data.members) return;
-  const search = document.getElementById('searchInput').value.trim().toLowerCase();
-
-  let filtered = data.members.filter(m => {
-    if (currentFilter === 'online' && m.status !== 'online') return false;
-    if (currentFilter === 'offline' && m.status !== 'offline') return false;
-    if (search && !m.standard_name.toLowerCase().includes(search)) return false;
-    return true;
-  });
-
-  document.getElementById('countBadge').textContent = filtered.length + ' / ' + data.members.length;
-
-  if (filtered.length === 0) {
-    document.getElementById('tableWrap').style.display = 'none';
-    document.getElementById('emptyState').style.display = 'block';
-    document.getElementById('emptyDesc').textContent = search ? '没有匹配的成员' : '今天还没有参会记录';
-    return;
-  }
-
-  document.getElementById('tableWrap').style.display = '';
-  document.getElementById('emptyState').style.display = 'none';
-
-  const tbody = document.getElementById('tableBody');
-  tbody.innerHTML = filtered.map((m, i) => {
-    const isOnline = m.status === 'online';
-    const statusHtml = isOnline
-      ? '<span class="badge badge-green"><span class="status-dot online"></span>🟢 在线</span>'
-      : '<span class="badge" style="color:var(--tm);border-color:var(--cb)"><span class="status-dot offline"></span>⚪ 离线</span>';
-
-    return `<tr onclick="toggleExpand(${i})" style="cursor:pointer">
-      <td class="td-num">${i + 1}</td>
-      <td class="td-name">${escHtml(m.standard_name)}</td>
-      <td style="color:var(--ts);font-size:12px">${escHtml(m.group_name) || '<span style="color:var(--tm)">—</span>'}</td>
-      <td>${statusHtml}</td>
-      <td class="td-mono">${m.first_join_display || '—'}</td>
-      <td><strong>${m.today_total_duration}</strong></td>
-      <td>${m.join_count}</td>
-      <td>${m.leave_count}</td>
-      <td class="td-mono">${m.last_activity_display || '—'}</td>
-    </tr>
-    <tr class="expand-row" id="expand_${i}" style="display:none">
-      <td colspan="9"><div class="event-list">${buildEventList(m.raw_events)}</div></td>
-    </tr>`;
-  }).join('');
-
-  // Store filtered data for expand
-  window._filtered = filtered;
-}
-
-function buildEventList(events) {
-  if (!events || events.length === 0) return '<div style="color:var(--tm)">暂无记录</div>';
-  return events.map(e => {
-    const act = e.action === 'enter' || e.action === 'joined' ? 'enter' : 'leave';
-    const actCn = act === 'enter' ? '进入' : '离开';
-    return `<div class="el-item">
-      <span class="el-act ${act}">● ${actCn}</span>
-      <span class="el-time">${escHtml(e.action_time_display || '')}</span>
-      <span style="color:var(--tm);font-size:10px">${escHtml(e.meeting_id || '')}</span>
-    </div>`;
-  }).join('');
-}
-
-function toggleExpand(idx) {
-  const row = document.getElementById('expand_' + idx);
-  if (!row) return;
-  const isHidden = row.style.display === 'none';
-  row.style.display = isHidden ? '' : 'none';
-}
-
-function escHtml(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-loadData();
-</script>
 {% endblock %}

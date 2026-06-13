@@ -2,237 +2,138 @@
 {% block title %}Zoom 账号{% endblock %}
 {% block content %}
 
-<div class="flex items-center justify-between mb-6">
-    <h1 style="font-size:1.5rem; font-weight:700;">🔗 Zoom 账号</h1>
+<div class="page-header">
+  <div class="flex items-center justify-between">
+    <h1 class="page-title">Zoom 账号</h1>
     {% if accounts %}
-    <button onclick="showCreateForm()"
-            style="font-size:0.85rem; color:#f1f5f9; background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:500;">
-        ＋ 新增 Zoom 账号
-    </button>
+    <button onclick="showCreateForm()" class="btn btn-primary">＋ 新增账号</button>
     {% endif %}
+  </div>
+  <p class="page-subtitle">Server-to-Server OAuth 凭证管理 · Test Connection 验证</p>
 </div>
 
-<style>
-.zoom-card { background:#0f172a; border:1px solid #1e293b; border-radius:10px; padding:18px; margin-bottom:14px; }
-.zoom-card:hover { border-color:#334155; }
-.frm-group { margin-bottom:12px; }
-.frm-group label { display:block; font-size:0.8rem; color:#94a3b8; margin-bottom:4px; }
-.frm-group input {
-    width:100%; padding:8px 10px; background:#1e293b; border:1px solid #334155;
-    border-radius:6px; color:#e2e8f0; font-size:0.9rem; outline:none; box-sizing:border-box;
-}
-.frm-group input:focus { border-color:#6366f1; }
-.btn-primary {
-    background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#f1f5f9; border:none;
-    padding:8px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; font-weight:500;
-}
-.btn-secondary {
-    background:#1e293b; color:#94a3b8; border:1px solid #334155;
-    padding:8px 18px; border-radius:6px; cursor:pointer; font-size:0.85rem; margin-left:8px;
-}
-.btn-secondary:hover { background:#334155; }
-.btn-test {
-    background:rgba(99,102,241,.12); color:#818cf8; border:1px solid rgba(99,102,241,.25);
-    padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.8rem;
-}
-.btn-test:hover { background:rgba(99,102,241,.2); }
-.test-result { margin-top:8px; padding:8px 12px; border-radius:6px; font-size:0.85rem; display:none; }
-.test-result.success { display:block; background:rgba(52,211,153,.1); color:#34d399; border:1px solid rgba(52,211,153,.2); }
-.test-result.fail { display:block; background:rgba(248,113,113,.1); color:#f87171; border:1px solid rgba(248,113,113,.2); }
-.test-result.pending { display:block; background:rgba(250,204,21,.08); color:#facc15; border:1px solid rgba(250,204,21,.15); }
-.status-badge {
-    display:inline-block; font-size:0.75rem; padding:2px 8px; border-radius:10px; font-weight:500;
-}
-.status-active { background:rgba(52,211,153,.15); color:#34d399; }
-.status-inactive { background:rgba(148,163,184,.15); color:#94a3b8; }
-.status-error { background:rgba(248,113,113,.15); color:#f87171; }
-</style>
-
-{# ── Create form (hidden when accounts exist) ── #}
-<div id="create-form" class="zoom-card" style="{% if accounts %}display:none;{% endif %}">
-    <h3 style="font-size:1rem; font-weight:600; margin-bottom:16px;">
-        {% if accounts %}新的 Zoom 账号{% else %}配置 Zoom S2S OAuth{% endif %}
-    </h3>
-    <p style="font-size:0.8rem; color:#64748b; margin-bottom:16px;">
-        在 <a href="https://marketplace.zoom.us/" target="_blank" style="color:#818cf8;">Zoom Marketplace</a> 中创建 Server-to-Server App，
-        将生成的凭据填入下方。
-    </p>
-    <form method="post" action="/dashboard/tenant/zoom/create">
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-            <div class="frm-group">
-                <label>标签（可选）</label>
-                <input name="label" placeholder="例如：Production / Test" value="">
-            </div>
-            <div class="frm-group">
-                <label>Account ID *</label>
-                <input name="account_id" required placeholder="Zoom App 中的 Account ID">
-            </div>
-            <div class="frm-group">
-                <label>Client ID *</label>
-                <input name="client_id" required placeholder="Zoom App 中的 Client ID">
-            </div>
-            <div class="frm-group">
-                <label>Client Secret *</label>
-                <input name="client_secret" type="password" required placeholder="Zoom App 中的 Client Secret">
-            </div>
-        </div>
-        <div class="frm-group">
-            <label>Webhook Secret（可选）</label>
-            <input name="webhook_secret" type="password" placeholder="Zoom App Webhook Secret Token">
-        </div>
-        <div style="display:flex; gap:8px; margin-top:4px;">
-            <button type="submit" class="btn-primary">保存配置</button>
-            <button type="button" class="btn-test" onclick="testConn(this.form)">测试连接</button>
-        </div>
-        <div class="test-result" id="test-result-create"></div>
-    </form>
+{# ── Create form ── #}
+<div id="create-form" class="zone-card" style="{% if accounts %}display:none;{% endif %}">
+  <h4>{% if accounts %}新的 Zoom 账号{% else %}配置 Zoom S2S OAuth{% endif %}</h4>
+  <p class="text-sm text-muted" style="margin:0 0 12px">
+    在 <a href="https://marketplace.zoom.us/" target="_blank">Zoom Marketplace</a> 中创建 Server-to-Server App，将生成的凭据填入下方。
+  </p>
+  <form method="post" action="/dashboard/tenant/zoom/create">
+    <div class="form-group"><label>标签（可选）</label><input name="label" placeholder="例：Production / Test" value=""></div>
+    <div class="flex gap-2" style="flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:200px"><label>Account ID *</label><input name="account_id" required placeholder="Zoom App Account ID"></div>
+      <div class="form-group" style="flex:1;min-width:200px"><label>Client ID *</label><input name="client_id" required placeholder="Zoom App Client ID"></div>
+    </div>
+    <div class="flex gap-2" style="flex-wrap:wrap">
+      <div class="form-group" style="flex:1;min-width:200px"><label>Client Secret *</label><input name="client_secret" type="password" required placeholder="Client Secret"></div>
+      <div class="form-group" style="flex:1;min-width:200px"><label>Webhook Secret（可选）</label><input name="webhook_secret" type="password" placeholder="Webhook Secret Token"></div>
+    </div>
+    <div class="flex gap-2" style="margin-top:4px">
+      <button type="submit" class="btn btn-primary">保存配置</button>
+      <button type="button" class="btn" onclick="testConn(this.form)">测试连接</button>
+    </div>
+    <div class="test-result" id="test-result-create" style="margin-top:8px;padding:6px 10px;border-radius:3px;font-size:11px;font-family:var(--mono);display:none"></div>
+  </form>
 </div>
 
 {# ── Existing accounts ── #}
 {% for acct in accounts %}
-<div class="zoom-card" id="card-{{ acct.id }}">
-    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-            <span style="font-weight:600;">{{ acct.label or acct.account_id }}</span>
-            <span class="status-badge status-{{ acct.status }}">
-                {{ {'active':'已连接','inactive':'未连接','error':'异常'}.get(acct.status, acct.status) }}
-            </span>
+<div class="zone-card" id="card-{{ acct.id }}">
+  <div class="flex items-center justify-between" style="margin-bottom:10px">
+    <div class="flex items-center gap-2">
+      <span class="text-sm" style="font-weight:600;color:var(--text)">{{ acct.label or acct.account_id }}</span>
+      {% set status_map = {'active':'已连接','inactive':'未连接','error':'异常'} %}
+      <span class="badge badge-{{ 'success' if acct.status=='active' else 'warning' if acct.status=='inactive' else 'danger' }}">{{ {'active':'● ','inactive':'○ ','error':'● '}[acct.status] }}{{ status_map.get(acct.status, acct.status) }}</span>
+    </div>
+    <div class="flex gap-1">
+      <button class="btn btn-sm" onclick="editToggle('{{ acct.id }}')">编辑</button>
+      <button class="btn btn-sm" onclick="testExisting('{{ acct.id }}')">测试</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteAccount('{{ acct.id }}')">删除</button>
+    </div>
+  </div>
+
+  <div class="flex gap-3" style="flex-wrap:wrap">
+    <span class="text-xs text-muted">Account ID: <span class="mono">{{ acct.account_id }}</span></span>
+    <span class="text-xs text-muted">Client ID: <span class="mono">{{ acct.client_id_display }}</span></span>
+    <span class="text-xs text-muted">邮箱: <span class="mono">{{ acct.host_email or '未同步' }}</span></span>
+    <span class="text-xs text-muted">Secret: {{ '✓ 已设置' if acct.has_client_secret else '—' }}</span>
+    {% if acct.last_sync %}
+    <span class="text-xs text-muted">同步: <span class="mono">{{ acct.last_sync }}</span></span>
+    <span class="text-xs text-muted">结果: <span class="mono">{{ acct.last_sync_result or '-' }}</span></span>
+    {% endif %}
+    {% if acct.webhook_last_time %}
+    <span class="text-xs text-muted">Webhook: <span class="mono">{{ acct.webhook_last_time }}</span></span>
+    <span class="text-xs text-muted">事件: <span class="mono">{{ acct.webhook_last_event or '-' }}</span></span>
+    {% endif %}
+  </div>
+
+  <div class="test-result" id="test-result-{{ acct.id }}" style="margin-top:8px;padding:6px 10px;border-radius:3px;font-size:11px;font-family:var(--mono);display:none"></div>
+
+  {# ── Edit form ── #}
+  <div id="edit-form-{{ acct.id }}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border-light)">
+    <form method="post" action="/dashboard/tenant/zoom/{{ acct.id }}/update">
+      <div class="form-group"><label>标签</label><input name="label" value="{{ acct.label }}"></div>
+      <div class="flex gap-2">
+        <div class="form-group" style="flex:1"><label>Account ID *</label><input name="account_id" value="{{ acct.account_id }}" required></div>
+        <div class="form-group" style="flex:1">
+          <label>Client ID</label>
+          <div class="text-xs text-muted" style="padding:6px 0">{{ acct.client_id_display }}</div>
+          <input name="client_id" type="hidden" value="">
+          <span class="text-xs text-muted">如需修改请删除后重建</span>
         </div>
-        <div style="display:flex; gap:6px;">
-            <button class="btn-test" onclick="editToggle('{{ acct.id }}')">编辑</button>
-            <button class="btn-test" onclick="testExisting('{{ acct.id }}')">测试连接</button>
-            <button class="btn-test" onclick="deleteAccount('{{ acct.id }}')" style="color:#f87171;">删除</button>
-        </div>
-    </div>
-
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; font-size:0.85rem;">
-        <div><span style="color:#64748b;">Account ID:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.account_id }}</span></div>
-        <div><span style="color:#64748b;">Client ID:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.client_id_display }}</span></div>
-        <div><span style="color:#64748b;">邮箱:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.host_email or '未同步' }}</span></div>
-        <div><span style="color:#64748b;">Client Secret:</span> <span style="color:#64748b; margin-left:4px;">{{ '✓ 已设置' if acct.has_client_secret else '—' }}</span></div>
-        {% if acct.last_sync %}
-        <div><span style="color:#64748b;">最后同步:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.last_sync }}</span></div>
-        <div><span style="color:#64748b;">结果:</span> <span style="color:{{ 'rgb(52,211,153)' if acct.status == 'active' else 'rgb(248,113,113)' }}; margin-left:4px;">{{ acct.last_sync_result or '-' }}</span></div>
-        {% endif %}
-        {% if acct.webhook_last_time %}
-        <div><span style="color:#64748b;">Webhook 最近:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.webhook_last_time }}</span></div>
-        <div><span style="color:#64748b;">最近事件:</span> <span style="color:#e2e8f0; margin-left:4px;">{{ acct.webhook_last_event or '-' }}</span></div>
-        {% endif %}
-    </div>
-
-    {# ── Test result area ── #}
-    <div class="test-result" id="test-result-{{ acct.id }}"></div>
-
-    {# ── Edit form (hidden by default) ── #}
-    <div id="edit-form-{{ acct.id }}" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid #1e293b;">
-        <form method="post" action="/dashboard/tenant/zoom/{{ acct.id }}/update">
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                <div class="frm-group">
-                    <label>标签</label>
-                    <input name="label" value="{{ acct.label }}">
-                </div>
-                <div class="frm-group">
-                    <label>Account ID *</label>
-                    <input name="account_id" value="{{ acct.account_id }}" required>
-                </div>
-                <div class="frm-group">
-                    <label>Client ID</label>
-                    <div style="font-size:0.85rem; color:#94a3b8; padding:8px 0;">{{ acct.client_id_display }}</div>
-                    <input name="client_id" type="hidden" value="">
-                    <span style="font-size:0.72rem; color:#64748b;">如需修改请删除账号后重新创建</span>
-                </div>
-                <div class="frm-group">
-                    <label>Client Secret</label>
-                    <input name="client_secret" type="password" placeholder="如需修改请填入新值，否则留空">
-                </div>
-            </div>
-            <div class="frm-group">
-                <label>Webhook Secret</label>
-                <input name="webhook_secret" type="password" placeholder="如需修改请填入新值，否则留空">
-            </div>
-            <div style="display:flex; gap:8px;">
-                <button type="submit" class="btn-primary">保存</button>
-                <button type="button" class="btn-secondary" onclick="editToggle('{{ acct.id }}')">取消</button>
-            </div>
-        </form>
-    </div>
+      </div>
+      <div class="flex gap-2">
+        <div class="form-group" style="flex:1"><label>Client Secret</label><input name="client_secret" type="password" placeholder="如需修改请填入新值"></div>
+        <div class="form-group" style="flex:1"><label>Webhook Secret</label><input name="webhook_secret" type="password" placeholder="如需修改请填入新值"></div>
+      </div>
+      <div class="flex gap-2">
+        <button type="submit" class="btn btn-primary">保存</button>
+        <button type="button" class="btn" onclick="editToggle('{{ acct.id }}')">取消</button>
+      </div>
+    </form>
+  </div>
 </div>
 {% endfor %}
 
 {# ── Empty state ── #}
 {% if not accounts %}
-<div class="zoom-card" style="text-align:center; padding:2.5rem;">
-    <div style="font-size:2.5rem; margin-bottom:10px;">🔗</div>
-    <h3 style="font-weight:600; margin-bottom:6px;">暂无 Zoom 账号配置</h3>
-    <p style="font-size:0.85rem; color:#64748b; margin-bottom:16px;">
-        填写下方表单自主接入 Zoom S2S OAuth，即可开始同步会议数据。
-    </p>
+<div class="zone-card" style="text-align:center;padding:2rem">
+  <div style="font-size:2rem;margin-bottom:8px;color:var(--text-muted)">🔗</div>
+  <h4 style="color:var(--text)">暂无 Zoom 账号</h4>
+  <p class="text-sm text-muted" style="margin-bottom:12px">填写上方表单自主接入 Zoom S2S OAuth，开始同步会议数据。</p>
 </div>
 {% endif %}
 
+<style>
+.test-result.success{display:block !important;background:rgba(0,230,118,.1);color:var(--success);border:1px solid rgba(0,230,118,.2)}
+.test-result.fail{display:block !important;background:rgba(255,77,79,.1);color:var(--danger);border:1px solid rgba(255,77,79,.2)}
+.test-result.pending{display:block !important;background:rgba(255,214,0,.08);color:var(--warning);border:1px solid rgba(255,214,0,.15)}
+</style>
+
 <script>
-function showCreateForm() {
-    var f = document.getElementById('create-form');
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
-    f.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function showCreateForm(){var f=document.getElementById('create-form');f.style.display=f.style.display==='none'?'block':'none';f.scrollIntoView({behavior:'smooth',block:'start'})}
+function editToggle(id){var f=document.getElementById('edit-form-'+id);f.style.display=f.style.display==='none'?'block':'none'}
+function doTest(el,html,cls){el.className='test-result '+cls;el.innerHTML=html;el.style.display='block';el.scrollIntoView({behavior:'smooth',block:'nearest'})}
+function testConn(form){
+  var el=document.getElementById('test-result-create');
+  doTest(el,'⏳ 测试中...','pending');
+  var data=new URLSearchParams(new FormData(form));
+  fetch('/dashboard/tenant/zoom/test',{method:'POST',body:data})
+    .then(function(r){return r.json()})
+    .then(function(j){doTest(el,j.html||(j.success?'✔ '+j.message:'✖ '+j.message),j.success?'success':'fail')})
+    .catch(function(e){doTest(el,'✖ 请求失败: '+e.message,'fail')});
 }
-
-function editToggle(id) {
-    var f = document.getElementById('edit-form-' + id);
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+function deleteAccount(id){
+  if(!confirm('确定删除此 Zoom 账号？不可恢复。')) return;
+  fetch('/dashboard/tenant/zoom/'+id+'/delete',{method:'POST'}).then(function(){window.location.reload()}).catch(function(e){alert('删除失败: '+e.message)});
 }
-
-function showTestResult(id, html, cls) {
-    var el = document.getElementById('test-result-' + id);
-    el.className = 'test-result ' + cls;
-    el.innerHTML = html;
-    el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function testConn(form) {
-    var id = form.closest ? 'create' : 'create';
-    var el = document.getElementById('test-result-' + (form.dataset ? form.dataset.acctId || 'create' : 'create'));
-    if (!el) { el = document.getElementById('test-result-create'); }
-    el.className = 'test-result pending';
-    el.innerHTML = '⏳ 测试中...';
-    el.style.display = 'block';
-
-    var data = new URLSearchParams(new FormData(form));
-    fetch('/dashboard/tenant/zoom/test', { method: 'POST', body: data })
-        .then(r => r.json())
-        .then(j => {
-            el.className = 'test-result ' + (j.success ? 'success' : 'fail');
-            el.innerHTML = j.html || (j.success ? '✅ ' + j.message : '❌ ' + j.message);
-        })
-        .catch(e => {
-            el.className = 'test-result fail';
-            el.innerHTML = '❌ 请求失败: ' + e.message;
-        });
-}
-
-function deleteAccount(id) {
-    if (!confirm('⚠️ 确定删除此 Zoom 账号？此操作不可恢复。')) return;
-    fetch('/dashboard/tenant/zoom/' + id + '/delete', { method: 'POST' })
-        .then(r => { window.location.reload(); })
-        .catch(e => alert('删除失败: ' + e.message));
-}
-
-function testExisting(acctId) {
-    var el = document.getElementById('test-result-' + acctId);
-    el.className = 'test-result pending';
-    el.innerHTML = '⏳ 测试中...';
-    el.style.display = 'block';
-
-    fetch('/dashboard/tenant/zoom/' + acctId + '/test', { method: 'POST' })
-        .then(r => r.json())
-        .then(j => {
-            el.className = 'test-result ' + (j.success ? 'success' : 'fail');
-            el.innerHTML = j.html || (j.success ? '✅ ' + j.message : '❌ ' + j.message);
-        })
-        .catch(e => {
-            el.className = 'test-result fail';
-            el.innerHTML = '❌ 请求失败: ' + e.message;
-        });
+function testExisting(acctId){
+  var el=document.getElementById('test-result-'+acctId);
+  doTest(el,'⏳ 测试中...','pending');
+  fetch('/dashboard/tenant/zoom/'+acctId+'/test',{method:'POST'})
+    .then(function(r){return r.json()})
+    .then(function(j){doTest(el,j.html||(j.success?'✔ '+j.message:'✖ '+j.message),j.success?'success':'fail')})
+    .catch(function(e){doTest(el,'✖ 请求失败: '+e.message,'fail')});
 }
 </script>
 

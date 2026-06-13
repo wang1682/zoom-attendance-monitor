@@ -1366,23 +1366,27 @@ def build_app() -> "FastAPI":
                             try:
                                 _rule_r = p_conn.execute("SELECT target_channel_id FROM telegram_alert_rules WHERE event_type=?", (push_event,)).fetchone()
                                 if _rule_r and _rule_r[0]:
-                                    # 指定了特定频道 → 只发该频道
+                                    # 指定了特定频道 → 只发该频道，用该频道绑定的 Bot
                                     _ch = db.get_telegram_channel_by_id(_rule_r[0])
                                     if _ch and _ch.get("enabled"):
-                                        _targets = [_ch["chat_id"]]
+                                        _c_bot = _ch.get("bot_token", "") or _bot_token or None
+                                        _targets = [{"chat_id": _ch["chat_id"], "bot_token": _c_bot}]
                                 else:
                                     # 未指定（默认）→ 发到所有启用频道（排除 TJ 群，TJ 群只收 9h 在线预警）
-                                    _all = p_conn.execute("SELECT chat_id FROM telegram_channels WHERE enabled=1").fetchall()
+                                    _all = p_conn.execute("SELECT chat_id, bot_token FROM telegram_channels WHERE enabled=1").fetchall()
                                     _group2 = settings.telegram_group2_chat_id
-                                    _targets = [row[0] for row in _all if not _group2 or str(row[0]) != _group2]
+                                    _targets = [
+                                        {"chat_id": row[0], "bot_token": row[1] or _bot_token or None}
+                                        for row in _all if not _group2 or str(row[0]) != _group2
+                                    ]
                             except:
                                 pass
                             if not _targets:
-                                _targets = [None]  # 保底走 settings
+                                _targets = [{"chat_id": None, "bot_token": _bot_token or None}]  # 保底走 settings
                             result = {"ok": False, "error": "no targets"}
-                            for _cid in _targets:
-                                result = send_message(text, chat_id=_cid, bot_token=_bot_token or None)
-                                sys.stderr.write(f"[PUSH] send to {_cid}: " + str(result) + "\n")
+                            for _t in _targets:
+                                result = send_message(text, chat_id=_t["chat_id"], bot_token=_t["bot_token"] or None)
+                                sys.stderr.write(f"[PUSH] send to {_t['chat_id']}: " + str(result) + "\n")
                                 sys.stderr.flush()
                             if result.get("ok"):
                                 p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",

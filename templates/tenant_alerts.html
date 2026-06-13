@@ -35,7 +35,7 @@
                         {% set found = namespace(val='') %}
                         {% for ch in channels %}
                             {% if ch.chat_id == target_chat|string %}
-                                {{ ch.label or ch.chat_id }}
+                                {{ bot_username }} / {{ ch.label or ch.chat_id }}
                             {% endif %}
                         {% endfor %}
                         {% if not found %}
@@ -49,11 +49,11 @@
                     <form method="post" action="/dashboard/tenant/alerts/toggle" style="display:flex; gap:6px; align-items:center;">
                         <input type="hidden" name="event_type" value="{{ r.event_type }}">
                         <input type="hidden" name="enabled" value="{{ '0' if r.enabled else '1' }}">
-                        <select name="target_chat_id" style="width:auto; min-width:80px; font-size:0.8rem; padding:4px 8px;">
-                            <option value="">默认</option>
+                        <select name="target_chat_id" style="width:auto; min-width:180px; font-size:0.8rem; padding:4px 8px;">
+                            <option value="">{{ bot_username or "系统 Bot" }} / 默认</option>
                             {% for ch in channels %}
                             <option value="{{ ch.chat_id }}" {% if ch.chat_id == r.target_chat_id %}selected{% endif %}>
-                                {{ ch.label or ch.chat_id }}
+                                {{ bot_username }} / {{ ch.label or ch.chat_id }}
                             </option>
                             {% endfor %}
                         </select>

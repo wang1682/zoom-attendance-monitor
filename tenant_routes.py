@@ -34,6 +34,13 @@ async def require_user(request: Request) -> dict:
     return user
 
 
+async def require_editor(user: dict = Depends(require_user)) -> dict:
+    """Require at least tenant role (viewer cannot modify)."""
+    if user.get("role") == "viewer":
+        raise HTTPException(status_code=403, detail="Viewer cannot perform this action")
+    return user
+
+
 # ── Render helper ─────────────────────────────────────────────────────────────
 
 
@@ -56,11 +63,13 @@ def _render_tenant(request: Request, active: str, user: dict,
     tenant_info = db.get_tenant(tenant_id)
     tenant_name = tenant_info.get("display_name", tenant_id) if tenant_info else tenant_id
 
+    is_viewer = user.get("role", "viewer") == "viewer"
     context = {
         "request": request,
         "active": active,
         "current_user": current_user,
         "tenant_name": tenant_name,
+        "is_viewer": is_viewer,
         **extra,
     }
     return templates.TemplateResponse(request, template_name, context)
@@ -165,39 +174,17 @@ async def _compute_kpi_data(tenant_id: str) -> dict:
     }
 
 
-@router.get("", response_class=HTMLResponse)
-@router.get("/", response_class=HTMLResponse)
-async def tenant_dashboard(request: Request, user: dict = Depends(require_user)):
-    """Tenant operational dashboard — KPIs, active meetings, recent events."""
-    tenant_id = request.session.get("tenant_id", "default")
-    status_data = await _compute_setup_status(tenant_id)
-    kpi_data = await _compute_kpi_data(tenant_id)
-    return _render_tenant(
-        request, "overview", user, "tenant_dashboard.html",
-        score=status_data["score"],
-        status_label=status_data["status"],
-        checks=status_data["checks"],
-        next_steps=status_data["next_steps"],
-        kpi=kpi_data,
-        active_meetings=kpi_data["active_meetings"],
-        recent_events=kpi_data["recent_events"],
-        push_configured=kpi_data["push_configured"],
-        push_channel_count=kpi_data["push_channel_count"],
-    )
+@router.get("")
+@router.get("/")
+async def tenant_dashboard_redirect():
+    """Redirect old tenant dashboard to unified /dashboard."""
+    return RedirectResponse(url="/dashboard", status_code=302)
 
 
-@router.get("/setup", response_class=HTMLResponse)
-async def tenant_setup_center(request: Request, user: dict = Depends(require_user)):
-    """Setup center — Zoom account, channels, member mapping wizard."""
-    tenant_id = request.session.get("tenant_id", "default")
-    status_data = await _compute_setup_status(tenant_id)
-    return _render_tenant(
-        request, "setup", user, "tenant_overview.html",
-        score=status_data["score"],
-        status_label=status_data["status"],
-        checks=status_data["checks"],
-        next_steps=status_data["next_steps"],
-    )
+@router.get("/setup")
+async def tenant_setup_redirect():
+    """Redirect old tenant setup to unified /dashboard/setup."""
+    return RedirectResponse(url="/dashboard/setup", status_code=302)
 
 
 # ── Zoom 账号自助配置 ──────────────────────────────────────────────────────
@@ -224,7 +211,7 @@ async def tenant_zoom(request: Request, user: dict = Depends(require_user)):
 @router.post("/zoom/create", response_class=RedirectResponse)
 async def tenant_zoom_create(
     request: Request,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_editor),
     label: str = Form(""),
     account_id: str = Form(...),
     client_id: str = Form(...),
@@ -247,7 +234,7 @@ async def tenant_zoom_create(
 async def tenant_zoom_update(
     request: Request,
     account_db_id: int,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_editor),
     label: str = Form(""),
     account_id: str = Form(...),
     client_id: str = Form(""),
@@ -301,7 +288,7 @@ def _test_result(checks: list, extra: dict = None) -> JSONResponse:
 @router.post("/zoom/test")
 async def tenant_zoom_test(
     request: Request,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_editor),
     account_id: str = Form(...),
     client_id: str = Form(...),
     client_secret: str = Form(...),
@@ -392,7 +379,7 @@ async def tenant_zoom_test(
 async def tenant_zoom_test_existing(
     request: Request,
     account_db_id: int,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_editor),
 ):
     """Test connection for an existing account (multi-step)."""
     tenant_id = request.session.get("tenant_id", "default")
@@ -497,7 +484,7 @@ async def tenant_zoom_test_existing(
 async def tenant_zoom_delete(
     request: Request,
     account_db_id: int,
-    user: dict = Depends(require_user),
+    user: dict = Depends(require_editor),
 ):
     tenant_id = request.session.get("tenant_id", "default")
     acct = db.get_zoom_account(account_db_id)
@@ -524,38 +511,63 @@ async def tenant_channels_create(request: Request,
                                   chat_id: str = Form(...),
                                   label: str = Form(""),
                                   is_group: str = Form("false"),
-                                  user: dict = Depends(require_user)):
+                                  bot_token: str = Form(""),
+                                  bot_username: str = Form(""),
+                                  user: dict = Depends(require_editor)):
     tenant_id = request.session.get("tenant_id", "default")
-    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true")
+    db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true",
+                             bot_token.strip(), bot_username.strip())
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
 @router.post("/channels/{channel_id}/toggle")
 async def tenant_channels_toggle(request: Request, channel_id: int,
-                                  user: dict = Depends(require_user)):
+                                  user: dict = Depends(require_editor)):
     db.toggle_tenant_channel(channel_id)
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
 @router.post("/channels/{channel_id}/delete")
 async def tenant_channels_delete(request: Request, channel_id: int,
-                                  user: dict = Depends(require_user)):
+                                  user: dict = Depends(require_editor)):
     db.delete_tenant_channel(channel_id)
+    return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
+
+
+@router.post("/channels/{channel_id}/edit")
+async def tenant_channels_edit(request: Request, channel_id: int,
+                                chat_id: str = Form(...),
+                                label: str = Form(""),
+                                is_group: str = Form("false"),
+                                bot_token: str = Form(""),
+                                bot_username: str = Form(""),
+                                user: dict = Depends(require_editor)):
+    """Edit a channel."""
+    conn = db._get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE tenant_channels SET chat_id=?, label=?, is_group=?, "
+        "bot_token=?, bot_username=?, updated_at=? WHERE id=?",
+        (chat_id.strip(), label.strip(), 1 if is_group == "true" else 0,
+         bot_token.strip(), bot_username.strip(), now, channel_id)
+    )
+    conn.commit()
+    db.log_audit("update", "channel", channel_id,
+                 f"Updated channel: {label.strip()} (chat_id={chat_id.strip()})")
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
 
 @router.post("/channels/{channel_id}/test")
 async def tenant_channels_test(request: Request, channel_id: int,
-                                user: dict = Depends(require_user)):
-    """Send a test push to the given channel."""
+                                user: dict = Depends(require_editor)):
+    """Send a test push to the given channel. Uses channel's own bot if configured."""
     tenant_id = request.session.get("tenant_id", "default")
     channels = db.get_tenant_channels(tenant_id)
     target = next((c for c in channels if c["id"] == channel_id), None)
     if not target:
         return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
-    # Use tenant's bot token if configured, fallback to global
-    bot_config = db.get_tenant_bot_config(tenant_id)
-    token = bot_config["token"] or settings.telegram_bot_token
+    # Use channel's bot_token first, fallback to tenant's bot, then global
+    token = target.get("bot_token", "") or db.get_tenant_bot_config(tenant_id)["token"] or settings.telegram_bot_token
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -572,7 +584,7 @@ async def tenant_channels_test(request: Request, channel_id: int,
 @router.post("/channels/bot-test")
 async def tenant_bot_test(request: Request,
                            bot_token: str = Form(...),
-                           user: dict = Depends(require_user)):
+                           user: dict = Depends(require_editor)):
     """Test a bot token via getMe, return bot info."""
     url = f"https://api.telegram.org/bot{bot_token.strip()}/getMe"
     try:
@@ -595,7 +607,7 @@ async def tenant_bot_test(request: Request,
 @router.post("/channels/bot-config")
 async def tenant_bot_config_save(request: Request,
                                    bot_token: str = Form(""),
-                                   user: dict = Depends(require_user)):
+                                   user: dict = Depends(require_editor)):
     """Save tenant's bot token. If empty, do not overwrite (edit-safe)."""
     tenant_id = request.session.get("tenant_id", "default")
     token = bot_token.strip()
@@ -623,7 +635,7 @@ async def tenant_bot_config_save(request: Request,
 
 @router.post("/channels/bot-config/clear")
 async def tenant_bot_config_clear(request: Request,
-                                    user: dict = Depends(require_user)):
+                                    user: dict = Depends(require_editor)):
     """Clear tenant's bot config."""
     tenant_id = request.session.get("tenant_id", "default")
     db.update_tenant_bot_config(tenant_id, "", "", "")
@@ -638,8 +650,13 @@ async def tenant_alerts_page(request: Request, user: dict = Depends(require_user
     tenant_id = request.session.get("tenant_id", "default")
     rules = db.get_telegram_rules_by_tenant(tenant_id)
     channels = db.get_tenant_channels(tenant_id)
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    bot_username = "系统"
+    if bot_config.get("username"):
+        bot_username = "@" + bot_config["username"]
     return _render_tenant(request, "alerts", user, "tenant_alerts.html",
-                          rules=rules, channels=channels)
+                          rules=rules, channels=channels,
+                          bot_username=bot_username)
 
 
 @router.post("/alerts/toggle")
@@ -647,7 +664,7 @@ async def tenant_alerts_toggle(request: Request,
                                 event_type: str = Form(...),
                                 enabled: int = Form(...),
                                 target_chat_id: str = Form(""),
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_editor)):
     """Toggle a single alert rule on/off and/or rebind channel."""
     db.upsert_telegram_rule(event_type, {
         "enabled": enabled,

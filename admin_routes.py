@@ -553,6 +553,42 @@ async def admin_channels_delete(request: Request, channel_id: int,
     return RedirectResponse(url="/dashboard/admin/channels", status_code=303)
 
 
+@router.post("/admin/channels/{channel_id}/edit")
+async def admin_channels_edit(request: Request, channel_id: int,
+                              label: str = Form(""),
+                              chat_id: str = Form(""),
+                              is_group: str = Form("false"),
+                              user: dict = Depends(require_user)):
+    """Edit a channel's label, chat_id, and/or is_group."""
+    db.update_tenant_channel(channel_id, label=label.strip(), chat_id=chat_id.strip(),
+                             is_group=(is_group == "true"))
+    return RedirectResponse(url="/dashboard/admin/channels", status_code=303)
+
+
+@router.post("/admin/channels/{channel_id}/test")
+async def admin_channels_test(request: Request, channel_id: int,
+                              user: dict = Depends(require_user)):
+    """Send a test push to the given channel."""
+    tenant_id = request.session.get("tenant_id", "default")
+    channels = db.get_tenant_channels(tenant_id)
+    target = next((c for c in channels if c["id"] == channel_id), None)
+    if not target:
+        return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    token = bot_config["token"] or settings.telegram_bot_token
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={
+                "chat_id": target["chat_id"],
+                "text": "✅ 测试消息 — 推送配置正常，机器人已接入",
+            })
+            data = resp.json()
+            return JSONResponse({"ok": data.get("ok", False), "chat_id": target["chat_id"]})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
 # ── Rendering helper ──────────────────────────────────────────────────────────
 
 def _render_admin(request: Request, active: str, user: dict, template_name: str,
