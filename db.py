@@ -360,6 +360,58 @@ def get_recent_events(limit: int = 50, tenant_id: str = None) -> list[dict]:
 
 # ── zoom_participants ────────────────────────────────────────────────────────
 
+
+def get_events_paginated(
+    tenant_id: str,
+    page: int = 1,
+    per_page: int = 50,
+    search: str = "",
+    event_type: str = "",
+) -> tuple[list[dict], int, int]:
+    """返回 (events_list, total_count, total_pages) — 分页+搜索+类型筛选，强制 tenant_id 过滤。"""
+    conn = _get_conn()
+    wheres = ["tenant_id = ?"]
+    params: list = [tenant_id]
+
+    if search:
+        wheres.append("(event_type LIKE ? OR payload LIKE ?)")
+        like = f"%{search}%"
+        params.extend([like, like])
+
+    if event_type:
+        wheres.append("event_type = ?")
+        params.append(event_type)
+
+    where_sql = " AND ".join(wheres)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS c FROM zoom_events WHERE {where_sql}", params
+    ).fetchone()
+    total = row["c"] if row else 0
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    offset = (page - 1) * per_page
+    rows = conn.execute(
+        f"SELECT * FROM zoom_events WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?",
+        [*params, per_page, offset],
+    ).fetchall()
+    events = [dict(r) for r in rows]
+
+    return events, total, total_pages
+
+
+def get_distinct_event_types(tenant_id: str) -> list[str]:
+    """获取该租户有数据的事件类型列表（用于下拉筛选）。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT DISTINCT event_type FROM zoom_events WHERE tenant_id = ? AND event_type IS NOT NULL AND event_type != '' ORDER BY event_type",
+        (tenant_id,),
+    ).fetchall()
+    return [r["event_type"] for r in rows]
+
+
+# ── zoom_participants ────────────────────────────────────────────────────────
+
+
 def save_participant(
     meeting_id: str, name: str, email: str,
     action: str, action_time: datetime,
@@ -1836,3 +1888,109 @@ def get_tenant_id_by_zoom_account(zoom_account_id: str) -> str | None:
         (zoom_account_id,),
     ).fetchone()
     return row[0] if row else None
+
+
+# ── P2 会议中心 ──────────────────────────────────────────────────────
+
+def get_live_meetings(tenant_id: str) -> list[dict]:
+    """获取当前正在进行的会议（通过 zoom_participants 的 join/leave 状态推断）"""
+    conn = _get_conn()
+    from datetime import datetime, timezone, timedelta
+    now_utc = datetime.now(timezone.utc)
+    today_start = now_utc.strftime("%Y-%m-%d")
+    
+    rows = conn.execute(
+        "SELECT meeting_id, name, action, action_time "
+        "FROM zoom_participants "
+        "WHERE tenant_id = ? AND action_time >= ? "
+        "ORDER BY meeting_id, action_time DESC",
+        (tenant_id, today_start),
+    ).fetchall()
+    
+    meetings_map = {}
+    for r in rows:
+        mid = r["meeting_id"]
+        if mid not in meetings_map:
+            meetings_map[mid] = {"meeting_id": mid, "participants": set(), "online_count": 0, "last_activity": r["action_time"]}
+        meetings_map[mid]["participants"].add(r["name"])
+        # 5 分钟内活跃视为在线
+        if r["action"] in ("enter", "joined") and r["action_time"] > (now_utc - timedelta(minutes=5)).isoformat():
+            meetings_map[mid]["online_count"] += 1
+        meetings_map[mid]["last_activity"] = max(meetings_map[mid]["last_activity"], r["action_time"])
+    
+    for mid in meetings_map:
+        topic = conn.execute(
+            "SELECT topic FROM meeting_topics WHERE meeting_id = ? LIMIT 1",
+            (mid,),
+        ).fetchone()
+        meetings_map[mid]["topic"] = topic[0] if topic else mid
+        meetings_map[mid]["participant_count"] = len(meetings_map[mid]["participants"])
+        del meetings_map[mid]["participants"]
+    
+    return sorted(meetings_map.values(), key=lambda m: m["last_activity"], reverse=True)
+
+
+def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tuple:
+    """获取历史会议列表（按 meeting_id 聚合）"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT meeting_id, name, action, action_time "
+        "FROM zoom_participants "
+        "WHERE tenant_id = ? "
+        "ORDER BY meeting_id, action_time",
+        (tenant_id,),
+    ).fetchall()
+    
+    meetings = {}
+    for r in rows:
+        mid = r["meeting_id"]
+        if mid not in meetings:
+            meetings[mid] = {"meeting_id": mid, "first_event": r["action_time"], "last_event": r["action_time"], "participant_names": set(), "total_events": 0}
+        meetings[mid]["participant_names"].add(r["name"])
+        meetings[mid]["total_events"] += 1
+        if r["action_time"] < meetings[mid]["first_event"]: meetings[mid]["first_event"] = r["action_time"]
+        if r["action_time"] > meetings[mid]["last_event"]: meetings[mid]["last_event"] = r["action_time"]
+    
+    for mid in meetings:
+        topic = conn.execute("SELECT topic FROM meeting_topics WHERE meeting_id = ? LIMIT 1", (mid,)).fetchone()
+        meetings[mid]["topic"] = topic[0] if topic else mid
+        meetings[mid]["participant_count"] = len(meetings[mid]["participant_names"])
+        del meetings[mid]["participant_names"]
+        try:
+            f = datetime.fromisoformat(meetings[mid]["first_event"].replace("Z", "+00:00"))
+            l = datetime.fromisoformat(meetings[mid]["last_event"].replace("Z", "+00:00"))
+            dur = int((l - f).total_seconds())
+            meetings[mid]["duration_seconds"] = dur
+            meetings[mid]["duration_display"] = _fmt_dur(dur)
+        except:
+            meetings[mid]["duration_seconds"] = 0
+            meetings[mid]["duration_display"] = "—"
+    
+    sorted_list = sorted(meetings.values(), key=lambda m: m["last_event"], reverse=True)
+    total = len(sorted_list)
+    page = sorted_list[offset:offset + limit]
+    for m in page:
+        m["first_event_display"] = _myt_short(m["first_event"])
+        m["last_event_display"] = _myt_short(m["last_event"])
+    return page, total
+
+
+def get_sharing_records(tenant_id: str, limit: int = 50) -> list[dict]:
+    """获取共享屏幕历史记录"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM sharing_live WHERE tenant_id = ? ORDER BY start_time DESC LIMIT ?",
+        (tenant_id, limit),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["start_time_display"] = _myt_short(d.get("start_time", ""))
+        d["end_time_display"] = _myt_short(d.get("end_time", ""))
+        try:
+            dur = int((datetime.fromisoformat(d["end_time"].replace("Z", "+00:00")) - datetime.fromisoformat(d["start_time"].replace("Z", "+00:00"))).total_seconds())
+            d["duration"] = _fmt_dur(dur)
+        except:
+            d["duration"] = "—"
+        result.append(d)
+    return result

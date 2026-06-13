@@ -112,32 +112,194 @@ def _channel_dict(c: dict) -> dict:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_index(request: Request, user: dict = Depends(require_user)):
-    """Main dashboard landing page — redirect to admin tenants."""
-    return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
+    """Main dashboard landing page — KPI summary, no long tables.
+    Initial render gets static/sync data; JS polling fills live KPI + meetings."""
+    tenant_id = request.session.get("tenant_id", "default")
+    recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tenant_id)
+    # score/checks from DB (sync, no Zoom API call)
+    score = 0
+    checks = {}
+    accounts = db.get_zoom_accounts(tenant_id)
+    has_account = any(a.get("is_active") and a.get("client_id") for a in accounts)
+    checks["zoom_account"] = has_account
+    active_accts = [a for a in accounts if a.get("is_active") and a.get("status") == "active"]
+    checks["oauth"] = len(active_accts) > 0
+    checks["meetings"] = len(active_accts) > 0
+    checks["participants"] = len(active_accts) > 0
+    checks["webhook"] = any(a.get("host_email") for a in active_accts)
+    channels = db.get_tenant_channels(tenant_id)
+    checks["telegram"] = any(c.get("is_enabled") for c in channels)
+    score = sum(1 for v in checks.values() if v) * 20
+    conn = db._get_conn()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+        (today, tenant_id),
+    ).fetchone()
+    today_events = row["c"] if row else 0
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ?",
+        (tenant_id,),
+    ).fetchone()
+    total_alerts = row["c"] if row else 0
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM alerts WHERE created_at >= ? AND tenant_id = ?",
+        (today, tenant_id),
+    ).fetchone()
+    today_alerts = row["c"] if row else 0
+    kpi = {
+        "today_participants": 0,
+        "current_online": 0,
+        "today_events": today_events,
+        "today_alerts": today_alerts,
+        "active_meetings": [],
+    }
+    return _render_admin(request, "overview", user, "dashboard.html",
+                         kpi=kpi, active_meetings=[],
+                         score=score, checks=checks,
+                         recent_alerts=recent_alerts,
+                         next_steps=[])
 
 
 @router.get("/events", response_class=HTMLResponse)
-async def dashboard_events(request: Request, user: dict = Depends(require_user)):
-    """Events page — redirect to admin tenants for now."""
-    return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
+async def dashboard_events_page(request: Request, user: dict = Depends(require_user)):
+    """Unified events page under /dashboard/events — paginated, searchable, tenant-isolated."""
+    tenant_id = request.session.get("tenant_id", "default")
+    page = int(request.query_params.get("page", 1))
+    search = request.query_params.get("search", "")
+    type_filter = request.query_params.get("type", "")
+
+    events, total, total_pages = db.get_events_paginated(
+        tenant_id, page=page, per_page=50,
+        search=search, event_type=type_filter,
+    )
+    event_types = db.get_distinct_event_types(tenant_id)
+    tenant = db.get_tenant(tenant_id)
+    tenant_name = tenant.get("display_name", tenant_id) if tenant else tenant_id
+
+    # Pagination range for template
+    max_page = max(total_pages, 1)
+    page_start = max(1, page - 2)
+    page_end = min(max_page, page + 2)
+    page_range = list(range(page_start, page_end + 1))
+
+    return _render_admin(request, "events", user, "events.html",
+                         events=events, total=total,
+                         total_pages=total_pages, page=page,
+                         event_types=event_types, type_filter=type_filter,
+                         search=search, tenant_name=tenant_name,
+                         page_range=page_range)
 
 
 @router.get("/participants", response_class=HTMLResponse)
 async def dashboard_participants(request: Request, user: dict = Depends(require_user)):
-    """Participants page — redirect to admin tenants for now."""
-    return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
+    """Participants center — aggregated attendance view."""
+    from db import get_today_attendance_summary, get_all_groups
+    
+    tenant_id = request.session.get("tenant_id", "default")
+    
+    # ── 参数 ──
+    search = request.query_params.get("search", "").strip()
+    group_filter = request.query_params.get("group", "").strip()
+    status_filter = request.query_params.get("status", "").strip()  # "online" or "offline"
+    
+    # ── 今日考勤汇总 ──
+    summary = get_today_attendance_summary(tenant_id=tenant_id)
+    members = summary.get("members", [])
+    
+    # ── 搜索 / 筛选 ──
+    if search:
+        q = search.lower()
+        members = [m for m in members if q in m.get("standard_name", "").lower()]
+    if group_filter:
+        members = [m for m in members if m.get("group_name", "") == group_filter]
+    if status_filter:
+        members = [m for m in members if m.get("status", "") == status_filter]
+    
+    # ── 分组列表（用于筛选器） ──
+    all_groups = get_all_groups()
+    
+    return _render_admin(request, "participants", user, "participants.html",
+                         title="成员中心",
+                         members=members,
+                         total_members=summary.get("total_members", 0),
+                         online_count=summary.get("online_count", 0),
+                         offline_count=summary.get("offline_count", 0),
+                         total_duration=summary.get("total_duration", "0m"),
+                         avg_duration=summary.get("avg_duration", "0m"),
+                         date=summary.get("date", ""),
+                         groups=all_groups,
+                         search=search,
+                         group_filter=group_filter,
+                         status_filter=status_filter,
+                         tenant_id=tenant_id)
+
+
+@router.get("/meetings", response_class=HTMLResponse)
+async def dashboard_meetings(request: Request, user: dict = Depends(require_user)):
+    """Meetings center — live meetings + history + sharing records."""
+    from db import get_live_meetings, get_meeting_history, get_sharing_records
+    
+    tenant_id = request.session.get("tenant_id", "default")
+    tab = request.query_params.get("tab", "live")
+    
+    live = get_live_meetings(tenant_id)
+    history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
+    sharing = get_sharing_records(tenant_id, limit=100)
+    
+    return _render_admin(request, "meetings", user, "meetings.html",
+                         title="会议中心",
+                         live_meetings=live,
+                         history_meetings=history,
+                         total_meetings=total_meetings,
+                         sharing_records=sharing,
+                         tab=tab)
 
 
 @router.get("/alerts", response_class=HTMLResponse)
-async def dashboard_alerts(request: Request, user: dict = Depends(require_user)):
-    """Alerts page — redirect to admin tenants for now."""
-    return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
+async def dashboard_alerts_page(request: Request, user: dict = Depends(require_user)):
+    """Alert rules page — tenant-isolated, unified under /dashboard/alerts."""
+    tenant_id = request.session.get("tenant_id", "default")
+    rules = db.get_telegram_rules_by_tenant(tenant_id)
+    channels = db.get_tenant_channels(tenant_id)
+    return _render_admin(request, "alerts", user, "tenant_alerts.html",
+                         rules=rules, channels=channels)
 
 
 @router.get("/settings", response_class=HTMLResponse)
 async def dashboard_settings(request: Request, user: dict = Depends(require_user)):
-    """Settings page — redirect to admin for now."""
-    return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
+    """Settings page — redirect to Zoom config for current tenant."""
+    return RedirectResponse(url="/dashboard/zoom", status_code=303)
+
+
+@router.get("/setup")
+async def dashboard_setup_redirect():
+    """Redirect /dashboard/setup to Zoom config (current tenant)."""
+    return RedirectResponse(url="/dashboard/zoom", status_code=302)
+
+
+@router.get("/zoom", response_class=HTMLResponse)
+async def dashboard_zoom(request: Request, user: dict = Depends(require_user)):
+    """Zoom account management — tenant-isolated."""
+    tenant_id = request.session.get("tenant_id", "default")
+    accounts = db.get_zoom_accounts(tenant_id)
+    display_accounts = []
+    for a in accounts:
+        d = dict(a)
+        d["client_id_display"] = a.get("client_id", "")[:8] + "****" if a.get("client_id") else ""
+        d["has_client_secret"] = bool(a.get("client_secret"))
+        display_accounts.append(d)
+    return _render_admin(request, "settings", user, "tenant_zoom.html", accounts=display_accounts)
+
+
+@router.get("/channels", response_class=HTMLResponse)
+async def dashboard_channels(request: Request, user: dict = Depends(require_user)):
+    """Push channel management — tenant-isolated."""
+    tenant_id = request.session.get("tenant_id", "default")
+    channels = [dict(c) for c in db.get_tenant_channels(tenant_id)]
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    return _render_admin(request, "settings", user, "tenant_channels.html",
+                          channels=channels, bot_config=bot_config)
 
 
 # ── Admin: Tenants ────────────────────────────────────────────────────────────
