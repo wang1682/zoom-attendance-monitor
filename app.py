@@ -766,9 +766,11 @@ def build_app() -> "FastAPI":
     @app.get("/settings/telegram-rules", response_class=HTMLResponse)
     async def settings_telegram_rules_page(request: Request):
         rules = db.get_telegram_rules()
+        channels = db.get_telegram_channels()
         return tmpl.TemplateResponse(request, "settings_telegram_rules.html", {
             "brand": BRAND,
             "rules": rules,
+            "channels": channels,
         })
 
     # ── Member Groups API ─────────────────────────────────────────────────

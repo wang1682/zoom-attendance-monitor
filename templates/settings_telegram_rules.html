@@ -41,9 +41,12 @@
       <div>
         <label style="font-size:12px;color:var(--ts)">推送到</label>
         <select id="fTargetChannelId" class="ipt" style="width:100%">
-        <div style="font-size:11px;color:var(--tm);margin-top:4px">选择推送群组，留空使用默认群组。可在 <a href="/settings/telegram-channels" style="color:var(--pr)">Telegram 群组设置</a> 中添加</div>
           <option value="">默认频道</option>
+          {% for ch in channels %}
+          <option value="{{ ch.id }}">{{ ch.bot_username or ch.name }} · {{ ch.name }}</option>
+          {% endfor %}
         </select>
+        <div style="font-size:11px;color:var(--tm);margin-top:4px">选择推送 Bot，留空使用默认群组</div>
       </div>
       <div>
         <label style="font-size:12px;color:var(--ts)">静默时段启用</label>
@@ -95,7 +98,12 @@
               —
             {% endif %}
           </td>
-          <td><span class="channel-name" data-channel-id="{{ r.target_channel_id }}">{{ r.target_channel_id or "默认" }}</span></td>
+          <td><span class="channel-name" data-channel-id="{{ r.target_channel_id }}">
+            {% if r.target_channel_id %}
+              {% set ch = channels|selectattr('id','equalto',r.target_channel_id)|first %}
+              {{ ch.bot_username or ch.name if ch else '#' ~ r.target_channel_id }}
+            {% else %}默认{% endif %}
+          </span></td>
           <td>
             <button class="bt bt-s" onclick="editRule('{{ r.event_type }}')">✏️</button>
             <button class="bt bt-s bt-d" onclick="deleteRule('{{ r.event_type }}')">🗑️</button>
