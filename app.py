@@ -1867,12 +1867,40 @@ def build_app() -> "FastAPI":
                                "source": "webhook_recovery"}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
+        # ── 从 sharing_live 表统计每个人累计共享时长 ──
+        # 查询所有 sharing_live 记录（不分租户，因为表中可能部分记录缺 tenant_id）
+        all_share = conn.execute("""
+            SELECT user_name, start_time, end_time, is_active FROM sharing_live
+            ORDER BY user_name, start_time
+        """).fetchall()
+        acc_duration = {}  # norm_key -> total_minutes
+        for sr in all_share:
+            uname = sr[0]
+            _rm = resolve_member(uname)
+            dn = _rm["standard_name"]
+            nk = re.sub(r"\s+", "", dn.lower())
+            if not nk or nk not in merged:
+                continue
+            st_str = sr[1]
+            et_str = sr[2]
+            is_act = sr[3]
+            try:
+                sd = datetime.fromisoformat(st_str.replace("Z", "+00:00"))
+                if et_str and not is_act:
+                    ed = datetime.fromisoformat(et_str.replace("Z", "+00:00"))
+                    acc_duration[nk] = acc_duration.get(nk, 0) + int((ed - sd).total_seconds() / 60)
+                elif is_act:
+                    acc_duration[nk] = acc_duration.get(nk, 0) + int((now_utc - sd).total_seconds() / 60)
+            except:
+                pass
+
         # Build output: split into active (current) and recent (stale but <24h, shown as history)
         active = []
         recent = []
         for _key, info in merged.items():
             st = info.get("start_time", "")
-            m = max(0, mins_between(st))
+            nk = re.sub(r"\s+", "", info["name"].lower())
+            total_mins = acc_duration.get(nk, 0)
             entry = {
                 "name": info.get("name", ""),
                 "raw_name": info.get("raw_name", ""),
@@ -1881,8 +1909,8 @@ def build_app() -> "FastAPI":
                 "content": info.get("content", ""),
                 "start_time": st,
                 "start_time_display": to_myt(st),
-                "duration_minutes": m,
-                "duration_display": disp(m),
+                "duration_minutes": total_mins,
+                "duration_display": disp(total_mins),
                 "source": info.get("source", ""),
             }
             if info.get("_stale"):
