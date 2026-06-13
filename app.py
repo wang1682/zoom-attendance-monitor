@@ -406,6 +406,13 @@ def build_app() -> "FastAPI":
         push_configured = any(c.get("is_enabled") for c in channels)
         push_channel_count = len([c for c in channels if c.get("is_enabled")])
         participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
+        # ── 按 name 去重，取每个人最新一条（dashboard 最近活跃成员用） ──
+        seen = {}
+        for p in participants:
+            name = p.get("name") or p.get("user_name", "")
+            if name and name not in seen:
+                seen[name] = p
+        participants_deduped = list(seen.values())
         return {
             "today_participants": today_participants,
             "current_online": current_online,
@@ -415,7 +422,7 @@ def build_app() -> "FastAPI":
             "recent_events": recent_events,
             "push_configured": push_configured,
             "push_channel_count": push_channel_count,
-            "participants": participants,
+            "participants": participants_deduped,
         }
 
     async def _compute_setup_status(tid: str) -> dict:
