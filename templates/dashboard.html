@@ -207,6 +207,29 @@ async function refreshDashboard() {
     } else if (plist) {
       plist.innerHTML = '<span class="text-muted text-sm">暂无活跃成员记录</span>';
     }
+
+    // 当前共享屏幕
+    try {
+      var sresp = await fetch('/api/v3/sharing-live');
+      if (sresp.ok) {
+        var sdata = await sresp.json();
+        var slist = document.getElementById('screen-sharing-list');
+        if (slist) {
+          if (sdata.active && sdata.active.length > 0) {
+            var shtml = '<div class="flex" style="gap:6px;flex-direction:column">';
+            sdata.active.forEach(function(s) {
+              shtml += '<div class="sharing-item" style="font-size:13px;padding:4px 0"><strong>' + s.name + '</strong> ' + s.content + ' · 已持续 ' + s.duration_display + '</div>';
+            });
+            shtml += '</div>';
+            slist.innerHTML = shtml;
+          } else {
+            slist.innerHTML = '<span class="text-muted text-sm">暂无共享</span>';
+          }
+        }
+      }
+    } catch(e) {
+      console.error('Sharing refresh failed:', e);
+    }
   } catch(e) {
     console.error('Dashboard refresh failed:', e);
     showToast('数据刷新失败', 'error');
