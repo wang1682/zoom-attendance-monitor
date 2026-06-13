@@ -20,9 +20,11 @@
 .group-item .group-name{font-weight:500}
 .group-item .group-desc{font-size:11px;color:var(--text-muted)}
 .group-item .group-actions{display:flex;gap:4px;flex-shrink:0}
-.btn-icon{background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:4px;color:var(--text-muted);font-size:13px}
+.btn-icon{background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;color:var(--text-muted);font-size:12px;display:inline-flex;align-items:center;gap:3px;transition:all .15s}
 .btn-icon:hover{background:var(--bg3);color:var(--text)}
-.btn-icon.danger:hover{color:var(--danger)}
+.btn-icon.danger:hover{background:rgba(239,68,68,.12);color:var(--danger)}
+.btn-icon-group{background:none;border:1px solid var(--border-light);cursor:pointer;padding:3px 8px;border-radius:6px;color:var(--text-muted);font-size:11px;display:inline-flex;align-items:center;gap:3px;transition:all .15s}
+.btn-icon-group:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
 </style>
 
 <div class="page-header">
@@ -115,8 +117,10 @@
         <td class="td-mono">{{ m.last_activity_display }}</td>
         <td><span class="td-mono text-muted" style="font-size:11px">{{ m.email if m.email else '—' }}</span></td>
         <td>
-          <button class="btn-icon" onclick="openEditMember('{{ m.standard_name|e }}')" title="编辑别名">✏️</button>
-          <button class="btn-icon danger" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员">🗑</button>
+          <div style="display:flex;gap:4px;white-space:nowrap">
+            <button class="btn-icon" onclick="openEditMember('{{ m.standard_name|e }}')" title="编辑别名" style="font-weight:600;color:#3b82f6">编辑</button>
+            <button class="btn-icon" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员" style="font-weight:600;color:#ef4444">删除</button>
+          </div>
         </td>
       </tr>
       {% endfor %}
@@ -263,8 +267,8 @@ function renderGroups(groups) {
         ${g.description ? `<div class="group-desc">${g.description}</div>` : ''}
       </div>
       <div class="group-actions">
-        <button class="btn-icon" onclick="editGroup(${g.id},'${g.name.replace(/'/g,"\\'")}','${(g.description||'').replace(/'/g,"\\'")}')" title="编辑">✏️</button>
-        <button class="btn-icon danger" onclick="deleteGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除">🗑</button>
+        <button class="btn-icon-group" onclick="editGroup(${g.id},'${g.name.replace(/'/g,"\\'")}','${(g.description||'').replace(/'/g,"\\'")}')" title="编辑">编辑</button>
+        <button class="btn-icon-group danger" onclick="deleteGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除">删除</button>
       </div>
     </div>
   `).join('');
