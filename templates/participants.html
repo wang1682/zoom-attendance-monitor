@@ -115,12 +115,7 @@
         <td class="td-mono">{{ m.last_activity_display }}</td>
         <td><span class="td-mono text-muted" style="font-size:11px">{{ m.email if m.email else '—' }}</span></td>
         <td>
-          <select class="group-select" data-member="{{ m.standard_name }}" onchange="assignGroup(this)" style="font-size:11px;padding:2px 4px;max-width:90px">
-            <option value="">—</option>
-            {% for g in groups %}
-            <option value="{{ g.id }}" {% if m.group_id == g.id %}selected{% endif %}>{{ g.name }}</option>
-            {% endfor %}
-          </select>
+          <button class="btn-icon" onclick="openEditMember('{{ m.standard_name|e }}')" title="编辑别名">✏️</button>
           <button class="btn-icon danger" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员">🗑</button>
         </td>
       </tr>
@@ -189,6 +184,34 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeModal('addMemberModal')">取消</button>
       <button class="btn btn-primary" onclick="submitAddMember()">添加</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 编辑成员弹窗 ── -->
+<div class="modal-overlay" id="editMemberModal">
+  <div class="modal-box">
+    <h2>✏️ 别名编辑 · <span id="editMemberName" style="font-weight:400"></span></h2>
+    <div class="form-group">
+      <label>显示名称</label>
+      <input type="text" id="editDisplayName" placeholder="展示用的名称">
+    </div>
+    <div class="form-group">
+      <label>备注</label>
+      <input type="text" id="editNote" placeholder="可选备注信息">
+    </div>
+    <div class="form-group">
+      <label>别名（逗号分隔）</label>
+      <input type="text" id="editAliasesList" placeholder="DinoJun, dino, dj">
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="editCountEnabled" checked> 计入统计
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="document.getElementById('editMemberModal').classList.remove('active')">取消</button>
+      <button class="btn btn-primary" onclick="saveEditMember()">保存</button>
     </div>
   </div>
 </div>
@@ -345,6 +368,52 @@ function deleteMember(name) {
 // ── 辅助 ──
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
+}
+
+// ── 别名编辑弹窗 ──
+const memberDisplays = {{ member_displays|safe }};
+let editMemberName = '';
+
+function openEditMember(name) {
+  editMemberName = name;
+  const data = memberDisplays[name] || {};
+  document.getElementById('editMemberName').textContent = name;
+  document.getElementById('editDisplayName').value = data.display_name || name;
+  document.getElementById('editNote').value = data.note || '';
+  document.getElementById('editCountEnabled').checked = data.count_enabled !== false;
+  // 别名列表
+  const aliases = data.aliases || [];
+  document.getElementById('editAliasesList').value = aliases.join(', ');
+  document.getElementById('editMemberModal').classList.add('active');
+}
+
+async function saveEditMember() {
+  const name = editMemberName;
+  const displayName = document.getElementById('editDisplayName').value.trim();
+  const note = document.getElementById('editNote').value.trim();
+  const countEnabled = document.getElementById('editCountEnabled').checked;
+  const aliasesStr = document.getElementById('editAliasesList').value.trim();
+  const aliases = aliasesStr ? aliasesStr.split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (!displayName) return alert('显示名称不能为空');
+  const btn = document.querySelector('#editMemberModal .btn-primary');
+  btn.textContent = '保存中...'; btn.disabled = true;
+  try {
+    const r = await fetch('/dashboard/members/update-display', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({raw_name: name, display_name: displayName, note, count_enabled: countEnabled, aliases})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById('editMemberModal').classList.remove('active');
+      location.reload();
+    } else {
+      alert(d.message || '保存失败');
+    }
+  } catch(e) {
+    alert('网络错误');
+  } finally {
+    btn.textContent = '保存'; btn.disabled = false;
+  }
 }
 </script>
 

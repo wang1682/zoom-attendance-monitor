@@ -195,6 +195,23 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 分组列表（用于筛选器） ──
     all_groups = get_all_groups()
     
+    # ── member_display 映射 ──
+    conn = db._get_conn()
+    md_rows = conn.execute(
+        "SELECT raw_name, display_name, aliases, note, count_enabled FROM member_display WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchall()
+    member_displays = {}
+    for r in md_rows:
+        raw_name = r[0]
+        aliases = json.loads(r[2]) if r[2] else []
+        member_displays[raw_name] = {
+            "display_name": r[1],
+            "aliases": aliases,
+            "note": r[3] or "",
+            "count_enabled": bool(r[4]),
+        }
+    
     return _render_admin(request, "participants", user, "participants.html",
                          title="成员中心",
                          members=members,
@@ -208,6 +225,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          search=search,
                          group_filter=group_filter,
                          status_filter=status_filter,
+                         member_displays=json.dumps(member_displays),
                          tenant_id=tenant_id)
 
 
@@ -341,6 +359,40 @@ async def admin_users(request: Request, user: dict = Depends(require_user)):
     all_users = db.get_all_users()
     users = [_user_dict(u) for u in all_users]
     return _render_admin(request, "admin", user, "admin_users.html", users=users)
+
+
+@router.post("/members/update-display")
+async def update_member_display_api(request: Request):
+    """更新成员别名/备注/计入统计"""
+    try:
+        data = await request.json()
+        from db import _get_conn
+        raw_name = data.get("raw_name", "").strip()
+        display_name = data.get("display_name", "").strip()
+        note = data.get("note", "")
+        count_enabled = data.get("count_enabled", True)
+        aliases = data.get("aliases", [])
+        if not raw_name or not display_name:
+            return {"ok": False, "message": "参数不完整"}
+        import json
+        conn = _get_conn()
+        existing = conn.execute(
+            "SELECT id FROM member_display WHERE raw_name = ?", (raw_name,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE member_display SET display_name=?, aliases=?, note=?, count_enabled=?, updated_at=datetime('now') WHERE raw_name=?",
+                (display_name, json.dumps(aliases), note, int(count_enabled), raw_name)
+            )
+        else:
+            conn.execute(
+                "INSERT INTO member_display (raw_name, display_name, aliases, note, count_enabled) VALUES (?,?,?,?,?)",
+                (raw_name, display_name, json.dumps(aliases), note, int(count_enabled))
+            )
+        conn.commit()
+        return {"ok": True, "message": "保存成功"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
 
 
 @router.post("/admin/users/create")
