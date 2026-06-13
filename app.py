@@ -76,7 +76,11 @@ def parse_utc_iso(s: str) -> datetime | None:
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+        s2 = s.replace("Z", "+00:00")
+        # 如果仍无时区，默认 UTC
+        if "+" not in s2 and s2.count("-") <= 2:  # "2026-06-13 17:10:37" 只有日期之间的横线
+            s2 = s2 + "+00:00"
+        return datetime.fromisoformat(s2)
     except:
         return None
 
