@@ -309,13 +309,13 @@ def build_app() -> "FastAPI":
     def _get_tenant_zoom_metrics(request: Request) -> tuple:
         """根据当前会话的 tenant_id 获取对应的 ZoomMetrics 实例。
 
-        规则：按视图拆分，不混合数据源。
+        规则：严格数据隔离。
         - 当前租户有活跃 zoom_account → 用它的（自有 S2S 专属视图）
-        - 没有 → 回退到 default 租户的主系统账户（全局视图）
+        - 没有 → 返回 None（不跨租户 fallback）
         - 无 tenant 上下文 → 用全局 .env
 
         Returns:
-            (ZoomMetrics, tenant_id | None)
+            (ZoomMetrics | None, tenant_id | None)
         """
         from zoom_metrics import ZoomMetrics
 
@@ -331,18 +331,12 @@ def build_app() -> "FastAPI":
             if active:
                 return ZoomMetrics(active), tenant_id
 
-        # 2) 没有自己的账号 → 使用主系统账户（default 的 zoom_account）
-        if tenant_id and tenant_id != "default":
-            fallback = db.get_zoom_accounts("default")
-            active = next(
-                (a for a in fallback if a.get("is_active") and a.get("status") == "active"),
-                None,
-            )
-            if active:
-                return ZoomMetrics(active), tenant_id
+        # 2) 没有自己的账号 → 无数据（不跨租户 fallback，严格隔离）
+        if tenant_id:
+            return None, tenant_id
 
-        # 3) 最终回退：全局 .env（无 tenant 上下文 / default 自己）
-        return ZoomMetrics(), tenant_id
+        # 3) 无 tenant 上下文（未登录）→ 用全局 .env
+        return ZoomMetrics(), None
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
     @app.get("/", response_class=RedirectResponse)
@@ -377,22 +371,7 @@ def build_app() -> "FastAPI":
                     for m in meetings_raw
                 ]
         except Exception:
-            try:
-                from zoom_metrics import ZoomMetrics
-                zm_global = ZoomMetrics()
-                live_data = await zm_global.get_live()
-                current_online = live_data.get("total_online", 0)
-                active_meetings = [
-                    {
-                        "id": m.get("id", ""),
-                        "topic": m.get("topic", ""),
-                        "participant_count": len(m.get("participants", [])),
-                        "start_time": m.get("start_time", ""),
-                    }
-                    for m in live_data.get("meetings", [])
-                ]
-            except Exception:
-                pass
+            pass  # 不 fallback 到全局 ZoomMetrics — 租户数据严格隔离
         conn = db._get_conn()
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         row = conn.execute(
@@ -651,20 +630,30 @@ def build_app() -> "FastAPI":
             reports = _ensure_demo().get_demo_reports()
         else:
             conn = db._get_conn()
+            tenant_id = request.session.get("tenant_id")
             # 今日统计（MYT 边界）
             rs_utc, re_utc = myt_day_range_to_utc()
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
-            unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
-            # 最近7天每天统计
-            rows = []
-            for i in range(7, -1, -1):
-                d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
-                cnt = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
-                uniq = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
-                rows.append({"date": d, "count": cnt, "unique": uniq})
-            # 参会排行（总次数）
-            top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (rs_utc, re_utc)).fetchall()
+            if tenant_id:
+                total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=?", (rs_utc, re_utc, tenant_id)).fetchone()[0]
+                unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=?", (rs_utc, re_utc, tenant_id)).fetchone()[0]
+                rows = []
+                for i in range(7, -1, -1):
+                    d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+                    cnt = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat(), tenant_id)).fetchone()[0]
+                    uniq = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat(), tenant_id)).fetchone()[0]
+                    rows.append({"date": d, "count": cnt, "unique": uniq})
+                top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=? GROUP BY name ORDER BY cnt DESC LIMIT 10", (rs_utc, re_utc, tenant_id)).fetchall()
+            else:
+                total_today = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
+                unique_names = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchone()[0]
+                rows = []
+                for i in range(7, -1, -1):
+                    d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+                    cnt = conn.execute("SELECT COUNT(*) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
+                    uniq = conn.execute("SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (d, (datetime.fromisoformat(d) + timedelta(days=1)).isoformat())).fetchone()[0]
+                    rows.append({"date": d, "count": cnt, "unique": uniq})
+                top = conn.execute("SELECT name, COUNT(*) as cnt FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC LIMIT 10", (rs_utc, re_utc)).fetchall()
             reports = {"total_today": total_today, "unique_today": unique_names, "daily_trend": rows, "top_participants": [{"name": r[0], "count": r[1]} for r in top]}
         return tmpl.TemplateResponse(request, "reports.html", {
             "reports": reports,
@@ -718,17 +707,28 @@ def build_app() -> "FastAPI":
         if not event_type:
             return {"ok": False, "error": "event_type is required"}
         rule_id = db.upsert_telegram_rule(event_type, data)
+        # 处理多 channel 关联
+        if "target_channel_ids" in data and isinstance(data["target_channel_ids"], list):
+            db.set_alert_rule_channels(event_type, data["target_channel_ids"])
+        elif data.get("target_channel_id"):
+            db.set_alert_rule_channels(event_type, [data["target_channel_id"]])
         return {"ok": True, "id": rule_id}
 
     @app.put("/api/v3/telegram-rules/{event_type}")
     async def api_v3_update_telegram_rule(event_type: str, request: Request):
         data = await request.json()
         rule_id = db.upsert_telegram_rule(event_type, data)
+        # 处理多 channel 关联
+        if "target_channel_ids" in data and isinstance(data["target_channel_ids"], list):
+            db.set_alert_rule_channels(event_type, data["target_channel_ids"])
+        elif data.get("target_channel_id"):
+            db.set_alert_rule_channels(event_type, [data["target_channel_id"]])
         return {"ok": True, "id": rule_id}
 
     @app.delete("/api/v3/telegram-rules/{event_type}")
     async def api_v3_delete_telegram_rule(event_type: str):
         db.delete_telegram_rule(event_type)
+        db.set_alert_rule_channels(event_type, [])  # 清理关联
         return {"ok": True}
 
     @app.get("/api/v3/telegram-rules/discover")
@@ -745,10 +745,22 @@ def build_app() -> "FastAPI":
         existing = set(r[0] for r in existing_rows)
 
         title_map = {
-            "meeting.participant_admitted": "准入会议",
-            "meeting.started": "会议开始",
-            "meeting.ended": "会议结束",
-            "user.presence_status_updated": "状态更新",
+            "meeting.participant_admitted": "准入",
+            "meeting.started": "开始",
+            "meeting.ended": "结束",
+            "meeting.participant_jbh_waiting": "等待中",
+            "meeting.participant_jbh_waiting_left": "离开等待",
+            "meeting.participant_joined": "加入",
+            "meeting.participant_joined_breakout_room": "加入分组",
+            "meeting.participant_joined_waiting_room": "等候室",
+            "meeting.participant_left": "离开",
+            "meeting.participant_left_breakout_room": "离开分组",
+            "meeting.participant_left_waiting_room": "离开等候室",
+            "meeting.sharing_started": "共享开始",
+            "meeting.sharing_ended": "共享结束",
+            "meeting.breakout_room_sharing_started": "分组共享",
+            "meeting.breakout_room_sharing_ended": "分组共享停",
+            "user.presence_status_updated": "状态",
         }
 
         discovered = []
@@ -762,16 +774,6 @@ def build_app() -> "FastAPI":
             discovered.append({"event_type": event_type, "title": title})
 
         return {"ok": True, "discovered": discovered}
-
-    @app.get("/settings/telegram-rules", response_class=HTMLResponse)
-    async def settings_telegram_rules_page(request: Request):
-        rules = db.get_telegram_rules()
-        channels = db.get_telegram_channels()
-        return tmpl.TemplateResponse(request, "settings_telegram_rules.html", {
-            "brand": BRAND,
-            "rules": rules,
-            "channels": channels,
-        })
 
     # ── Member Groups API ─────────────────────────────────────────────────
 
@@ -1167,6 +1169,20 @@ def build_app() -> "FastAPI":
                 if _active and _active.get("webhook_secret"):
                     _secret = _active["webhook_secret"]
                     sys.stdout.write(f"[WEBHOOK:{tenant_id}] Using per-account webhook_secret\n")
+            else:
+                # 无 tenant_id：从所有活跃账号中取第一个有 webhook_secret 的
+                try:
+                    # db.py 中没有 get_all_active_zoom_accounts 的公开导出
+                    # 直接从 tenant_users 反查所有活跃租户
+                    _conn = db._get_conn()
+                    _rows = _conn.execute(
+                        "SELECT webhook_secret FROM zoom_accounts WHERE is_active=1 AND webhook_secret != '' LIMIT 1"
+                    ).fetchall()
+                    if _rows and _rows[0]["webhook_secret"]:
+                        _secret = _rows[0]["webhook_secret"]
+                        sys.stdout.write(f"[WEBHOOK] Using db webhook_secret (non-default)\n")
+                except Exception:
+                    pass
             enc = _hmac.new(_secret.encode(), plain_token.encode(), _hashlib.sha256).hexdigest()
             sys.stdout.write(f"[WEBHOOK] Challenge OK: pt={plain_token[:10]}... enc={enc[:10]}...\n")
             sys.stdout.flush()
@@ -1466,9 +1482,9 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/telegram-channels", response_class=HTMLResponse)
     async def settings_telegram_channels_page(request: Request):
-        # 合并到 /settings/telegram-rules
+        # 合并到 /dashboard/alerts
         from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="/settings/telegram-rules")
+        return RedirectResponse(url="/dashboard/alerts")
 
     @app.get("/api/v3/aliases")
     async def api_v3_aliases():
@@ -1506,10 +1522,14 @@ def build_app() -> "FastAPI":
     async def api_v3_member_aliases_discover_alias(request: Request):
         """别名：/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
         conn = db._get_conn()
+        tenant_id = request.session.get("tenant_id")
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         now_str = datetime.now(timezone.utc).isoformat()
-        rows = conn.execute("""SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC""", (cutoff, now_str)).fetchall()
+        if tenant_id:
+            rows = conn.execute("""SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id=? GROUP BY name ORDER BY cnt DESC""", (cutoff, now_str, tenant_id)).fetchall()
+        else:
+            rows = conn.execute("""SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY cnt DESC""", (cutoff, now_str)).fetchall()
         alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
         configured_aliases = set()
         for (alias_name,) in alias_rows:
@@ -1541,10 +1561,17 @@ def build_app() -> "FastAPI":
         return {"ok": True, "unmapped": list(set(unmapped)), "online": online_names}
 
     @app.get("/api/v3/member-names")
-    async def api_v3_member_names():
-        """返回所有历史用户名（去重）"""
+    async def api_v3_member_names(request: Request):
+        """返回当前租户的历史用户名（去重）"""
+        tenant_id = request.session.get("tenant_id")
         conn = db._get_conn()
-        rows = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
+        if tenant_id:
+            rows = conn.execute(
+                "SELECT DISTINCT name FROM zoom_participants WHERE tenant_id=? ORDER BY name",
+                (tenant_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
         names = [r[0] for r in rows]
         return {"ok": True, "names": names}
 
@@ -1552,12 +1579,30 @@ def build_app() -> "FastAPI":
     async def api_v3_discover(request: Request):
         """自动发现历史 Zoom 用户名，统计出现次数和是否在线"""
         conn = db._get_conn()
+        tenant_id = request.session.get("tenant_id")
         from datetime import datetime, timezone, timedelta
         
         # 统计最近30天的 Zoom 用户名出现次数
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         now_str = datetime.now(timezone.utc).isoformat()
-        rows = conn.execute("""
+        rows = conn.execute("""\
+            SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
+            FROM zoom_participants
+            WHERE action_time >= ? AND action_time < ?
+            GROUP BY name
+            ORDER BY cnt DESC
+        """, (cutoff, now_str)).fetchall()
+        # 但上面没加 tenant_id 隔离，现在加上
+        if tenant_id:
+            rows = conn.execute("""\
+            SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
+            FROM zoom_participants
+            WHERE action_time >= ? AND action_time < ? AND tenant_id=?
+            GROUP BY name
+            ORDER BY cnt DESC
+        """, (cutoff, now_str, tenant_id)).fetchall()
+        else:
+            rows = conn.execute("""\
             SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen
             FROM zoom_participants
             WHERE action_time >= ? AND action_time < ?
@@ -1589,8 +1634,11 @@ def build_app() -> "FastAPI":
         unmapped_set = set()
         zm, _ = _get_tenant_zoom_metrics(request)
         live_data = await zm.get_live() if zm else {"meetings": []}
-        # 补充来源：所有 zoom_participants 中出现过的用户名
-        _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
+        # 补充来源：所有 zoom_participants 中出现过的用户名（按 tenant 隔离）
+        if tenant_id:
+            _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE tenant_id=? ORDER BY name", (tenant_id,)).fetchall()
+        else:
+            _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants ORDER BY name").fetchall()
         for (an,) in _all_names:
             _ak = an.strip().lower().replace(" ", "")
             if _ak not in configured_aliases:
@@ -1653,17 +1701,24 @@ def build_app() -> "FastAPI":
 
 
     @app.get("/api/v3/aliases/duplicates")
-    async def api_v3_aliases_duplicates():
+    async def api_v3_aliases_duplicates(request: Request):
         """发现疑似重复的 Zoom 用户名（去空格 / 大小写 / 前4词）"""
         import re
         from datetime import datetime, timezone, timedelta
         from collections import defaultdict
         conn = db._get_conn()
+        tenant_id = request.session.get("tenant_id")
         cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-        rows = conn.execute(
-            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
-            (cutoff,)
-        ).fetchall()
+        if tenant_id:
+            rows = conn.execute(
+                "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND tenant_id=? GROUP BY name ORDER BY cnt DESC",
+                (cutoff, tenant_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
+                (cutoff,)
+            ).fetchall()
         names = []
         for r in rows:
             nm = (r["name"] or "").strip()
@@ -2057,10 +2112,16 @@ def build_app() -> "FastAPI":
         tenant_id = request.session.get("tenant_id")
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        rows = conn.execute(
-            "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
-            (cutoff,)
-        ).fetchall()
+        if tenant_id:
+            rows = conn.execute(
+                "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? AND tenant_id=? GROUP BY name ORDER BY cnt DESC",
+                (cutoff, tenant_id)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT name, COUNT(*) as cnt, MAX(action_time) as last_seen FROM zoom_participants WHERE action_time >= ? GROUP BY name ORDER BY cnt DESC",
+                (cutoff,)
+            ).fetchall()
         
         # Check which are already mapped
         def to_myt_display(s):
@@ -2085,10 +2146,14 @@ def build_app() -> "FastAPI":
         return {"ok": True, "names": results}
 
     @app.get("/api/v3/members")
-    async def api_v3_members_alias():
-        """别名：/api/v3/members -> 同 /api/v3/member-display"""
+    async def api_v3_members_alias(request: Request):
+        """别名：/api/v3/members -> 同 /api/v3/member-display（按 tenant 隔离）"""
         conn = db._get_conn()
-        rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        tenant_id = request.session.get("tenant_id")
+        if tenant_id:
+            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
         items = []
         for r in rows:
@@ -2109,6 +2174,7 @@ def build_app() -> "FastAPI":
         display_name = data.get("display_name", "").strip()
         aliases = data.get("aliases", [])
         group_id = data.get("group_id", None)
+        tenant_id = request.session.get("tenant_id")
         if not raw_name or not display_name:
             return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
         import re
@@ -2117,11 +2183,17 @@ def build_app() -> "FastAPI":
         now = datetime.now(timezone.utc).isoformat()
         conn = db._get_conn()
         try:
-            # Check if existing record
-            existing = conn.execute(
-                "SELECT id FROM member_display WHERE display_name=? OR raw_name=?",
-                (display_name, raw_name)
-            ).fetchone()
+            # Check if existing record (同一租户内)
+            if tenant_id:
+                existing = conn.execute(
+                    "SELECT id FROM member_display WHERE (display_name=? OR raw_name=?) AND tenant_id=?",
+                    (display_name, raw_name, tenant_id)
+                ).fetchone()
+            else:
+                existing = conn.execute(
+                    "SELECT id FROM member_display WHERE display_name=? OR raw_name=?",
+                    (display_name, raw_name)
+                ).fetchone()
             if existing:
                 conn.execute(
                     """UPDATE member_display SET raw_name=?, match_key=?, aliases=?, group_id=?, updated_at=?
@@ -2130,9 +2202,9 @@ def build_app() -> "FastAPI":
                 )
             else:
                 conn.execute(
-                    """INSERT INTO member_display (raw_name, display_name, match_key, aliases, group_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (raw_name, display_name, match_key, json.dumps(aliases), group_id, now, now)
+                    """INSERT INTO member_display (raw_name, display_name, match_key, aliases, group_id, tenant_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (raw_name, display_name, match_key, json.dumps(aliases), group_id, tenant_id, now, now)
                 )
             conn.commit()
             return {"ok": True}
@@ -2140,10 +2212,14 @@ def build_app() -> "FastAPI":
             return {"ok": False, "error": str(e)}
 
     @app.get("/api/v3/member-display")
-    async def api_v3_member_display_list():
-        """所有显示名映射"""
+    async def api_v3_member_display_list(request: Request):
+        """所有显示名映射（按 tenant 隔离）"""
         conn = db._get_conn()
-        rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        tenant_id = request.session.get("tenant_id")
+        if tenant_id:
+            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
         items = []
         for r in rows:
@@ -2189,28 +2265,43 @@ def build_app() -> "FastAPI":
         group_id = data.get("group_id", None)
         conn = db._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+        tenant_id = request.session.get("tenant_id")
         try:
-            conn.execute(
-                "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ?",
-                (group_id, now, display_name)
-            )
+            if tenant_id:
+                conn.execute(
+                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ? AND tenant_id=?",
+                    (group_id, now, display_name, tenant_id)
+                )
+            else:
+                conn.execute(
+                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ?",
+                    (group_id, now, display_name)
+                )
             conn.commit()
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
     @app.delete("/api/v3/member-display/{item_id}")
-    async def api_v3_member_display_del(item_id: int):
+    async def api_v3_member_display_del(item_id: int, request: Request):
         conn = db._get_conn()
-        conn.execute("DELETE FROM member_display WHERE id=?", (item_id,))
+        tenant_id = request.session.get("tenant_id")
+        if tenant_id:
+            conn.execute("DELETE FROM member_display WHERE id=? AND tenant_id=?", (item_id, tenant_id))
+        else:
+            conn.execute("DELETE FROM member_display WHERE id=?", (item_id,))
         conn.commit()
         return {"ok": True}
 
     @app.delete("/api/v3/members/{display_name}")
-    async def api_v3_members_del_by_name(display_name: str):
+    async def api_v3_members_del_by_name(display_name: str, request: Request):
         """按 display_name 删除成员映射（JS 前端调用）"""
         conn = db._get_conn()
-        conn.execute("DELETE FROM member_display WHERE display_name=?", (display_name,))
+        tenant_id = request.session.get("tenant_id")
+        if tenant_id:
+            conn.execute("DELETE FROM member_display WHERE display_name=? AND tenant_id=?", (display_name, tenant_id))
+        else:
+            conn.execute("DELETE FROM member_display WHERE display_name=?", (display_name,))
         conn.commit()
         return {"ok": True}
 
@@ -3196,7 +3287,10 @@ def build_app() -> "FastAPI":
         request.session["user_id"] = user["id"]
         request.session["username"] = user["username"]
         request.session["role"] = user.get("role") or "tenant"
-        request.session["tenant_id"] = user.get("tenant_id") or "default"
+        # ── 查出用户关联的第一个活跃租户 ──
+        tenants = db.get_user_tenants(user["id"])
+        first_tenant = tenants[0]["tenant_id"] if tenants else "default"
+        request.session["tenant_id"] = first_tenant
         role = request.session["role"]
         # 根据角色决定重定向目标
         if role == "super_admin":
@@ -3204,6 +3298,11 @@ def build_app() -> "FastAPI":
         else:
             redirect_url = "/dashboard/tenant"
         return RedirectResponse(url=redirect_url, status_code=303)
+
+    @app.get("/logout")
+    async def logout_get(request: Request):
+        request.session.clear()
+        return RedirectResponse(url="/login", status_code=303)
 
     @app.post("/logout")
     async def logout(request: Request):

@@ -6,6 +6,10 @@
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
 .modal-overlay.active{display:flex}
 .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+/* 分组颜色 */
+.badge-group-推进{background:rgba(239,68,68,.18);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
+.badge-group-核销{background:rgba(59,130,246,.18);color:#3b82f6;border:1px solid rgba(59,130,246,.3)}
+.badge-group-Allan{background:rgba(6,182,212,.18);color:#06b6d4;border:1px solid rgba(6,182,212,.3)}
 .modal-box h2{margin:0 0 16px;font-size:16px}
 .modal-box .form-group{margin-bottom:12px}
 .modal-box .form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px}
@@ -104,7 +108,7 @@
         <td>
           <span class="member-group-badge" data-member="{{ m.standard_name }}">
             {% if m.group_name %}
-            <span class="badge badge-cyan">{{ m.group_name }}</span>
+            <span class="badge badge-group-{{ m.group_name }}">{{ m.group_name }}</span>
             {% else %}
             <span class="text-muted">—</span>
             {% endif %}

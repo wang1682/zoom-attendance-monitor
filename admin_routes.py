@@ -254,8 +254,8 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
 async def dashboard_alerts_page(request: Request, user: dict = Depends(require_user)):
     """Alert rules page — tenant-isolated, unified under /dashboard/alerts."""
     tenant_id = request.session.get("tenant_id", "default")
-    rules = db.get_telegram_rules_by_tenant(tenant_id)
-    channels = db.get_tenant_channels(tenant_id)
+    rules = db.get_rules_with_channels(tenant_id)
+    channels = db.get_telegram_channels()
     return _render_admin(request, "alerts", user, "tenant_alerts.html",
                          rules=rules, channels=channels)
 

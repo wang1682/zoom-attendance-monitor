@@ -143,18 +143,76 @@ async def poll_account(zoom: ZoomAPI, meeting_ids: list[str],
     return new_entries, leaves, stranger_warnings
 
 
-def _push_by_rule(event_type: str, text: str, default_tg: TelegramNotifier):
-    """按告警规则推送，优先用频道 Bot，回退全局 Bot"""
-    from db import get_rule_push_target
-    _bot_token, _chat_id = get_rule_push_target(event_type)
-    if _bot_token:
-        _tg = TelegramNotifier(token=_bot_token)
-        return asyncio.ensure_future(_tg.send(text, chat_id=_chat_id))
-    elif _chat_id:
-        return asyncio.ensure_future(default_tg.send(text, chat_id=_chat_id))
-    else:
-        # 没有配置目标 → 兼容旧逻辑直接用全局 Bot
+def _push_by_rule(event_type: str, text: str, tenant_id: str,
+                  default_tg: TelegramNotifier) -> asyncio.Task | None:
+    """按告警规则推送，只推给指定租户的 channels（每个 channel 用自己的 bot_token）"""
+    from db import get_tenant_channels, get_tenant_bot_config
+    channels = get_tenant_channels(tenant_id)
+    if not channels:
         return None
+    futures = []
+    for ch in channels:
+        token = ch.get("bot_token", "") or get_tenant_bot_config(tenant_id)["token"]
+        if not token:
+            continue  # 没有配置 bot token 就不推
+        _tg = TelegramNotifier(token=token)
+        futures.append(asyncio.ensure_future(_tg.send(text, chat_id=ch["chat_id"])))
+    return futures[0] if futures else None
+
+
+async def _push_entries(entries: list[tuple], entry_type: str, tenant_id: str,
+                       push_now: bool, now_myt: datetime, default_tg: TelegramNotifier):
+    """Push entry/leave/stranger events for a single tenant."""
+    if not entries or not push_now:
+        return
+    if entry_type == "stranger":
+        lines = []
+        for name, email, utc_dt, mid in entries:
+            room = get_room_label(mid)
+            myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
+            lines.append(
+                tmpl.render("stranger_alert",
+                            name=name, email=email,
+                            time=myt_time) +
+                (f" [{room}]" if name else "")
+            )
+        msg = (tmpl.render("stranger_header", count=str(len(entries))) +
+               "\n".join(lines))
+        _fut = _push_by_rule("unknown_user", msg, tenant_id, default_tg)
+        if not _fut:
+            return  # 没有配置 channels，不推
+
+    elif entry_type == "enter":
+        entries.sort(key=lambda x: x[1])
+        lines = [tmpl.render("participant_enter_header", count=str(len(entries)))]
+        for name, utc_dt, mid, _ in entries:
+            room = get_room_label(mid)
+            myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
+            late = " ⚠️迟到" if is_late(utc_dt.astimezone(MYT)) else ""
+            lines.append(
+                tmpl.render("participant_enter",
+                            name=name, time=myt_time,
+                            room=room) + late
+            )
+        msg = "\n".join(filter(None, lines))
+        _fut = _push_by_rule("participant_joined", msg, tenant_id, default_tg)
+        if not _fut:
+            return
+
+    elif entry_type == "leave":
+        lines = [tmpl.render("participant_leave_header", count=str(len(entries)))]
+        for name, utc_dt, mid in entries:
+            room = get_room_label(mid)
+            myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
+            lines.append(
+                tmpl.render("participant_leave",
+                            name=name, time=myt_time,
+                            room=room)
+            )
+        msg = "\n".join(filter(None, lines))
+        _fut = _push_by_rule("participant_left", msg, tenant_id, default_tg)
+        if not _fut:
+            return
 
 
 async def monitor_loop():
@@ -184,6 +242,11 @@ async def monitor_loop():
                 zoom_default, default_ids, push_now, now_utc, now_myt, tg
             )
 
+            # 默认账号推送到 tenant_id=default 的 channels
+            await _push_entries(d_strangers, "stranger", "default", push_now, now_myt, tg)
+            await _push_entries(d_new, "enter", "default", push_now, now_myt, tg)
+            await _push_entries(d_leaves, "leave", "default", push_now, now_myt, tg)
+
             # ── 2. 数据库中所有激活的 Zoom 账号（多租户）──
             accounts = get_all_active_zoom_accounts()
             for acct in accounts:
@@ -204,64 +267,20 @@ async def monitor_loop():
                     a_new, a_leaves, a_strangers = await poll_account(
                         zoom_acct, acct_ids, push_now, now_utc, now_myt, tg
                     )
+
+                    # 每个租户各自推送
+                    tid = acct["tenant_id"]
+                    await _push_entries(a_strangers, "stranger", tid, push_now, now_myt, tg)
+                    await _push_entries(a_new, "enter", tid, push_now, now_myt, tg)
+                    await _push_entries(a_leaves, "leave", tid, push_now, now_myt, tg)
+
+                    # 合并日志计数
                     d_new.extend(a_new)
                     d_leaves.extend(a_leaves)
                     d_strangers.extend(a_strangers)
                 except Exception as e:
                     sys.stdout.write(f"[MONITOR] 租户 {acct.get('label','?')}: {e}\n")
                     sys.stdout.flush()
-
-            # ── 推送：陌生人 ──
-            if d_strangers and push_now:
-                lines = []
-                for name, email, utc_dt, mid in d_strangers:
-                    room = get_room_label(mid)
-                    myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
-                    lines.append(
-                        tmpl.render("stranger_alert",
-                                    name=name, email=email,
-                                    time=myt_time) +
-                        f" [{room}]" if name else ""
-                    )
-                msg = (tmpl.render("stranger_header", count=str(len(d_strangers))) +
-                       "\n".join(lines))
-                _fut = _push_by_rule("unknown_user", msg, tg)
-                if not _fut:
-                    await tg.send(msg)
-
-            # ── 推送：新进 ──
-            if d_new and push_now:
-                d_new.sort(key=lambda x: x[1])
-                lines = [tmpl.render("participant_enter_header", count=str(len(d_new)))]
-                for name, utc_dt, mid, _ in d_new:
-                    room = get_room_label(mid)
-                    myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
-                    late = " ⚠️迟到" if is_late(utc_dt.astimezone(MYT)) else ""
-                    lines.append(
-                        tmpl.render("participant_enter",
-                                    name=name, time=myt_time,
-                                    room=room) + late
-                    )
-                msg = "\n".join(filter(None, lines))
-                _fut = _push_by_rule("participant_joined", msg, tg)
-                if not _fut:
-                    await tg.send(msg, group=True)
-
-            # ── 推送：离开 ──
-            if d_leaves and push_now:
-                lines = [tmpl.render("participant_leave_header", count=str(len(d_leaves)))]
-                for name, utc_dt, mid in d_leaves:
-                    room = get_room_label(mid)
-                    myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
-                    lines.append(
-                        tmpl.render("participant_leave",
-                                    name=name, time=myt_time,
-                                    room=room)
-                    )
-                msg = "\n".join(filter(None, lines))
-                _fut = _push_by_rule("participant_left", msg, tg)
-                if not _fut:
-                    await tg.send(msg, group=True)
 
             # ── 日志 ──
             parts = []
@@ -276,17 +295,8 @@ async def monitor_loop():
             if accounts:
                 detail += f" {len(accounts)+1}账号"
 
-                        # ── Periodic online report (多群独立频率) ──
-            _M = __import__("sys").modules["__main__"]
-            if not hasattr(_M, "_LAST_ONLINE_REPORT"):
-                _M._LAST_ONLINE_REPORT = time.time()
-            if not hasattr(_M, "_LAST_ONLINE_REPORT_TJ"):
-                _M._LAST_ONLINE_REPORT_TJ = time.time()
-            _nr = time.time()
-            _yc_due = _nr - _M._LAST_ONLINE_REPORT >= 10800
-            _tj_due = _nr - _M._LAST_ONLINE_REPORT_TJ >= settings.telegram_group2_report_interval
-
-            if (_yc_due or _tj_due) and push_now:
+                        # ── Periodic online report (按租户 tenant_channels 推送) ──
+            if push_now:
                 import httpx
                 from app import resolve_member
                 _v2_participants = []
@@ -348,51 +358,18 @@ async def monitor_loop():
                 _lines.append(f"📊 共{len(_v2_participants)}人在线")
                 _report_text = "\n".join(_lines)
 
-                if _yc_due and should_send_telegram("periodic_online_report"):
-                    import db as _db
-                    _conn = _db._get_conn()
-                    _rule_row = _conn.execute(
-                        "SELECT target_channel_id FROM telegram_alert_rules WHERE event_type='periodic_online_report'"
-                    ).fetchone()
-                    _yc_chat_id = ""
-                    _yc_bot_token = ""
-                    if _rule_row and _rule_row[0]:
-                        _ch_row = _conn.execute(
-                            "SELECT chat_id, bot_token FROM telegram_channels WHERE id=?", (_rule_row[0],)
-                        ).fetchone()
-                        if _ch_row:
-                            _yc_chat_id = _ch_row[0] or ""
-                            _yc_bot_token = _ch_row[1] or ""
-                    sys.stdout.write(f"[PERIODIC REPORT] YC群 chat_id={_yc_chat_id or 'private'} bot_token={'有' if _yc_bot_token else '无(用全局)'}\n")
+                # 按租户推送在线报告 – 各租户的 channel 自己决定是否接收
+                import db as _db
+                _all_channels = _db.get_tenant_channels_periodic_report()
+                for _ch in _all_channels:
+                    _cp_chat_id = _ch["chat_id"]
+                    _cp_bot_token = _ch.get("bot_token", "")
+                    if not _cp_bot_token or not _cp_chat_id:
+                        continue
+                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 {_ch.get('label','?')} tenant={_ch['tenant_id']} chat_id={_cp_chat_id}\n")
                     sys.stdout.flush()
-                    if _yc_bot_token:
-                        _yc_tg = TelegramNotifier(bot_token=_yc_bot_token)
-                        await _yc_tg.send(_report_text, chat_id=_yc_chat_id)
-                    else:
-                        await tg.send(_report_text, chat_id=_yc_chat_id)
-                    _M._LAST_ONLINE_REPORT = _nr
-
-                if _tj_due and settings.telegram_group2_enabled and settings.telegram_group2_chat_id:
-                    _tj_chat_id = settings.telegram_group2_chat_id
-                    _tj_bot_token = ""
-                    try:
-                        import db as _db2
-                        _conn2 = _db2._get_conn()
-                        _tj_row = _conn2.execute(
-                            "SELECT bot_token FROM telegram_channels WHERE chat_id=?", (_tj_chat_id,)
-                        ).fetchone()
-                        if _tj_row and _tj_row[0]:
-                            _tj_bot_token = _tj_row[0]
-                    except Exception:
-                        pass
-                    sys.stdout.write(f"[PERIODIC REPORT] TJ群 chat_id={_tj_chat_id} bot_token={'有' if _tj_bot_token else '无(用全局)'}\n")
-                    sys.stdout.flush()
-                    if _tj_bot_token:
-                        _tj_tg = TelegramNotifier(bot_token=_tj_bot_token)
-                        await _tj_tg.send(_report_text, chat_id=_tj_chat_id)
-                    else:
-                        await tg.send(_report_text, chat_id=_tj_chat_id)
-                    _M._LAST_ONLINE_REPORT_TJ = _nr
+                    _cp_tg = TelegramNotifier(bot_token=_cp_bot_token)
+                    await _cp_tg.send(_report_text, chat_id=_cp_chat_id)
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()

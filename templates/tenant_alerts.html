@@ -1,78 +1,294 @@
-{% extends "tenant_base.html" %}
-{% block title %}告警规则{% endblock %}
+{% extends "base.html" %}
+{% block title %}预警 - Zoom Monitor{% endblock %}
 {% block content %}
 
-<div class="flex items-center justify-between mb-6">
-    <h1 style="font-size:1.5rem; font-weight:700;">🔔 告警规则设置</h1>
-    <span style="font-size:0.85rem; color:#64748b;">开关控制推送事件类型</span>
+<style>
+.channel-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:2px;font-size:10px;border:1px solid var(--border);background:var(--accent-dim);color:var(--accent);margin:1px 2px}
+#fTargetChannelIds{min-height:60px}
+#fTargetChannelIds option{padding:3px 6px}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
+.modal-overlay.active{display:flex}
+.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.modal-box h2{margin:0 0 16px;font-size:16px}
+.modal-box .form-group{margin-bottom:12px}
+.modal-box .form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px}
+.modal-box .form-group input,.modal-box .form-group select,.modal-box .form-group textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:13px}
+.modal-box .form-group textarea{min-height:60px;resize:vertical}
+.modal-box .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.modal-box .modal-actions .btn{padding:6px 16px;font-size:12px}
+</style>
+
+<div class="page-header">
+  <div class="flex" style="justify-content:space-between;align-items:flex-start">
+    <div>
+      <h1 class="page-title">告警规则设置</h1>
+      <p class="page-subtitle">按事件类型精细控制 Telegram 推送</p>
+    </div>
+    <div class="flex" style="gap:8px;align-items:center;flex-shrink:0">
+      <button class="btn btn-sm btn-primary" onclick="showCreateForm()">➕ 新建规则</button>
+    </div>
+  </div>
 </div>
 
-{% if rules %}
-<div class="card" style="padding:0; overflow:hidden;">
-    <table>
-        <thead>
-            <tr>
-                <th>事件类型</th>
-                <th>标题</th>
-                <th>状态</th>
-                <th>推送频道</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for r in rules %}
-            <tr>
-                <td style="font-family:monospace; font-size:0.8rem;">{{ r.event_type }}</td>
-                <td>{{ r.title or '' }}</td>
-                <td>
-                    <span class="badge {{ 'badge-active' if r.enabled else 'badge-inactive' }}">
-                        {{ '启用' if r.enabled else '关闭' }}
-                    </span>
-                </td>
-                <td style="font-size:0.85rem;">
-                    {% set target_chat = r.target_chat_id or r.target_channel_id %}
-                    {% if target_chat %}
-                        {% set found = namespace(val='') %}
-                        {% for ch in channels %}
-                            {% if ch.chat_id == target_chat|string %}
-                                {{ bot_username }} / {{ ch.label or ch.chat_id }}
-                            {% endif %}
-                        {% endfor %}
-                        {% if not found %}
-                            <span style="color:#94a3b8;">{{ target_chat }}</span>
-                        {% endif %}
-                    {% else %}
-                        <span style="color:#64748b;">默认频道</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <form method="post" action="/dashboard/tenant/alerts/toggle" style="display:flex; gap:6px; align-items:center;">
-                        <input type="hidden" name="event_type" value="{{ r.event_type }}">
-                        <input type="hidden" name="enabled" value="{{ '0' if r.enabled else '1' }}">
-                        <select name="target_chat_id" style="width:auto; min-width:180px; font-size:0.8rem; padding:4px 8px;">
-                            <option value="">{{ bot_username or "系统 Bot" }} / 默认</option>
-                            {% for ch in channels %}
-                            <option value="{{ ch.chat_id }}" {% if ch.chat_id == r.target_chat_id %}selected{% endif %}>
-                                {{ bot_username }} / {{ ch.label or ch.chat_id }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <button type="submit" class="btn {{ 'btn-danger' if r.enabled else 'btn-success' }} btn-sm">
-                            {{ '关闭' if r.enabled else '开启' }}
-                        </button>
-                    </form>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
+<div class="panel">
+  <div class="panel-header"><h2>规则列表</h2></div>
+  <div class="overflow-x">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>事件类型</th>
+          <th>标题</th>
+          <th>状态</th>
+          <th>冷却</th>
+          <th>静默</th>
+          <th>推送目标</th>
+          <th style="width:80px">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if rules %}
+        {% for r in rules %}
+        <tr>
+          <td class="td-mono">{{ r.event_type }}</td>
+          <td>{{ r.title or '-' }}</td>
+          <td>
+            <span class="badge {% if r.enabled %}badge-success{% else %}badge-muted{% endif %}">
+              {{ '启用' if r.enabled else '禁用' }}
+            </span>
+          </td>
+          <td class="td-mono">{{ r.cooldown_seconds or 0 }}s</td>
+          <td class="text-muted" style="font-size:11px">
+            {% if r.quiet_enabled %}
+              {{ r.quiet_start }}-{{ r.quiet_end }}
+            {% else %}—{% endif %}
+          </td>
+          <td>
+            {% if r.channel_ids is defined %}
+              {% for cid in r.channel_ids %}
+                {% set ch = channels|selectattr('id','equalto',cid)|first %}
+                <span class="channel-tag">{{ ch.bot_username or ch.name if ch else '#' ~ cid }}</span>
+              {% else %}
+                <span class="text-muted">默认</span>
+              {% endfor %}
+            {% else %}
+              {% set ch = channels|selectattr('id','equalto',r.target_channel_id)|first %}
+              {% if ch %}
+                <span class="channel-tag">{{ ch.bot_username or ch.name }}</span>
+              {% else %}
+                <span class="text-muted">默认</span>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td>
+            <div style="display:flex;gap:4px;white-space:nowrap">
+              <button class="btn-icon" onclick="editRule('{{ r.event_type }}')" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
+              <button class="btn-icon danger" onclick="deleteRule('{{ r.event_type }}')" title="删除" style="font-weight:600;color:#ef4444">删除</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td class="td-empty" colspan="7">暂无规则，点击「新建规则」或「扫描新事件类型」创建</td></tr>
+        {% endif %}
+      </tbody>
     </table>
+  </div>
 </div>
+
+<div class="panel" style="margin-top:12px">
+  <div class="panel-header"><h2>📡 发现新规则</h2></div>
+  <div class="panel-body">
+    <button class="btn btn-sm" onclick="discoverRules()">扫描新事件类型</button>
+    <div id="discoverResult" style="margin-top:8px"></div>
+  </div>
+</div>
+
+<!-- 编辑/新建弹窗 -->
+<div class="modal-overlay" id="ruleForm">
+  <div class="modal-box" style="min-width:480px;max-width:560px">
+    <h2 id="formTitle">新建规则</h2>
+    <input type="hidden" id="editEventType" value="">
+    <div class="form-group">
+      <label>事件类型</label>
+      <select id="fEventType"></select>
+    </div>
+    <div class="form-group">
+      <label>标题（可选）</label>
+      <input type="text" id="fTitle" placeholder="如：短时间频繁进出">
+    </div>
+    <div class="form-group">
+      <label>启用</label>
+      <select id="fEnabled"><option value="1">是</option><option value="0">否</option></select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="form-group">
+        <label>冷却时间（秒）</label>
+        <input type="number" id="fCooldown" value="60" min="0" style="width:100%">
+      </div>
+      <div class="form-group">
+        <label>推送到</label>
+        <select id="fTargetChannelIds" multiple>
+          {% for ch in channels %}
+          <option value="{{ ch.id }}">{{ ch.bot_username or ch.name }} · {{ ch.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <p class="text-muted" style="font-size:10px;margin:0 0 8px">按住 Ctrl/⌘ 多选，不选则使用默认群组</p>
+    <div class="form-group">
+      <label>静默时段</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:center">
+        <select id="fQuietEnabled" style="width:100%">
+          <option value="0">关闭</option>
+          <option value="1">开启</option>
+        </select>
+        <input type="time" id="fQuietStart" value="00:00" style="width:100%">
+        <input type="time" id="fQuietEnd" value="08:00" style="width:100%">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-sm" onclick="hideForm()">取消</button>
+      <button class="btn btn-sm btn-primary" onclick="saveRule()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const channels = {{ channels | tojson | safe }};
+
+{% if rules_with_channels is defined %}
+const rulesData = {{ rules_with_channels | tojson | safe }};
 {% else %}
-<div class="card" style="text-align:center; padding:3rem;">
-    <div style="font-size:3rem; margin-bottom:12px;">🔔</div>
-    <h3 style="font-weight:600; margin-bottom:8px;">暂无告警规则</h3>
-    <p style="font-size:0.85rem; color:#64748b;">请联系管理员初始化告警规则。</p>
-</div>
+const rulesData = {{ rules | tojson | safe }};
 {% endif %}
+
+// 填充事件类型下拉
+(function() {
+  const sel = document.getElementById('fEventType');
+  const existing = new Set(rulesData.map(r => r.event_type));
+  const types = ['participant_joined','participant_left','meeting.started','meeting.ended','meeting.participant_admitted','meeting.participant_jbh_waiting','meeting.participant_jbh_waiting_left','meeting.participant_joined_breakout_room','meeting.participant_joined_waiting_room','meeting.participant_left_breakout_room','meeting.participant_left_waiting_room','meeting.sharing_started','meeting.sharing_ended','meeting.breakout_room_sharing_started','meeting.breakout_room_sharing_ended','user.presence_status_updated','periodic_online_report','frequent_join_leave','unknown_user','concurrent_test_1'];
+  const titleMap = {'participant_joined':'加入','participant_left':'离开','meeting.started':'开始','meeting.ended':'结束','meeting.participant_admitted':'准入','meeting.participant_jbh_waiting':'等待中','meeting.participant_jbh_waiting_left':'离开等待','meeting.participant_joined_breakout_room':'加入分组','meeting.participant_joined_waiting_room':'等候室','meeting.participant_left_breakout_room':'离开分组','meeting.participant_left_waiting_room':'离开等候室','meeting.sharing_started':'共享开始','meeting.sharing_ended':'共享结束','meeting.breakout_room_sharing_started':'分组共享','meeting.breakout_room_sharing_ended':'分组共享停','user.presence_status_updated':'状态','periodic_online_report':'在线报告','frequent_join_leave':'频繁进出','unknown_user':'未知用户','concurrent_test_1':'并发测试1'};
+  types.forEach(function(t) {
+    var opt = document.createElement('option');
+    opt.value = t;
+    opt.textContent = t + ' · ' + (titleMap[t] || t.split('.').pop());
+    if (existing.has(t)) opt.disabled = true;
+    sel.appendChild(opt);
+  });
+})();
+
+function showCreateForm() {
+  document.getElementById('editEventType').value = '';
+  document.getElementById('formTitle').textContent = '新建规则';
+  document.getElementById('fEventType').value = 'participant_joined';
+  document.getElementById('fTitle').value = '';
+  document.getElementById('fEnabled').value = '1';
+  document.getElementById('fCooldown').value = '60';
+  document.getElementById('fTargetChannelIds').selectedIndex = -1;
+  document.getElementById('fQuietEnabled').value = '0';
+  document.getElementById('fQuietStart').value = '00:00';
+  document.getElementById('fQuietEnd').value = '08:00';
+  document.getElementById('ruleForm').classList.add('active');
+}
+
+function hideForm() {
+  document.getElementById('ruleForm').classList.remove('active');
+}
+
+function editRule(eventType) {
+  const r = rulesData.find(x => x.event_type === eventType);
+  if (!r) return;
+  document.getElementById('editEventType').value = eventType;
+  document.getElementById('formTitle').textContent = '编辑规则: ' + eventType;
+  document.getElementById('fEventType').value = eventType;
+  document.getElementById('fTitle').value = r.title || '';
+  document.getElementById('fEnabled').value = r.enabled ? '1' : '0';
+  document.getElementById('fCooldown').value = r.cooldown_seconds || 0;
+  document.getElementById('fQuietEnabled').value = r.quiet_enabled ? '1' : '0';
+  document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
+  document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
+
+  // 多选 channels
+  const sel = document.getElementById('fTargetChannelIds');
+  const ids = r.channel_ids || (r.target_channel_id ? [r.target_channel_id] : []);
+  Array.from(sel.options).forEach(function(opt) {
+    opt.selected = ids.indexOf(parseInt(opt.value)) !== -1;
+  });
+
+  document.getElementById('ruleForm').classList.add('active');
+}
+
+async function saveRule() {
+  const editType = document.getElementById('editEventType').value;
+  const eventType = document.getElementById('fEventType').value;
+  const sel = document.getElementById('fTargetChannelIds');
+  const targetChannelIds = Array.from(sel.selectedOptions).map(function(o) { return parseInt(o.value); });
+
+  const data = {
+    event_type: eventType,
+    title: document.getElementById('fTitle').value.trim(),
+    enabled: parseInt(document.getElementById('fEnabled').value),
+    cooldown_seconds: parseInt(document.getElementById('fCooldown').value) || 0,
+    target_chat_id: null,
+    target_channel_ids: targetChannelIds.length ? targetChannelIds : [],
+    quiet_enabled: parseInt(document.getElementById('fQuietEnabled').value),
+    quiet_start: document.getElementById('fQuietStart').value,
+    quiet_end: document.getElementById('fQuietEnd').value,
+  };
+
+  let url = '/api/v3/telegram-rules';
+  let method = 'POST';
+  if (editType) {
+    url = '/api/v3/telegram-rules/' + encodeURIComponent(editType);
+    method = 'PUT';
+  }
+
+  try {
+    const resp = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const j = await resp.json();
+    if (j.ok) { location.reload(); }
+    else { alert('保存失败: ' + (j.error || '未知错误')); }
+  } catch(e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function deleteRule(eventType) {
+  if (!confirm('确定要删除规则 "' + eventType + '" 吗？')) return;
+  try {
+    const resp = await fetch('/api/v3/telegram-rules/' + encodeURIComponent(eventType), { method: 'DELETE' });
+    const j = await resp.json();
+    if (j.ok) { location.reload(); }
+    else { alert('删除失败'); }
+  } catch(e) {
+    alert('请求失败: ' + e.message);
+  }
+}
+
+async function discoverRules() {
+  const btn = event.target;
+  btn.disabled = true;
+  const r = await fetch("/api/v3/telegram-rules/discover");
+  const j = await r.json();
+  if(j.ok && j.discovered && j.discovered.length) {
+    let html = '<table class="data-table"><thead><tr><th>事件类型</th><th>标题</th><th>操作</th></tr></thead><tbody>';
+    j.discovered.forEach(function(item) {
+      var safeType = item.event_type.replace(/'/g, "\\'");
+      var safeTitle = (item.title || item.event_type.split(".").pop()).replace(/'/g, "\\'");
+      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="btn btn-sm btn-primary" onclick="addDiscoveredRule(\'' + safeType + '\',\'' + safeTitle + '\')">添加</button></td></tr>';
+    });
+    html += '</tbody></table>';
+    document.getElementById("discoverResult").innerHTML = html;
+  } else {
+    document.getElementById("discoverResult").textContent = "✅ 所有已知事件类型已配置";
+  }
+  btn.disabled = false;
+}
+
+async function addDiscoveredRule(eventType, title) {
+  await fetch("/api/v3/telegram-rules", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({event_type: eventType, title: title || '', enabled: 0, cooldown_seconds: 60})});
+  location.reload();
+}
+</script>
 
 {% endblock %}

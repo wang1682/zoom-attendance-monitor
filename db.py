@@ -600,10 +600,16 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 break
         # ── 今天没有 email，查全局历史最近 ──
         if not m["email"]:
-            row = _get_conn().execute(
-                "SELECT email FROM zoom_participants WHERE name = ? AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
-                (m["standard_name"],),
-            ).fetchone()
+            if tenant_id:
+                row = _get_conn().execute(
+                    "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' AND tenant_id=? ORDER BY action_time DESC LIMIT 1",
+                    (m["standard_name"], tenant_id),
+                ).fetchone()
+            else:
+                row = _get_conn().execute(
+                    "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                    (m["standard_name"],),
+                ).fetchone()
             if row:
                 m["email"] = row[0]
 
@@ -866,6 +872,36 @@ def get_telegram_rules_by_tenant(tenant_id: str) -> list[dict]:
             "SELECT * FROM telegram_alert_rules WHERE tenant_id = 'default' ORDER BY event_type"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_alert_rule_channels(event_type: str) -> list[int]:
+    """获取告警规则关联的 channel_id 列表"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT channel_id FROM alert_rule_channels WHERE event_type = ?",
+        (event_type,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def set_alert_rule_channels(event_type: str, channel_ids: list[int]):
+    """设置告警规则关联的 channel_id 列表（全量覆盖）"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM alert_rule_channels WHERE event_type = ?", (event_type,))
+    for cid in channel_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO alert_rule_channels (event_type, channel_id) VALUES (?, ?)",
+            (event_type, cid),
+        )
+    conn.commit()
+
+
+def get_rules_with_channels(tenant_id: str = "default") -> list[dict]:
+    """获取告警规则列表，每条规则附带 channels 字段"""
+    rules = get_telegram_rules_by_tenant(tenant_id)
+    for r in rules:
+        r["channel_ids"] = get_alert_rule_channels(r["event_type"])
+    return rules
 
 
 def get_telegram_rule(event_type: str) -> dict | None:
@@ -1716,6 +1752,20 @@ def update_tenant_bot_config(tenant_id: str, token: str, username: str = "",
     )
     conn.commit()
     return True
+
+
+def get_tenant_channels_periodic_report() -> list[dict]:
+    """Get all enabled tenant_channels (is_enabled=1, bot_token non-empty) for periodic report."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT tenant_id, chat_id, label, bot_token "
+        "FROM tenant_channels "
+        "WHERE is_enabled = 1 AND bot_token IS NOT NULL AND bot_token != ''"
+    ).fetchall()
+    return [
+        {"tenant_id": row[0], "chat_id": row[1], "label": row[2], "bot_token": row[3]}
+        for row in rows
+    ]
 
 
 # ── User CRUD (admin) ────────────────────────────────────────────────────
