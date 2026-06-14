@@ -369,8 +369,8 @@ function deleteMember(name) {
     body:JSON.stringify({raw_name:name})
   }).then(r=>r.json()).then(d=>{
     if(d.ok) location.reload();
-    else alert(d.message);
-  });
+    else alert(d.message || d.detail || '删除失败，请稍后重试');
+  }).catch(() => alert('网络请求失败，请稍后重试'));
 }
 
 // ── 辅助 ──
