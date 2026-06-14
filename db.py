@@ -591,7 +591,16 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
 
         m["today_total_seconds"] = int(total_seconds)
         m["today_total_duration"] = _fmt_dur(int(total_seconds))
-        m["status"] = "online" if m["last_action"] == "enter" else "offline"
+        # ── 状态判断：最后动作是 enter 且最近 activity 在 15 分钟内才算在线 ──
+        if m["last_action"] == "enter" and m["last_activity"]:
+            try:
+                last_dt = datetime.fromisoformat(m["last_activity"].replace("Z", "+00:00"))
+                idle_minutes = (now_utc - last_dt).total_seconds() / 60
+                m["status"] = "online" if idle_minutes < 15 else "offline"
+            except Exception:
+                m["status"] = "online" if m["last_action"] == "enter" else "offline"
+        else:
+            m["status"] = "offline"
 
         # ── 策略C：从今天 raw_events 取最新一条有 email 的记录 ──
         for ev in reversed(m["raw_events"]):
@@ -1469,7 +1478,13 @@ MT_TABLES = [
     "  role TEXT NOT NULL DEFAULT 'viewer',"  # super_admin / tenant_admin / viewer
     "  is_active INTEGER NOT NULL DEFAULT 1,"
     "  created_at TEXT NOT NULL,"
-    "  updated_at TEXT NOT NULL"
+    "  updated_at TEXT NOT NULL,"
+    "  zoom_plan TEXT NOT NULL DEFAULT 'unknown',"
+    "  live_mode TEXT NOT NULL DEFAULT 'metrics',"
+    "  sharing_mode TEXT NOT NULL DEFAULT 'metrics',"
+    "  report_mode TEXT NOT NULL DEFAULT 'enabled',"
+    "  metrics_available INTEGER NOT NULL DEFAULT 0,"
+    "  reports_available INTEGER NOT NULL DEFAULT 0"
     ")",
 
     "CREATE TABLE IF NOT EXISTS tenants ("
@@ -1481,7 +1496,13 @@ MT_TABLES = [
     "  is_global_admin INTEGER NOT NULL DEFAULT 0,"
     "  api_token TEXT NOT NULL DEFAULT '',"
     "  created_at TEXT NOT NULL,"
-    "  updated_at TEXT NOT NULL"
+    "  updated_at TEXT NOT NULL,"
+    "  zoom_plan TEXT NOT NULL DEFAULT 'unknown',"
+    "  live_mode TEXT NOT NULL DEFAULT 'metrics',"
+    "  sharing_mode TEXT NOT NULL DEFAULT 'metrics',"
+    "  report_mode TEXT NOT NULL DEFAULT 'enabled',"
+    "  metrics_available INTEGER NOT NULL DEFAULT 0,"
+    "  reports_available INTEGER NOT NULL DEFAULT 0"
     ")",
 
     "CREATE TABLE IF NOT EXISTS tenant_users ("
@@ -1547,9 +1568,18 @@ def run_mt_migrations(readonly: bool = False):
     now = datetime.now(timezone.utc).isoformat()
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("default", "Default", "默认租户", "business", 1, 1, "", now, now)
+            "INSERT OR IGNORE INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, zoom_plan, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("default", "Default", "默认租户", "business", 1, 1, "", "business", now, now)
+        )
+    except Exception:
+        pass
+
+    # ── 默认租户能力初始化 ──
+    try:
+        conn.execute(
+            "UPDATE tenants SET zoom_plan='business', live_mode='metrics', sharing_mode='metrics', "
+            "metrics_available=1, reports_available=0, report_mode='enabled' WHERE id='default' AND zoom_plan='unknown'"
         )
     except Exception:
         pass
@@ -1666,9 +1696,9 @@ def create_tenant(name: str, display_name: str = "", plan: str = "pro") -> str:
         counter += 1
     api_token = secrets.token_hex(24)
     conn.execute(
-        "INSERT INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?)",
-        (slug, name, display_name or name, plan, api_token, now, now),
+        "INSERT INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, zoom_plan, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?)",
+        (slug, name, display_name or name, plan, api_token, "unknown", now, now),
     )
     conn.commit()
     log_audit("create", "tenant", 0, f"Created tenant: {slug}")
@@ -1689,6 +1719,28 @@ def get_tenant(tenant_id: str) -> dict | None:
         "SELECT * FROM tenants WHERE id = ?", (tenant_id,)
     ).fetchone()
     return dict(row) if row else None
+
+
+def update_tenant_capabilities(tenant_id: str, capabilities: dict) -> bool:
+    """Update tenant capability fields after Zoom metadata detection."""
+    conn = _get_conn()
+    fields = []
+    vals = []
+    for key in ("zoom_plan", "live_mode", "sharing_mode", "report_mode",
+                 "metrics_available", "reports_available"):
+        if key in capabilities:
+            fields.append(f"{key}=?")
+            vals.append(capabilities[key])
+    if not fields:
+        return False
+    vals.append(tenant_id)
+    from datetime import datetime, timezone
+    conn.execute(
+        f"UPDATE tenants SET {', '.join(fields)}, updated_at=? WHERE id=?",
+        (*vals, datetime.now(timezone.utc).isoformat(), tenant_id),
+    )
+    conn.commit()
+    return True
 
 
 def toggle_tenant(tenant_id: str) -> bool:

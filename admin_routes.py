@@ -532,6 +532,13 @@ async def admin_accounts_test(request: Request, account_id: int,
                 last_sync=now,
                 last_sync_result=f"Connected as {result['user'].get('email','?')}",
             )
+            # ── 接入测试后自动检测能力 ──
+            try:
+                caps = await api.detect_capabilities()
+                db.update_tenant_capabilities(account["tenant_id"], caps)
+                result["capabilities"] = caps
+            except Exception as e:
+                result["capability_error"] = str(e)
         else:
             db.update_zoom_account_status(
                 account_id, "error",

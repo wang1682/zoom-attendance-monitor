@@ -37,6 +37,7 @@
   <div class="metric">
     <div class="metric-label">当前在线</div>
     <div class="metric-value" id="kpi-online-now">{{ kpi.current_online if kpi else 0 }}</div>
+    <div style="font-size:9px;color:var(--tm);margin-top:2px">仅标准 Zoom 会议</div>
   </div>
   <div class="metric">
     <div class="metric-label">今日告警 <span class="badge badge-warning" style="font-size:9px;vertical-align:middle">需关注</span></div>
@@ -63,7 +64,10 @@
 <div class="cockpit-grid halves">
   <!-- 当前共享屏幕 -->
   <div class="panel">
-    <div class="panel-header"><h2>当前共享屏幕</h2></div>
+    <div class="panel-header">
+      <h2>当前共享屏幕</h2>
+      <span id="capability-badge" style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">🔍 检测中</span>
+    </div>
     <div class="panel-body" id="screen-sharing-list">
       <span class="text-muted text-sm">暂无共享</span>
     </div>
@@ -215,6 +219,27 @@ async function refreshDashboard() {
         var sdata = await sresp.json();
         var slist = document.getElementById('screen-sharing-list');
         if (slist) {
+          // ── 能力模式提示 ──
+          var capEl = document.getElementById('capability-badge');
+          if (capEl && sdata.capability) {
+            var cap = sdata.capability;
+            var modeLabel = '🔍';
+            var modeText = '';
+            if (cap.zoom_plan === 'pro') {
+              modeText = 'Pro Webhook 模式';
+              capEl.style.color = 'var(--warning)';
+              capEl.title = 'Zoom Pro 不支持实时 Metrics API，已切换为 Webhook 模式';
+            } else if (cap.metrics_available) {
+              modeText = 'Business 实时模式';
+              capEl.style.color = 'var(--success)';
+              capEl.title = 'Zoom Business/Enterprise 实时 Metrics API 已启用';
+            } else {
+              modeText = '权限不足';
+              capEl.style.color = 'var(--danger)';
+              capEl.title = '当前 Zoom 账号权限不足，无法获取实时数据';
+            }
+            capEl.innerHTML = modeLabel + ' ' + modeText;
+          }
           if (sdata.active && sdata.active.length > 0) {
             var shtml = '<div class="flex" style="gap:6px;flex-direction:column">';
             sdata.active.forEach(function(s) {

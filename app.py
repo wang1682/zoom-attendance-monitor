@@ -339,44 +339,90 @@ def build_app() -> "FastAPI":
         return ZoomMetrics(), None
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
+    def _compute_online_from_webhook(tid: str) -> tuple:
+        """Reconstruct current online count & active meetings from zoom_participants.
+           Returns (online_count: int, meetings: list[dict]).
+           Logic: for each meeting_id, if the latest action for a user is 'enter', they're online.
+           Meeting is active if it has at least one online user.
+        """
+        conn = db._get_conn()
+        # Get all enter/leave records in the last 2h for this tenant, ordered per meeting per name
+        rows = conn.execute(
+            "SELECT meeting_id, name, action, action_time "
+            "FROM zoom_participants WHERE tenant_id=? AND action_time >= datetime('now', '-2 hours') "
+            "ORDER BY meeting_id, name, action_time DESC",
+            (tid,),
+        ).fetchall()
+        online_map = {}  # meeting_id -> set of online names
+        meetings_seen = {}  # meeting_id -> first seen time
+        for r in rows:
+            mid = r["meeting_id"]
+            name = r["name"]
+            action = r["action"]
+            if mid not in online_map:
+                online_map[mid] = set()
+                meetings_seen[mid] = r["action_time"]
+            if action == "enter":
+                online_map[mid].add(name)
+            elif action == "leave":
+                online_map[mid].discard(name)
+        total_online = sum(len(names) for names in online_map.values())
+        meetings = [
+            {"id": mid, "topic": f"Meeting {mid[-6:]}", "participant_count": len(names), "start_time": meetings_seen.get(mid, "")}
+            for mid, names in sorted(online_map.items(), key=lambda x: -len(x[1]))
+            if names  # only meetings with active participants
+        ]
+        return total_online, meetings
+
     @app.get("/", response_class=RedirectResponse)
     async def landing(request: Request):
         """Landing Page — 重定向到数据看板"""
         return RedirectResponse(url="/dashboard")
 
     async def _compute_kpi_data(tid: str) -> dict:
-        """Compute KPI data for tenant dashboard — all queries tenant-isolated."""
+        """Compute KPI data for tenant dashboard — all queries tenant-isolated.
+           Uses Webhook reconstruction as base, Metrics API as Business enhancement."""
         today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
-        current_online = 0
-        active_meetings = []
-        try:
-            accounts = db.get_zoom_accounts(tid)
-            active = next(
-                (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
-                None,
-            )
-            if active:
-                from zoom_metrics import ZoomMetrics
-                zm = ZoomMetrics(active)
-                live_data = await zm.get_live()
-                current_online = live_data.get("total_online", 0)
-                meetings_raw = live_data.get("meetings", [])
-                active_meetings = [
-                    {
-                        "id": m.get("id", ""),
-                        "topic": m.get("topic", ""),
-                        "participant_count": len(m.get("participants", [])),
-                        "start_time": m.get("start_time", ""),
-                    }
-                    for m in meetings_raw
-                ]
-        except Exception:
-            pass  # 不 fallback 到全局 ZoomMetrics — 租户数据严格隔离
+        
+        # ── Online from Webhook reconstruction (Pro default) ──
+        current_online, active_meetings_from_wh = _compute_online_from_webhook(tid)
+        current_online = current_online
+        active_meetings = active_meetings_from_wh
+
+        # ── Only use Metrics API for Business tenants ──
+        _tenant = db.get_tenant(tid)
+        metrics_available = (_tenant or {}).get("metrics_available", 0)
+        if metrics_available:
+            try:
+                accounts = db.get_zoom_accounts(tid)
+                active = next(
+                    (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+                    None,
+                )
+                if active:
+                    from zoom_metrics import ZoomMetrics
+                    zm = ZoomMetrics(active)
+                    live_data = await zm.get_live()
+                    if live_data.get("meetings"):
+                        current_online = live_data.get("total_online", current_online)
+                        meetings_raw = live_data.get("meetings", [])
+                        active_meetings = [
+                            {
+                                "id": m.get("id", ""),
+                                "topic": m.get("topic", ""),
+                                "participant_count": len(m.get("participants", [])),
+                                "start_time": m.get("start_time", ""),
+                            }
+                            for m in meetings_raw
+                        ]
+            except Exception:
+                pass  # Metrics failed — webhook data remains
         conn = db._get_conn()
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_myt = datetime.now(MYT).strftime("%Y-%m-%d")
+        myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
         row = conn.execute(
             "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
-            (today, tid),
+            (myt_day_start_utc, tid),
         ).fetchone()
         today_events = row["c"] if row else 0
         row = conn.execute(
@@ -420,36 +466,30 @@ def build_app() -> "FastAPI":
             for a in accounts
         )
         checks["oauth"] = bool(has_oauth)
-        try:
-            accounts_db = db.get_zoom_accounts(tid) if hasattr(db, 'get_zoom_accounts') else []
-            active = next(
-                (a for a in accounts_db if a.get("is_active") and a.get("status") == "active"),
-                None,
-            )
-            if active:
-                from zoom_metrics import ZoomMetrics
-                zm = ZoomMetrics(active)
-            else:
-                from zoom_metrics import ZoomMetrics
-                zm = ZoomMetrics()
-            live_data = await zm.get_live()
-            meetings = live_data.get("meetings", [])
-            has_active_meetings = any(
-                m.get("participants") and len(m.get("participants", [])) > 0
-                for m in meetings
-            )
-        except Exception:
+        # --- meetings check: use webhook as base, Metrics as enhancement ---
+        conn_setup = db._get_conn()
+        rows_setup = conn_setup.execute(
+            "SELECT COUNT(DISTINCT meeting_id) AS c FROM zoom_participants WHERE tenant_id=? AND action='enter' AND action_time >= datetime('now', '-2 hours')",
+            (tid,),
+        ).fetchone()
+        has_active_meetings = (rows_setup["c"] if rows_setup else 0) > 0
+        _tenant_info = db.get_tenant(tid)
+        if _tenant_info and _tenant_info.get("metrics_available", 0):
             try:
-                from zoom_metrics import ZoomMetrics
-                zm_global = ZoomMetrics()
-                live_data = await zm_global.get_live()
-                meetings = live_data.get("meetings", [])
-                has_active_meetings = any(
-                    m.get("participants") and len(m.get("participants", [])) > 0
-                    for m in meetings
+                accounts_db_setup = db.get_zoom_accounts(tid)
+                active_setup = next(
+                    (a for a in accounts_db_setup if a.get("is_active") and a.get("status") == "active"),
+                    None,
                 )
+                if active_setup:
+                    from zoom_metrics import ZoomMetrics
+                    zm = ZoomMetrics(active_setup)
+                    live_data_setup = await zm.get_live()
+                    meetings_setup = live_data_setup.get("meetings", [])
+                    if meetings_setup and any(m.get("participants") for m in meetings_setup):
+                        has_active_meetings = True
             except Exception:
-                has_active_meetings = False
+                pass
         checks["meetings"] = has_active_meetings
         conn = db._get_conn()
         row = conn.execute(
@@ -1060,10 +1100,13 @@ def build_app() -> "FastAPI":
             result = db.get_today_attendance_summary(tenant_id=tenant_id)
             # If DB has no data but Zoom API has people live, use live data
             if result.get("total_members", 0) == 0:
-                zm, _ = _get_tenant_zoom_metrics(request)
-                if zm is None:
-                    return result
-                live_data = await zm.get_live()
+                _tenant_att = db.get_tenant(tenant_id)
+                _metrics_att = _tenant_att and _tenant_att.get("metrics_available", 0)
+                if _metrics_att:
+                    zm, _ = _get_tenant_zoom_metrics(request)
+                    if zm is None:
+                        return result
+                    live_data = await zm.get_live()
                 online_list = live_data.get("online_list", [])
                 if online_list:
                     now_utc = datetime.now(timezone.utc)
@@ -1260,21 +1303,27 @@ def build_app() -> "FastAPI":
             content = sd.get("content", "")
             dt_str = sd.get("date_time", "")
             conn = db._get_conn()
+            wtid = webhook_tenant_id  # 当前租户
             if "sharing_started" in event_type:
+                # 去重：先关闭同租户、同 meeting、同 user_id 的旧 active 记录
+                if wtid:
+                    conn.execute("UPDATE sharing_live SET is_active=0, end_time=?, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?", (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id, wtid))
                 conn.execute(
-                    "INSERT INTO sharing_live (meeting_id, user_name, user_id, content, start_time, is_active, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, 'webhook', ?, ?)",
-                    (meeting_id, name, user_id, content, dt_str, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat())
+                    "INSERT INTO sharing_live (meeting_id, user_name, user_id, content, start_time, is_active, source, created_at, updated_at, tenant_id) VALUES (?, ?, ?, ?, ?, 1, 'webhook', ?, ?, ?)",
+                    (meeting_id, name, user_id, content, dt_str, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat(), wtid or "unknown")
                 )
             elif "sharing_ended" in event_type:
-                # Mark by meeting_id + user_id, fallback to user_name
-                affected = conn.execute(
-                    "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1",
-                    (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id)
-                ).rowcount
+                # Mark by meeting_id + user_id, fallback to user_name. Always with tenant_id.
+                affected = 0
+                if wtid:
+                    affected = conn.execute(
+                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?",
+                        (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id, wtid)
+                    ).rowcount
                 if affected == 0:
                     conn.execute(
-                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE user_name=? AND is_active=1",
-                        (dt_str, datetime.now(timezone.utc).isoformat(), name)
+                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE user_name=? AND is_active=1 AND tenant_id=?",
+                        (dt_str, datetime.now(timezone.utc).isoformat(), name, wtid or "unknown")
                     )
             conn.commit()
 
@@ -1798,36 +1847,41 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         merged = {}  # normalized_name -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
+        tenant_id = request.session.get("tenant_id", "")
         
-        # Source 1: ZoomMetrics API (cached, deduped, consistent with Dashboard/Live)
-        try:
-            zm, _ = _get_tenant_zoom_metrics(request)
-            live_data = await zm.get_live() if zm else {"meetings": []}
-            for m in live_data.get("meetings", []):
-                mid = m.get("meeting_id", "")
-                for p in m.get("participants", []):
-                    if not p.get("is_sharing"):
-                        continue
-                    raw = p.get("raw_name", "")
-                    name = p.get("name", "") or raw
-                    norm_key = re.sub(r"\s+", "", name.lower())
-                    if not norm_key or norm_key in merged:
-                        continue
-                    uid = p.get("user_id", "")
-                    content = p.get("sharing_content", "desktop")
-                    merged[norm_key] = {
-                        "name": name, "raw_name": raw,
-                        "user_id": uid, "meeting_id": mid,
-                        "content": content, "start_time": p.get("join_time", ""),
-                        "source": "metrics_api"
-                    }
-                    sources["metrics_api"] += 1
-        except Exception as e:
-            sys.stderr.write(f"[sharing-live] ZoomMetrics error: {e}\n")
+        # Source 1: ZoomMetrics API — only for Business tenants with metrics_available
+        _tenant_for_sharing = db.get_tenant(tenant_id) if tenant_id else None
+        _metrics_ok = _tenant_for_sharing and _tenant_for_sharing.get("metrics_available", 0)
+        if _metrics_ok:
+            try:
+                zm, _ = _get_tenant_zoom_metrics(request)
+                live_data = await zm.get_live() if zm else {"meetings": []}
+                for m in live_data.get("meetings", []):
+                    mid = m.get("meeting_id", "")
+                    for p in m.get("participants", []):
+                        if not p.get("is_sharing"):
+                            continue
+                        raw = p.get("raw_name", "")
+                        name = p.get("name", "") or raw
+                        norm_key = re.sub(r"\s+", "", name.lower())
+                        if not norm_key or norm_key in merged:
+                            continue
+                        uid = p.get("user_id", "")
+                        content = p.get("sharing_content", "desktop")
+                        merged[norm_key] = {
+                            "name": name, "raw_name": raw,
+                            "user_id": uid, "meeting_id": mid,
+                            "content": content, "start_time": p.get("join_time", ""),
+                            "source": "metrics_api"
+                        }
+                        sources["metrics_api"] += 1
+            except Exception:
+                pass
         
-        # Source 2: sharing_live table (is_active=1, not stale)
+        # Source 2: sharing_live table — tenant 过滤 (is_active=1, not stale)
         live_rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE is_active=1 ORDER BY start_time DESC"
+            "SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=? ORDER BY start_time DESC",
+            (tenant_id,)
         ).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
         RECENT_CUTOFF = timedelta(hours=48)
@@ -1868,8 +1922,8 @@ def build_app() -> "FastAPI":
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
         events = conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
-            (cutoff_2h,)
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC",
+            (cutoff_2h, tenant_id)
         ).fetchall()
         started = {}  # (meeting_id, user_id) -> info
         ended = set()  # (meeting_id, user_id) -> ended
@@ -1928,7 +1982,8 @@ def build_app() -> "FastAPI":
         # 查全部记录，duration只计当日（MYT）部分
         # 跨天会议室：共享从昨天开始到今天结束，只算今天这一段
         all_share = conn.execute(
-            "SELECT user_name, start_time, end_time, is_active FROM sharing_live ORDER BY user_name, start_time"
+            "SELECT user_name, start_time, end_time, is_active FROM sharing_live WHERE tenant_id=? ORDER BY user_name, start_time",
+            (tenant_id,)
         ).fetchall()
         acc_duration = {}  # norm_key -> total_minutes (仅当日)
         myt_today = now_utc.astimezone(MYT)
@@ -1976,6 +2031,17 @@ def build_app() -> "FastAPI":
             else:
                 active.append(entry)
         
+        # --- 添加能力配置返回 ---
+        _tenant = db.get_tenant(tenant_id) if tenant_id else None
+        cap = None
+        if _tenant:
+            cap = {
+                "zoom_plan": _tenant.get("zoom_plan", "unknown"),
+                "live_mode": _tenant.get("live_mode", "metrics"),
+                "sharing_mode": _tenant.get("sharing_mode", "metrics"),
+                "metrics_available": _tenant.get("metrics_available", 0),
+            }
+        
         return {
             "ok": True,
             "current": len(active),
@@ -1983,6 +2049,7 @@ def build_app() -> "FastAPI":
             "recent": recent,
             "recent_total": len(recent),
             "sources": sources,
+            "capability": cap,
         }
         
         # Build response
@@ -2006,15 +2073,16 @@ def build_app() -> "FastAPI":
 
 
     @app.get("/api/v3/sharing-debug")
-    async def api_v3_sharing_debug():
-        """调试：最近 sharing 事件 + 当前 sharing_live 表"""
+    async def api_v3_sharing_debug(request: Request):
+        """调试：最近 sharing 事件 + 当前 sharing_live 表（按当前 session 租户过滤）"""
         conn = db._get_conn()
         from datetime import datetime, timezone, timedelta
         now_utc = datetime.now(timezone.utc)
         cutoff = (now_utc - timedelta(minutes=30)).isoformat()
+        _tenant = request.session.get("tenant_id", "")
         events = conn.execute(
-            "SELECT id, event_type, created_at, payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC LIMIT 20",
-            (cutoff,)
+            "SELECT id, event_type, created_at, payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC LIMIT 20",
+            (cutoff, _tenant)
         ).fetchall()
         import json as _json
         event_list = []
@@ -2033,15 +2101,15 @@ def build_app() -> "FastAPI":
                 })
             except: pass
         
-        live_rows = conn.execute("SELECT * FROM sharing_live WHERE is_active=1").fetchall()
+        live_rows = conn.execute("SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=?", (_tenant,)).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
         active_sharing = [dict(zip(live_cols, r)) for r in live_rows]
         
         # Recovery candidates: started in last 2h without ended
         recovery = []
         for (payload_json,) in conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? ORDER BY created_at DESC",
-            ((now_utc - timedelta(hours=2)).isoformat(),)
+            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC",
+            ((now_utc - timedelta(hours=2)).isoformat(), _tenant)
         ).fetchall():
             try:
                 p = _json.loads(payload_json)
@@ -2318,76 +2386,8 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/alert/check-sharing")
     async def api_v3_alert_check_sharing():
-        """Check current sharing for alerts. Manual trigger."""
-        from telegram_push import send_message
-        import httpx
-        from datetime import datetime, timezone, timedelta
-        
-        now_utc = datetime.now(timezone.utc)
-        conn = db._get_conn()
-        
-        # Get rule
-        rule = conn.execute("SELECT * FROM alert_rules WHERE rule_type='sharing_timeout' AND enabled=1").fetchone()
-        if not rule:
-            return {"ok": False, "error": "sharing_timeout rule not found or disabled"}
-        cols = [c[1] for c in conn.execute("PRAGMA table_info(alert_rules)").fetchall()]
-        rule = dict(zip(cols, rule))
-        threshold = rule.get("threshold_minutes", 30)
-        
-        # Get current shared meetings via Metrics API
-        alerts_triggered = []
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                tr = await c.post("https://zoom.us/oauth/token",
-                    data={"grant_type": "account_credentials", "account_id": settings.zoom_account_id},
-                    auth=(settings.zoom_client_id, settings.zoom_client_secret))
-                if tr.status_code == 200:
-                    token = tr.json().get("access_token", "")
-                    mr = await c.get("https://api.zoom.us/v2/metrics/meetings?type=live&page_size=100",
-                        headers={"Authorization": f"Bearer {token}"})
-                    if mr.status_code == 200:
-                        for m in mr.json().get("meetings", []):
-                            mid = str(m.get("id", ""))
-                            topic = m.get("topic", mid)
-                            pr = await c.get(f"https://api.zoom.us/v2/metrics/meetings/{mid}/participants?page_size=300",
-                                headers={"Authorization": f"Bearer {token}"})
-                            if pr.status_code == 200:
-                                for p in pr.json().get("participants", []):
-                                    if p.get("status") != "in_meeting": continue
-                                    is_sharing = p.get("share_application") or p.get("share_desktop") or p.get("share_whiteboard")
-                                    if not is_sharing: continue
-                                    name_raw = p.get("user_name", "").strip()
-                                    _rm = resolve_member(name_raw)
-                                    display_name = _rm["standard_name"]
-                                    jt = p.get("join_time", "")
-                                    mins = 0
-                                    if jt:
-                                        try:
-                                            jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                            mins = max(0, int((now_utc - jd).total_seconds() / 60))
-                                        except: pass
-                                    if mins >= threshold:
-                                        alert_key = f"sharing_timeout_{name_raw}_{mid}"
-                                        already = conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (alert_key,)).fetchone()
-                                        if not already:
-                                            text = (
-                                                "⚠️ *长时间共享*\n\n"
-                                                + f"成员：{display_name}\n"
-                                                + f"会议：{topic}\n"
-                                                + f"共享时长：{mins} 分钟\n\n"
-                                            )
-                                            result = send_message(text, rule.get("chat_id") or None)
-                                            if result.get("ok"):
-                                                conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
-                                                    (alert_key, "sharing_timeout", now_utc.isoformat()))
-                                                conn.commit()
-                                                alerts_triggered.append({"name": display_name, "minutes": mins, "sent": True})
-                                            else:
-                                                alerts_triggered.append({"name": display_name, "minutes": mins, "sent": False, "error": result.get("error")})
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
-        
-        return {"ok": True, "alerts": alerts_triggered}
+        """共享告警已临时禁用，等待多租户改造完成"""
+        return {"ok": False, "message": "sharing alert disabled until tenant-aware implementation"}
     @app.get("/health")
     async def health():
         return {
@@ -2740,7 +2740,8 @@ def build_app() -> "FastAPI":
         except Exception:
             # ── Fallback: sharing_live + zoom_participants ──
             try:
-                live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1").fetchall()
+                _fb_tenant_id = request.session.get("tenant_id", "") or "unknown"
+                live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1 AND tenant_id=?", (_fb_tenant_id,)).fetchall()
                 online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
                 sharing_count = online_count
             except Exception:
@@ -3282,12 +3283,49 @@ def build_app() -> "FastAPI":
         request.session["user_id"] = user["id"]
         request.session["username"] = user["username"]
         request.session["role"] = user.get("role") or "tenant"
-        # ── 查出用户关联的第一个活跃租户 ──
-        tenants = db.get_user_tenants(user["id"])
-        first_tenant = tenants[0]["tenant_id"] if tenants else "default"
-        request.session["tenant_id"] = first_tenant
+        # ── 租户选择逻辑 ──
+        # tenant_users 是唯一权威的租户绑定关系
+        # users.tenant_id 仅做历史 fallback（不应再使用）
+        # 0个绑定 → 报错（没有 tenant_users 记录，无法登录）
+        # 1个绑定 → 自动进入该租户
+        # 2+个绑定 → 弹租户选择页
+        user_tenants = db.get_user_tenants(user["id"])
+        if len(user_tenants) == 0:
+            return RedirectResponse(url="/login?error=未分配任何租户，请联系管理员", status_code=303)
+        elif len(user_tenants) == 1:
+            selected = user_tenants[0]["tenant_id"]
+        else:
+            request.session["pending_tenants"] = [t["tenant_id"] for t in user_tenants]
+            return RedirectResponse(url="/select-tenant", status_code=303)
+        request.session["tenant_id"] = selected
         role = request.session["role"]
         # 根据角色决定重定向目标
+        if role == "super_admin":
+            redirect_url = "/dashboard"
+        else:
+            redirect_url = "/dashboard/tenant"
+        return RedirectResponse(url=redirect_url, status_code=303)
+
+    @app.get("/select-tenant")
+    async def select_tenant_page(request: Request):
+        pending = request.session.get("pending_tenants", [])
+        if not pending:
+            return RedirectResponse(url="/login", status_code=302)
+        tenants = []
+        for tid in pending:
+            t = db.get_tenant(tid)
+            if t:
+                tenants.append(t)
+        return tmpl.TemplateResponse(request, "select_tenant.html", {"tenants": tenants})
+
+    @app.post("/select-tenant")
+    async def select_tenant_submit(request: Request, tenant_id: str = Form(...)):
+        pending = request.session.get("pending_tenants", [])
+        if tenant_id not in pending:
+            return RedirectResponse(url="/select-tenant", status_code=303)
+        request.session["tenant_id"] = tenant_id
+        del request.session["pending_tenants"]
+        role = request.session.get("role", "tenant")
         if role == "super_admin":
             redirect_url = "/dashboard"
         else:

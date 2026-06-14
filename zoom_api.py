@@ -155,3 +155,46 @@ class ZoomAPI:
 
         result["ok"] = True
         return result
+
+    async def detect_capabilities(self) -> dict:
+        """检测 Zoom 账号能力 — 判断 Pro/Business/Enterprise 和 API 权限"""
+        caps = {
+            "zoom_plan": "unknown",
+            "metrics_available": 0,
+            "reports_available": 0,
+            "live_mode": "webhook",
+            "sharing_mode": "webhook",
+            "report_mode": "disabled",
+        }
+        try:
+            # Step 1: get user info → determine plan
+            user = await self._get("/users/me")
+            plan_type = user.get("plan_type", 0)
+            plan_map = {1: "pro", 2: "business", 3: "enterprise"}
+            zoom_plan = plan_map.get(plan_type, "unknown")
+            caps["zoom_plan"] = zoom_plan
+
+            # Step 2: try /metrics/meetings — Business/Enterprise only
+            try:
+                m = await self._get("/metrics/meetings", {"page_size": 1})
+                caps["metrics_available"] = 1
+                caps["live_mode"] = "metrics"
+                caps["sharing_mode"] = "metrics"
+            except Exception:
+                caps["metrics_available"] = 0
+                caps["live_mode"] = "webhook"
+                caps["sharing_mode"] = "webhook"
+
+            # Step 3: try /report/meetings — available on Business/Enterprise
+            try:
+                r = await self._get("/report/meetings", {"page_size": 1})
+                caps["reports_available"] = 1
+                caps["report_mode"] = "enabled"
+            except Exception:
+                caps["reports_available"] = 0
+                caps["report_mode"] = "disabled"
+
+        except Exception as e:
+            caps["error"] = str(e)
+
+        return caps
