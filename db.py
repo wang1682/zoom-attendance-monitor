@@ -937,7 +937,7 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
     if existing:
         fields = []
         values = []
-        for key in ("title", "enabled", "target_chat_id", "target_channel_id", "cooldown_seconds",
+        for key in ("title", "enabled", "cooldown_seconds",
                      "quiet_enabled", "quiet_start", "quiet_end"):
             if key in data:
                 fields.append(f"{key} = ?")
@@ -956,15 +956,13 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
     else:
         cur = conn.execute(
             "INSERT INTO telegram_alert_rules "
-            "(event_type, title, enabled, target_chat_id, target_channel_id, cooldown_seconds, "
+            "(event_type, title, enabled, cooldown_seconds, "
             " quiet_enabled, quiet_start, quiet_end, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event_type,
                 data.get("title", ""),
                 data.get("enabled", 1),
-                data.get("target_chat_id", ""),
-                data.get("target_channel_id", None),
                 data.get("cooldown_seconds", 60),
                 data.get("quiet_enabled", 0),
                 data.get("quiet_start", "00:00"),
