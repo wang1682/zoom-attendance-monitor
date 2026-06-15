@@ -72,8 +72,8 @@
           </td>
           <td>
             <div style="display:flex;gap:4px;white-space:nowrap">
-              <button type="button" class="btn-icon" data-event-type="{{ r.event_type }}" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
-              <button type="button" class="btn-icon danger" data-event-type="{{ r.event_type }}" title="删除" style="font-weight:600;color:#ef4444">删除</button>
+              <button type="button" class="btn-edit js-edit-rule" data-event-type="{{ r.event_type }}" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
+              <button type="button" class="btn-danger js-delete-rule" data-event-type="{{ r.event_type }}" title="删除" style="font-weight:600;color:#ef4444">删除</button>
             </div>
           </td>
         </tr>
@@ -159,20 +159,6 @@ const rulesData = {{ rules_with_channels | tojson | safe }};
 {% else %}
 const rulesData = {{ rules | tojson | safe }};
 {% endif %}
-
-// 事件委托：编辑/删除按钮（免除内联 onclick 的语法错误风险）
-document.addEventListener('DOMContentLoaded', function() {
-  document.querySelector('.data-table tbody')?.addEventListener('click', function(e) {
-    const btn = e.target.closest('[data-event-type]');
-    if (!btn) return;
-    const eventType = btn.getAttribute('data-event-type');
-    if (btn.classList.contains('btn-icon') && !btn.classList.contains('danger')) {
-      editRule(eventType);
-    } else if (btn.classList.contains('danger')) {
-      deleteRule(eventType);
-    }
-  });
-});
 
 // 填充事件类型下拉
 (function() {
@@ -274,9 +260,7 @@ async function discoverRules() {
   if(j.ok && j.discovered && j.discovered.length) {
     let html = '<table class="data-table"><thead><tr><th>事件类型</th><th>标题</th><th>操作</th></tr></thead><tbody>';
     j.discovered.forEach(function(item) {
-      var safeType = item.event_type.replace(/'/g, "\\'");
-      var safeTitle = (item.title || item.event_type.split(".").pop()).replace(/'/g, "\\'");
-      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="btn btn-sm btn-primary" onclick="addDiscoveredRule(\\'' + safeType + '\\',\\'' + safeTitle + '\\')\">添加</button></td></tr>';
+      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="btn btn-sm btn-primary js-add-discovered" data-event-type="' + item.event_type.replace(/"/g, '&quot;') + '" data-title="' + ((item.title || item.event_type.split(".").pop())).replace(/"/g, '&quot;') + '">添加</button></td></tr>';
     });
     html += '</tbody></table>';
     document.getElementById("discoverResult").innerHTML = html;
@@ -290,8 +274,51 @@ async function addDiscoveredRule(eventType, title) {
   await fetch("/api/v3/telegram-rules", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({event_type: eventType, title: title || '', enabled: 0, cooldown_seconds: 60})});
   location.reload();
 }
+// 最末尾：编辑/删除按钮事件委托（不用内联 onclick）
+(function bindAlertRuleButtons(){
+  const tbody = document.querySelector('.data-table tbody');
+
+  // 主规则表的编辑/删除
+  if (tbody) {
+    tbody.addEventListener('click', function(e){
+      const editBtn = e.target.closest('.js-edit-rule');
+      if (editBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const eventType = editBtn.dataset.eventType;
+        console.log('[alerts] edit click', eventType);
+        editRule(eventType);
+        return false;
+      }
+
+      const deleteBtn = e.target.closest('.js-delete-rule');
+      if (deleteBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const eventType = deleteBtn.dataset.eventType;
+        console.log('[alerts] delete click', eventType);
+        deleteRule(eventType);
+        return false;
+      }
+    });
+  }
+
+  // 发现新规则表的添加按钮（js-add-discovered）
+  document.addEventListener('click', function(e){
+    const addBtn = e.target.closest('.js-add-discovered');
+    if (!addBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const eventType = addBtn.dataset.eventType;
+    const title = addBtn.dataset.title;
+    console.log('[alerts] add discovered click', eventType);
+    addDiscoveredRule(eventType, title);
+  });
+
+  console.log('[alerts] rule button binding ready');
+})();
 </script>
 
-<div style="padding:8px;text-align:center;font-size:11px;color:var(--text-muted)">alerts page build: v1.4.7.1-alert-rule-channel-cleanup</div>
+<div style="padding:8px;text-align:center;font-size:11px;color:var(--text-muted)">alerts page build: v1.4.7.2-alert-modal-fix</div>
 
 {% endblock %}
