@@ -63,20 +63,13 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            {% if r.channel_ids is defined %}
-              {% for cid in r.channel_ids %}
-                {% set ch = channels|selectattr('id','equalto',cid)|first %}
-                <span class="channel-tag">{{ ch.bot_username or ch.name if ch else '#' ~ cid }}</span>
-              {% else %}
-                <span class="text-muted">默认</span>
+            {% set active_channels = channels|selectattr('is_enabled','equalto',1)|list %}
+            {% if active_channels %}
+              {% for ch in active_channels %}
+                <span class="channel-tag">{{ ch.label or ch.chat_id }}</span>
               {% endfor %}
             {% else %}
-              {% set ch = channels|selectattr('id','equalto',r.target_channel_id)|first %}
-              {% if ch %}
-                <span class="channel-tag">{{ ch.bot_username or ch.name }}</span>
-              {% else %}
-                <span class="text-muted">默认</span>
-              {% endif %}
+              <span class="text-muted">未配置推送通道</span>
             {% endif %}
           </td>
           <td>
@@ -125,16 +118,23 @@
         <label>冷却时间（秒）</label>
         <input type="number" id="fCooldown" value="60" min="0" style="width:100%">
       </div>
-      <div class="form-group">
+      <div class="form-group" id="pushTargetGroup">
         <label>推送到</label>
-        <select id="fTargetChannelIds" multiple>
-          {% for ch in channels %}
-          <option value="{{ ch.id }}">{{ ch.bot_username or ch.name }} · {{ ch.name }}</option>
-          {% endfor %}
-        </select>
+        {% set active_channels = channels|selectattr('is_enabled','equalto',1)|list %}
+        {% if active_channels %}
+          <div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);font-size:13px;color:var(--text-muted)">
+            <div style="margin-bottom:4px">由当前租户 Channels 统一管理</div>
+            {% for ch in active_channels %}
+              <span class="channel-tag">{{ ch.label or ch.chat_id }}</span>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);font-size:13px;color:var(--text-muted)">
+            未配置推送通道，请到<a href="/dashboard/settings" style="color:var(--accent)">「推送」页面</a>创建
+          </div>
+        {% endif %}
       </div>
     </div>
-    <p class="text-muted" style="font-size:10px;margin:0 0 8px">按住 Ctrl/⌘ 多选，不选则使用默认群组</p>
     <div class="form-group">
       <label>静默时段</label>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;align-items:center">
@@ -184,7 +184,6 @@ function showCreateForm() {
   document.getElementById('fTitle').value = '';
   document.getElementById('fEnabled').value = '1';
   document.getElementById('fCooldown').value = '60';
-  document.getElementById('fTargetChannelIds').selectedIndex = -1;
   document.getElementById('fQuietEnabled').value = '0';
   document.getElementById('fQuietStart').value = '00:00';
   document.getElementById('fQuietEnd').value = '08:00';
@@ -207,30 +206,18 @@ function editRule(eventType) {
   document.getElementById('fQuietEnabled').value = r.quiet_enabled ? '1' : '0';
   document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
   document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
-
-  // 多选 channels
-  const sel = document.getElementById('fTargetChannelIds');
-  const ids = r.channel_ids || (r.target_channel_id ? [r.target_channel_id] : []);
-  Array.from(sel.options).forEach(function(opt) {
-    opt.selected = ids.indexOf(parseInt(opt.value)) !== -1;
-  });
-
   document.getElementById('ruleForm').classList.add('active');
 }
 
 async function saveRule() {
   const editType = document.getElementById('editEventType').value;
   const eventType = document.getElementById('fEventType').value;
-  const sel = document.getElementById('fTargetChannelIds');
-  const targetChannelIds = Array.from(sel.selectedOptions).map(function(o) { return parseInt(o.value); });
 
   const data = {
     event_type: eventType,
     title: document.getElementById('fTitle').value.trim(),
     enabled: parseInt(document.getElementById('fEnabled').value),
     cooldown_seconds: parseInt(document.getElementById('fCooldown').value) || 0,
-    target_chat_id: null,
-    target_channel_ids: targetChannelIds.length ? targetChannelIds : [],
     quiet_enabled: parseInt(document.getElementById('fQuietEnabled').value),
     quiet_start: document.getElementById('fQuietStart').value,
     quiet_end: document.getElementById('fQuietEnd').value,
@@ -275,7 +262,7 @@ async function discoverRules() {
     j.discovered.forEach(function(item) {
       var safeType = item.event_type.replace(/'/g, "\\'");
       var safeTitle = (item.title || item.event_type.split(".").pop()).replace(/'/g, "\\'");
-      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="btn btn-sm btn-primary" onclick="addDiscoveredRule(\'' + safeType + '\',\'' + safeTitle + '\')">添加</button></td></tr>';
+      html += '<tr><td class="td-mono">' + item.event_type + '</td><td>' + (item.title || item.event_type.split(".").pop()) + '</td><td><button class="btn btn-sm btn-primary" onclick="addDiscoveredRule(\\'' + safeType + '\\',\\'' + safeTitle + '\\')\">添加</button></td></tr>';
     });
     html += '</tbody></table>';
     document.getElementById("discoverResult").innerHTML = html;

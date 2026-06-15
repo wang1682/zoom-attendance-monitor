@@ -747,22 +747,12 @@ def build_app() -> "FastAPI":
         if not event_type:
             return {"ok": False, "error": "event_type is required"}
         rule_id = db.upsert_telegram_rule(event_type, data)
-        # 处理多 channel 关联
-        if "target_channel_ids" in data and isinstance(data["target_channel_ids"], list):
-            db.set_alert_rule_channels(event_type, data["target_channel_ids"])
-        elif data.get("target_channel_id"):
-            db.set_alert_rule_channels(event_type, [data["target_channel_id"]])
         return {"ok": True, "id": rule_id}
 
     @app.put("/api/v3/telegram-rules/{event_type}")
     async def api_v3_update_telegram_rule(event_type: str, request: Request):
         data = await request.json()
         rule_id = db.upsert_telegram_rule(event_type, data)
-        # 处理多 channel 关联
-        if "target_channel_ids" in data and isinstance(data["target_channel_ids"], list):
-            db.set_alert_rule_channels(event_type, data["target_channel_ids"])
-        elif data.get("target_channel_id"):
-            db.set_alert_rule_channels(event_type, [data["target_channel_id"]])
         return {"ok": True, "id": rule_id}
 
     @app.delete("/api/v3/telegram-rules/{event_type}")
