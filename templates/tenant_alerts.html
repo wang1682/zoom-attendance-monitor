@@ -4,10 +4,8 @@
 
 <style>
 .channel-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:2px;font-size:10px;border:1px solid var(--border);background:var(--accent-dim);color:var(--accent);margin:1px 2px}
-#fTargetChannelIds{min-height:60px}
-#fTargetChannelIds option{padding:3px 6px}
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
-.modal-overlay.active{display:flex}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;justify-content:center;align-items:center}
+.modal-overlay.active{display:flex !important}
 .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
 .modal-box h2{margin:0 0 16px;font-size:16px}
 .modal-box .form-group{margin-bottom:12px}
@@ -74,8 +72,8 @@
           </td>
           <td>
             <div style="display:flex;gap:4px;white-space:nowrap">
-              <button class="btn-icon" onclick="editRule('{{ r.event_type }}')" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
-              <button class="btn-icon danger" onclick="deleteRule('{{ r.event_type }}')" title="删除" style="font-weight:600;color:#ef4444">删除</button>
+              <button type="button" class="btn-icon" data-event-type="{{ r.event_type }}" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
+              <button type="button" class="btn-icon danger" data-event-type="{{ r.event_type }}" title="删除" style="font-weight:600;color:#ef4444">删除</button>
             </div>
           </td>
         </tr>
@@ -162,6 +160,20 @@ const rulesData = {{ rules_with_channels | tojson | safe }};
 const rulesData = {{ rules | tojson | safe }};
 {% endif %}
 
+// 事件委托：编辑/删除按钮（免除内联 onclick 的语法错误风险）
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelector('.data-table tbody')?.addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-event-type]');
+    if (!btn) return;
+    const eventType = btn.getAttribute('data-event-type');
+    if (btn.classList.contains('btn-icon') && !btn.classList.contains('danger')) {
+      editRule(eventType);
+    } else if (btn.classList.contains('danger')) {
+      deleteRule(eventType);
+    }
+  });
+});
+
 // 填充事件类型下拉
 (function() {
   const sel = document.getElementById('fEventType');
@@ -195,8 +207,9 @@ function hideForm() {
 }
 
 function editRule(eventType) {
+  console.log('[alerts] editRule opened', eventType);
   const r = rulesData.find(x => x.event_type === eventType);
-  if (!r) return;
+  if (!r) { console.warn('[alerts] rule not found:', eventType); return; }
   document.getElementById('editEventType').value = eventType;
   document.getElementById('formTitle').textContent = '编辑规则: ' + eventType;
   document.getElementById('fEventType').value = eventType;
@@ -207,6 +220,7 @@ function editRule(eventType) {
   document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
   document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
   document.getElementById('ruleForm').classList.add('active');
+  console.log('[alerts] editRule done, className:', document.getElementById('ruleForm').className);
 }
 
 async function saveRule() {
@@ -277,5 +291,7 @@ async function addDiscoveredRule(eventType, title) {
   location.reload();
 }
 </script>
+
+<div style="padding:8px;text-align:center;font-size:11px;color:var(--text-muted)">alerts page build: v1.4.7.1-alert-rule-channel-cleanup</div>
 
 {% endblock %}
