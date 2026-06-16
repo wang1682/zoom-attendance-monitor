@@ -273,16 +273,43 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
 
 @router.get("/meetings", response_class=HTMLResponse)
 async def dashboard_meetings(request: Request, user: dict = Depends(require_user)):
-    """Meetings center — live meetings + history + sharing records."""
-    from db import get_live_meetings, get_meeting_history, get_sharing_records
-    
+    """Meetings center — live meetings from Zoom Metrics API + history + sharing."""
+    from db import get_meeting_history, get_sharing_records, get_zoom_accounts
+    from zoom_metrics import ZoomMetrics
+
     tenant_id = request.app.state.get_effective_tenant_id(request)
     tab = request.query_params.get("tab", "live")
-    
-    live = get_live_meetings(tenant_id)
+
+    # ── Live meetings from Zoom API (同源 /api/v3/live) ──
+    live = []
+    try:
+        accounts = get_zoom_accounts(tenant_id)
+        active = next(
+            (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+            None,
+        )
+        if active:
+            zm = ZoomMetrics(active)
+            live_data = await zm.get_live()
+            for m in live_data.get("meetings", []):
+                participants = m.get("participants", [])
+                last_join = max(
+                    (p.get("join_time", "") for p in participants if p.get("join_time")),
+                    default="",
+                )
+                live.append({
+                    "topic": m.get("meeting_topic", "Untitled"),
+                    "meeting_id": m.get("meeting_id", ""),
+                    "participant_count": len(participants),
+                    "online_count": sum(1 for p in participants if p.get("status") == "in_meeting"),
+                    "last_activity": last_join,
+                })
+    except Exception:
+        pass  # live stays empty
+
     history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
     sharing = get_sharing_records(tenant_id, limit=100)
-    
+
     return _render_admin(request, "meetings", user, "meetings.html",
                          title="会议中心",
                          live_meetings=live,
