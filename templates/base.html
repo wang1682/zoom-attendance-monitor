@@ -90,6 +90,12 @@ body{
   border-color:var(--border-active);
 }
 .topbar-right{display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0}
+/* 租户选择器 */
+.tenant-selector{position:relative;display:inline-flex;align-items:center}
+.tenant-selector select{appearance:none;background:var(--bg3);border:1px solid var(--border-light);border-radius:4px;color:var(--text);font-size:11px;padding:3px 22px 3px 8px;cursor:pointer;font-family:var(--mono);max-width:160px}
+.tenant-selector select:hover{border-color:var(--border)}
+.tenant-selector::after{content:'▾';position:absolute;right:6px;font-size:10px;color:var(--text-muted);pointer-events:none}
+.tenant-label{font-size:11px;color:var(--text-muted);margin-right:4px;white-space:nowrap}
 .tb-btn{
   padding:4px 10px;
   border-radius:4px;

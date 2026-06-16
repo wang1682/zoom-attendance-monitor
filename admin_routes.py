@@ -113,7 +113,7 @@ def _channel_dict(c: dict) -> dict:
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_index(request: Request, user: dict = Depends(require_user)):
     compute_fn = request.app.state.compute_kpi_data
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tenant_id)
     # score/checks from DB (sync, no Zoom API call)
     score = 0
@@ -140,7 +140,7 @@ async def dashboard_index(request: Request, user: dict = Depends(require_user)):
 @router.get("/events", response_class=HTMLResponse)
 async def dashboard_events_page(request: Request, user: dict = Depends(require_user)):
     """Unified events page under /dashboard/events — paginated, searchable, tenant-isolated."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     page = int(request.query_params.get("page", 1))
     search = request.query_params.get("search", "")
     type_filter = request.query_params.get("type", "")
@@ -169,11 +169,13 @@ async def dashboard_events_page(request: Request, user: dict = Depends(require_u
 
 @router.get("/participants", response_class=HTMLResponse)
 async def dashboard_participants(request: Request, user: dict = Depends(require_user)):
-    """Participants center — aggregated attendance view."""
+    """Admin dashboard 成员中心 — 租户可见。admin/super_admin 显示总管理视角。"""
+    role = user.get("role", "")
+    
     from db import get_today_attendance_summary, get_all_groups
     
-    tenant_id = request.session.get("tenant_id", "default")
-    
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
     # ── 参数 ──
     search = request.query_params.get("search", "").strip()
     group_filter = request.query_params.get("group", "").strip()
@@ -193,14 +195,19 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         members = [m for m in members if m.get("status", "") == status_filter]
     
     # ── 分组列表（用于筛选器） ──
-    all_groups = get_all_groups()
-    
-    # ── member_display 映射 ──
+    all_groups = get_all_groups(tenant_id)
+
+    # ── member_display 映射（按 tenant 隔离；super_admin 不过滤） ──
     conn = db._get_conn()
-    md_rows = conn.execute(
-        "SELECT raw_name, display_name, aliases, note, count_enabled FROM member_display WHERE tenant_id = ?",
-        (tenant_id,)
-    ).fetchall()
+    if tenant_id:
+        md_rows = conn.execute(
+            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display WHERE tenant_id = ?",
+            (tenant_id,)
+        ).fetchall()
+    else:
+        md_rows = conn.execute(
+            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display"
+        ).fetchall()
     member_displays = {}
     for r in md_rows:
         raw_name = r[0]
@@ -210,10 +217,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             "aliases": aliases,
             "note": r[3] or "",
             "count_enabled": bool(r[4]),
+            "group_id": r[5],
         }
     
     return _render_admin(request, "participants", user, "participants.html",
-                         title="成员中心",
+                         title="总管理成员中心" if role in ("admin", "super_admin") else "租户成员中心",
                          members=members,
                          total_members=summary.get("total_members", 0),
                          online_count=summary.get("online_count", 0),
@@ -234,7 +242,7 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
     """Meetings center — live meetings + history + sharing records."""
     from db import get_live_meetings, get_meeting_history, get_sharing_records
     
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     tab = request.query_params.get("tab", "live")
     
     live = get_live_meetings(tenant_id)
@@ -253,7 +261,7 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
 @router.get("/alerts", response_class=HTMLResponse)
 async def dashboard_alerts_page(request: Request, user: dict = Depends(require_user)):
     """Alert rules page — tenant-isolated, unified under /dashboard/alerts."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     rules = db.get_rules_with_channels(tenant_id)
     channels = db.get_tenant_channels(tenant_id)
     return _render_admin(request, "alerts", user, "tenant_alerts.html",
@@ -275,7 +283,7 @@ async def dashboard_setup_redirect():
 @router.get("/zoom", response_class=HTMLResponse)
 async def dashboard_zoom(request: Request, user: dict = Depends(require_user)):
     """Zoom account management — tenant-isolated."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     accounts = db.get_zoom_accounts(tenant_id)
     display_accounts = []
     for a in accounts:
@@ -289,7 +297,7 @@ async def dashboard_zoom(request: Request, user: dict = Depends(require_user)):
 @router.get("/channels", response_class=HTMLResponse)
 async def dashboard_channels(request: Request, user: dict = Depends(require_user)):
     """Push channel management — tenant-isolated."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = [dict(c) for c in db.get_tenant_channels(tenant_id)]
     bot_config = db.get_tenant_bot_config(tenant_id)
     return _render_admin(request, "settings", user, "tenant_channels.html",
@@ -376,18 +384,19 @@ async def update_member_display_api(request: Request):
             return {"ok": False, "message": "参数不完整"}
         import json
         conn = _get_conn()
+        tenant_id = data.get("tenant_id") or request.app.state.get_effective_tenant_id(request)
         existing = conn.execute(
-            "SELECT id FROM member_display WHERE raw_name = ?", (raw_name,)
+            "SELECT id FROM member_display WHERE raw_name = ? AND tenant_id = ?", (raw_name, tenant_id)
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE member_display SET display_name=?, aliases=?, note=?, count_enabled=?, updated_at=datetime('now') WHERE raw_name=?",
-                (display_name, json.dumps(aliases), note, int(count_enabled), raw_name)
+                "UPDATE member_display SET display_name=?, aliases=?, note=?, count_enabled=?, updated_at=datetime('now') WHERE raw_name=? AND tenant_id=?",
+                (display_name, json.dumps(aliases), note, int(count_enabled), raw_name, tenant_id)
             )
         else:
             conn.execute(
-                "INSERT INTO member_display (raw_name, display_name, aliases, note, count_enabled) VALUES (?,?,?,?,?)",
-                (raw_name, display_name, json.dumps(aliases), note, int(count_enabled))
+                "INSERT INTO member_display (raw_name, display_name, aliases, note, count_enabled, tenant_id) VALUES (?,?,?,?,?,?)",
+                (raw_name, display_name, json.dumps(aliases), note, int(count_enabled), tenant_id)
             )
         conn.commit()
         return {"ok": True, "message": "保存成功"}
@@ -406,7 +415,7 @@ async def admin_users_create(request: Request,
     try:
         uid = db.create_user(username, password, display_name, role)
         # Also add to current tenant
-        tenant_id = request.session.get("tenant_id", "default")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         db.set_user_tenant_role(uid, tenant_id, role)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -434,7 +443,7 @@ async def admin_users_delete(request: Request, user_id: int,
 @router.get("/admin/accounts", response_class=HTMLResponse)
 async def admin_accounts(request: Request, user: dict = Depends(require_user)):
     """Zoom account & meeting management page."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     accounts = [_account_dict(a) for a in db.get_zoom_accounts(tenant_id)]
     meetings = [_meeting_dict(m) for m in db.get_meetings(tenant_id)]
     return _render_admin(request, "admin", user, "admin_accounts.html",
@@ -451,7 +460,7 @@ async def admin_accounts_create(request: Request,
                                 webhook_secret: str = Form(""),
                                 user: dict = Depends(require_user)):
     """Create a new Zoom account binding."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_zoom_account(tenant_id, label, account_id, client_id, client_secret, host_email, webhook_secret)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
 
@@ -560,7 +569,7 @@ async def admin_meetings_create(request: Request,
                                 meeting_type: str = Form("pmi"),
                                 user: dict = Depends(require_user)):
     """Add a monitored meeting room."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_meeting(tenant_id, 0, meeting_id, label, meeting_type)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
 
@@ -578,7 +587,7 @@ async def admin_meetings_delete(request: Request, meeting_db_id: int,
 @router.get("/admin/channels", response_class=HTMLResponse)
 async def admin_channels(request: Request, user: dict = Depends(require_user)):
     """Telegram channel management page."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = [_channel_dict(c) for c in db.get_tenant_channels(tenant_id)]
     return _render_admin(request, "admin", user, "admin_channels.html",
                          channels=channels)
@@ -591,7 +600,7 @@ async def admin_channels_create(request: Request,
                                 is_group: str = Form("false"),
                                 user: dict = Depends(require_user)):
     """Create a new telegram channel."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_tenant_channel(tenant_id, chat_id, label, is_group == "true")
     return RedirectResponse(url="/dashboard/admin/channels", status_code=303)
 
@@ -628,7 +637,7 @@ async def admin_channels_edit(request: Request, channel_id: int,
 async def admin_channels_test(request: Request, channel_id: int,
                               user: dict = Depends(require_user)):
     """Send a test push to the given channel."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = db.get_tenant_channels(tenant_id)
     target = next((c for c in channels if c["id"] == channel_id), None)
     if not target:
@@ -661,7 +670,7 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
     templates.env.globals["fmt_myt"] = fmt_myt
 
     # Build current_user dict matching template expectations
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     current_user = {
         "id": user["id"],
         "username": user["username"],
@@ -671,10 +680,26 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         "is_active": user["is_active_str"],
     }
 
+    # ── 租户切换上下文（仅 super_admin 需要） ──
+    from db import get_all_tenants
+    is_super_admin = user.get("role") == "super_admin"
+    if is_super_admin:
+        all_tenants = get_all_tenants()
+        current_tenant = next((t for t in all_tenants if t["id"] == tenant_id), None)
+        current_tenant_name = current_tenant["display_name"] if current_tenant else tenant_id
+    else:
+        all_tenants = []
+        current_tenant_name = ""
+
     context = {
         "request": request,
         "active": active,
         "current_user": current_user,
+        "page_title": extra.pop("title", "成员中心"),
+        "is_super_admin": is_super_admin,
+        "available_tenants": all_tenants,
+        "current_tenant_id": tenant_id,
+        "current_tenant_name": current_tenant_name,
         **extra,
     }
     return templates.TemplateResponse(request, template_name, context)

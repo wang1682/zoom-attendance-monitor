@@ -1,8 +1,13 @@
 {% extends "base.html" %}
-{% block title %}成员中心 - Zoom Monitor{% endblock %}
+{% block title %}{{ page_title|default("成员中心") }} - Zoom Monitor{% endblock %}
+{% block head_extra %}
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+{% endblock %}
 {% block content %}
 
-<style>
+<!-- build: v1.4.7.3-group-permissions2 --><style>
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
 .modal-overlay.active{display:flex}
 .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
@@ -10,6 +15,8 @@
 .badge-group-推进{background:rgba(239,68,68,.18);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
 .badge-group-核销{background:rgba(59,130,246,.18);color:#3b82f6;border:1px solid rgba(59,130,246,.3)}
 .badge-group-Allan{background:rgba(6,182,212,.18);color:#06b6d4;border:1px solid rgba(6,182,212,.3)}
+.badge-group-AI标签{background:rgba(168,85,247,.18);color:#a855f7;border:1px solid rgba(168,85,247,.3)}
+.badge-group-DC组员{background:rgba(34,197,94,.18);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
 .modal-box h2{margin:0 0 16px;font-size:16px}
 .modal-box .form-group{margin-bottom:12px}
 .modal-box .form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px}
@@ -29,12 +36,13 @@
 .btn-icon.danger:hover{background:rgba(239,68,68,.12);color:var(--danger)}
 .btn-icon-group{background:none;border:1px solid var(--border-light);cursor:pointer;padding:3px 8px;border-radius:6px;color:var(--text-muted);font-size:11px;display:inline-flex;align-items:center;gap:3px;transition:all .15s}
 .btn-icon-group:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
+.ml-p{margin-left:12px}
 </style>
 
 <div class="page-header">
   <div class="flex" style="justify-content:space-between;align-items:flex-start">
     <div>
-      <h1 class="page-title">成员中心 <span class="highlight">{{ date }}</span></h1>
+      <h1 class="page-title">{{ page_title|default("成员中心") }} <span class="highlight">{{ date }}</span></h1>
       <p class="page-subtitle">实时考勤聚合 · 在线率 / 累计时长</p>
     </div>
     <div class="flex" style="gap:12px;align-items:center;flex-shrink:0">
@@ -44,6 +52,16 @@
       <span class="text-sm text-muted">均时 <strong class="text-accent">{{ avg_duration }}</strong></span>
       <button class="btn btn-sm" onclick="openGroupManager()">📁 管理组</button>
       <button class="btn btn-sm btn-primary" onclick="openAddMember()">+ 添加成员</button>
+      {% if is_super_admin %}
+      <div class="tenant-selector ml-p">
+        <span class="tenant-label">当前租户：</span>
+        <select onchange="switchTenant(this.value)">
+          {% for t in available_tenants %}
+          <option value="{{ t.id }}" {% if t.id == current_tenant_id %}selected{% endif %}>{{ t.display_name or t.id }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
     </div>
   </div>
 </div>
@@ -159,7 +177,7 @@
     <div class="group-list" id="groupList">
       <div style="text-align:center;padding:20px;color:var(--text-muted)">加载中...</div>
     </div>
-    <div style="border-top:1px solid var(--border-light);padding-top:12px;margin-top:8px">
+    <div id="groupCreateArea" style="border-top:1px solid var(--border-light);padding-top:12px;margin-top:8px;display:none">
       <div class="flex" style="gap:8px;align-items:center">
         <input type="text" id="newGroupName" placeholder="新分组名称" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
         <input type="text" id="newGroupDesc" placeholder="可选描述" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
@@ -213,6 +231,15 @@
       <input type="text" id="editAliasesList" placeholder="DinoJun, dino, dj">
     </div>
     <div class="form-group">
+      <label>分组</label>
+      <select id="editGroupSelect" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:13px">
+        <option value="">— 无分组 —</option>
+        {% for g in groups %}
+        <option value="{{ g.id }}">{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
         <input type="checkbox" id="editCountEnabled" checked> 计入统计
       </label>
@@ -252,7 +279,10 @@ function openGroupManager() {
   loadGroups();
 }
 function loadGroups() {
-  fetch('/dashboard/participants/json_groups').then(r=>r.json()).then(groups=>{
+  const canEdit = window.__role === 'super_admin';
+  document.getElementById('groupCreateArea').style.display = canEdit ? 'block' : 'none';
+  fetch('/api/v3/member-groups').then(r=>r.json()).then(data=>{
+    const groups = data.groups;
     renderGroups(groups);
   }).catch(()=>{
     document.getElementById('groupList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">加载失败</div>';
@@ -260,6 +290,7 @@ function loadGroups() {
 }
 function renderGroups(groups) {
   const el = document.getElementById('groupList');
+  const canEdit = window.__role === 'super_admin';
   if (!groups || groups.length === 0) {
     el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">暂无分组，创建一个吧</div>';
     return;
@@ -271,8 +302,10 @@ function renderGroups(groups) {
         ${g.description ? `<div class="group-desc">${g.description}</div>` : ''}
       </div>
       <div class="group-actions">
+        ${canEdit ? `
         <button class="btn-icon-group" onclick="editGroup(${g.id},'${g.name.replace(/'/g,"\\'")}','${(g.description||'').replace(/'/g,"\\'")}')" title="编辑">编辑</button>
         <button class="btn-icon-group danger" onclick="deleteGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除">删除</button>
+        ` : ''}
       </div>
     </div>
   `).join('');
@@ -281,7 +314,7 @@ function createGroup() {
   const name = document.getElementById('newGroupName').value.trim();
   const desc = document.getElementById('newGroupDesc').value.trim();
   if (!name) return alert('请输入分组名称');
-  fetch('/dashboard/members/groups/create', {
+  fetch('/api/v3/member-groups', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({name, description:desc})
   }).then(r=>r.json()).then(d=>{
@@ -305,9 +338,9 @@ function submitEditGroup() {
   const name = document.getElementById('editGroupName').value.trim();
   const desc = document.getElementById('editGroupDesc').value.trim();
   if (!name) return alert('请输入分组名称');
-  fetch('/dashboard/members/groups/update', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({group_id:id, name, description:desc})
+  fetch('/api/v3/member-groups/' + id, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, description:desc})
   }).then(r=>r.json()).then(d=>{
     document.getElementById('editGroupResult').textContent = d.message;
     if(d.ok){ setTimeout(()=>{ closeModal('editGroupModal'); loadGroups(); }, 500); }
@@ -315,9 +348,8 @@ function submitEditGroup() {
 }
 function deleteGroup(id, name) {
   if(!confirm(`确定删除分组「${name}」？`)) return;
-  fetch('/dashboard/members/groups/delete', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({group_id:id})
+  fetch('/api/v3/member-groups/' + id, {
+    method:'DELETE'
   }).then(r=>r.json()).then(d=>{
     if(d.ok){ loadGroups(); location.reload(); }
     else alert(d.message);
@@ -380,6 +412,10 @@ function closeModal(id) {
 
 // ── 别名编辑弹窗 ──
 const memberDisplays = {{ member_displays|safe }};
+console.log('memberDisplays keys:', Object.keys(memberDisplays));
+console.log('Anthea data:', memberDisplays['Anthea']);
+const allGroups = {{ groups|safe }};
+console.log('allGroups:', allGroups);
 let editMemberName = '';
 
 function openEditMember(name) {
@@ -389,6 +425,7 @@ function openEditMember(name) {
   document.getElementById('editDisplayName').value = data.display_name || name;
   document.getElementById('editNote').value = data.note || '';
   document.getElementById('editCountEnabled').checked = data.count_enabled !== false;
+  document.getElementById('editGroupSelect').value = data.group_id || '';
   // 别名列表
   const aliases = data.aliases || [];
   document.getElementById('editAliasesList').value = aliases.join(', ');
@@ -402,6 +439,7 @@ async function saveEditMember() {
   const countEnabled = document.getElementById('editCountEnabled').checked;
   const aliasesStr = document.getElementById('editAliasesList').value.trim();
   const aliases = aliasesStr ? aliasesStr.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const newGroupId = document.getElementById('editGroupSelect').value;
   if (!displayName) return alert('显示名称不能为空');
   const btn = document.querySelector('#editMemberModal .btn-primary');
   btn.textContent = '保存中...'; btn.disabled = true;
@@ -412,6 +450,11 @@ async function saveEditMember() {
     });
     const d = await r.json();
     if (d.ok) {
+      // 同步更新分组
+      await fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({group_id: newGroupId || null})
+      });
       document.getElementById('editMemberModal').classList.remove('active');
       location.reload();
     } else {
@@ -422,6 +465,21 @@ async function saveEditMember() {
   } finally {
     btn.textContent = '保存'; btn.disabled = false;
   }
+}
+window.__role = '{{ role }}';
+/* 租户切换 */
+function switchTenant(tenantId) {
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = '/admin/select-tenant';
+    var i = document.createElement('input');
+    i.type = 'hidden'; i.name = 'tenant_id'; i.value = tenantId;
+    f.appendChild(i);
+    var n = document.createElement('input');
+    n.type = 'hidden'; n.name = 'next'; n.value = window.location.pathname;
+    f.appendChild(n);
+    document.body.appendChild(f);
+    f.submit();
 }
 </script>
 

@@ -529,7 +529,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         if display_name not in members:
             members[display_name] = {
                 "standard_name": display_name,
-                "group_name": get_member_group(display_name) or "",
+                "group_name": get_member_group(display_name, tenant_id) or "",
                 "status": "offline",
                 "first_join": None,
                 "today_total_seconds": 0,
@@ -594,13 +594,13 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         # ── 状态判断：最后动作是 enter 且最近 activity 在 15 分钟内才算在线 ──
         if m["last_action"] == "enter" and m["last_activity"]:
             try:
-                last_dt = datetime.fromisoformat(m["last_activity"].replace("Z", "+00:00"))
-                idle_minutes = (now_utc - last_dt).total_seconds() / 60
-                m["status"] = "online" if idle_minutes < 15 else "offline"
+                last_dt = datetime.fromisoformat(m["last_activity"])
+                is_online = (now_utc - last_dt).total_seconds() < 900
             except Exception:
-                m["status"] = "online" if m["last_action"] == "enter" else "offline"
+                is_online = False
         else:
-            m["status"] = "offline"
+            is_online = False
+        m["status"] = "online" if is_online else "offline"
 
         # ── 策略C：从今天 raw_events 取最新一条有 email 的记录 ──
         for ev in reversed(m["raw_events"]):
@@ -1275,20 +1275,30 @@ def seed_member_groups():
     conn.commit()
 
 
-def get_member_group(member_name: str) -> str | None:
+def get_member_group(member_name: str, tenant_id: str = None) -> str | None:
     if not member_name:
         return None
     conn = _get_conn()
     name = member_name.strip().lower().replace(" ", "")
     # 优先从 member_display.group_id 读取（新方式）
-    row = conn.execute(
-        "SELECT g.name FROM member_groups g "
-        "JOIN member_display md ON md.group_id = g.id "
-        "WHERE (REPLACE(LOWER(TRIM(md.raw_name)), ' ', '') = ? "
-        "   OR REPLACE(LOWER(TRIM(md.display_name)), ' ', '') = ?) "
-        "AND md.group_id IS NOT NULL",
-        (name, name),
-    ).fetchone()
+    if tenant_id:
+        row = conn.execute(
+            "SELECT g.name FROM member_groups g "
+            "JOIN member_display md ON md.group_id = g.id "
+            "WHERE (REPLACE(LOWER(TRIM(md.raw_name)), ' ', '') = ? "
+            "   OR REPLACE(LOWER(TRIM(md.display_name)), ' ', '') = ?) "
+            "AND md.group_id IS NOT NULL AND md.tenant_id = ?",
+            (name, name, tenant_id),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT g.name FROM member_groups g "
+            "JOIN member_display md ON md.group_id = g.id "
+            "WHERE (REPLACE(LOWER(TRIM(md.raw_name)), ' ', '') = ? "
+            "   OR REPLACE(LOWER(TRIM(md.display_name)), ' ', '') = ?) "
+            "AND md.group_id IS NOT NULL",
+            (name, name),
+        ).fetchone()
     if row:
         return row[0]
     # 回退：兼容旧 member_group_members 表数据
@@ -1301,11 +1311,17 @@ def get_member_group(member_name: str) -> str | None:
     return row[0] if row else None
 
 
-def get_all_groups() -> list[dict]:
+def get_all_groups(tenant_id: str = None) -> list[dict]:
     conn = _get_conn()
-    groups = conn.execute(
-        "SELECT * FROM member_groups ORDER BY name"
-    ).fetchall()
+    if tenant_id:
+        groups = conn.execute(
+            "SELECT * FROM member_groups WHERE tenant_id = ? ORDER BY name",
+            (tenant_id,)
+        ).fetchall()
+    else:
+        groups = conn.execute(
+            "SELECT * FROM member_groups ORDER BY name"
+        ).fetchall()
     result = []
     for g in groups:
         gd = dict(g)
@@ -2199,3 +2215,102 @@ def get_sharing_records(tenant_id: str, limit: int = 50) -> list[dict]:
             d["duration"] = "—"
         result.append(d)
     return result
+
+
+# ── 统一的在线计算（Single Source of Truth）────────────────────────────────────
+
+
+def get_current_online(tenant_id: str | None = None) -> dict:
+    """统一的在线人数计算。
+
+    条件（缺一不可）：
+    1. 该人最后一条动作是 enter/joined
+    2. 该人在 15 分钟内（900 秒）有活动记录（idle_minutes < 15）
+    3. 该会议未被 meeting.ended 标记结束
+
+    返回统一结构：
+    {
+        "online_count": int,
+        "online_names": list[str],
+        "active_meetings": list[dict],
+        "source": "webhook_with_idle",
+    }
+    """
+    STALE_WINDOW_MINUTES = 90
+    IDLE_TIMEOUT_SECONDS = 900  # 15 分钟
+
+    conn = _get_conn()
+
+    # ── 读取 meeting.ended 事件的 meeting_id 列表 ──
+    import json
+    ended_meetings: set[str] = set()
+    ended_rows = conn.execute(
+        "SELECT payload FROM zoom_events "
+        "WHERE event_type='meeting.ended' "
+        "AND created_at >= datetime('now', '-24 hours')"
+    ).fetchall()
+    for (payload_str,) in ended_rows:
+        try:
+            p = json.loads(payload_str)
+            mid = str(p.get("payload", {}).get("object", {}).get("id", ""))
+            if mid:
+                ended_meetings.add(mid)
+        except (json.JSONDecodeError, AttributeError):
+            continue
+
+    # ── 读取 90 分钟内参与者动作 ──
+    if tenant_id:
+        rows = conn.execute(
+            "SELECT name, action, action_time, meeting_id "
+            "FROM zoom_participants "
+            "WHERE tenant_id=? AND action_time >= datetime('now', ? || ' minutes') "
+            "AND action IN ('enter', 'leave', 'joined', 'left') "
+            "ORDER BY name, action_time DESC",
+            (tenant_id, f'-{STALE_WINDOW_MINUTES}'),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT name, action, action_time, meeting_id "
+            "FROM zoom_participants "
+            "WHERE action_time >= datetime('now', ? || ' minutes') "
+            "AND action IN ('enter', 'leave', 'joined', 'left') "
+            "ORDER BY name, action_time DESC",
+            (f'-{STALE_WINDOW_MINUTES}',),
+        ).fetchall()
+
+    # ── 逐人判断 ──
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+    online_names: list[str] = []
+    seen: set[str] = set()
+    for r in rows:
+        name = r["name"]
+        if name in seen:
+            continue
+        seen.add(name)
+        action = r["action"]
+        meeting_id = r["meeting_id"]
+
+        # 条件3：会议已结束 → 跳过
+        if meeting_id in ended_meetings:
+            continue
+
+        try:
+            last_dt = datetime.fromisoformat(r["action_time"])
+        except Exception:
+            continue
+
+        # 条件1：最后动作是 enter/joined
+        # 条件2：15 分钟内有活动
+        if action in ("enter", "joined") and (now_utc - last_dt).total_seconds() < IDLE_TIMEOUT_SECONDS:
+            online_names.append(name)
+
+    online_names.sort()
+    online_count = len(online_names)
+
+    return {
+        "online_count": online_count,
+        "online_names": online_names,
+        "active_meetings": [],
+        "source": "webhook_with_idle",
+    }

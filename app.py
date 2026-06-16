@@ -163,11 +163,11 @@ def _ensure_demo():
     return _DEMO_MODULE
 
 
-def resolve_member(raw_name: str) -> dict:
+def resolve_member(raw_name: str, tenant_id: str = None) -> dict:
     """解析原始 Zoom 用户名：返回标准名、分组和是否经过映射"""
     resolved = db.resolve_display_name(raw_name)
     standard = resolved["display_name"]
-    group_name = db.get_member_group(standard) or db.get_member_group(raw_name)
+    group_name = db.get_member_group(standard, tenant_id) or db.get_member_group(raw_name, tenant_id)
     is_mapped = standard != raw_name
     return {"raw_name": raw_name, "standard_name": standard, "group_name": group_name, "is_mapped": is_mapped}
 
@@ -179,7 +179,7 @@ def build_app() -> "FastAPI":
         return _app
 
     from fastapi import FastAPI, Request, HTTPException, Form
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
@@ -257,6 +257,10 @@ def build_app() -> "FastAPI":
                 db.init_db()
             DB_INITED = True
         response = await call_next(request)
+        # 强制不缓存所有页面（避免 Cloudflare/CDN 缓存 stale HTML）
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, proxy-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         return response
 
     # ── 政策页面（用于 Zoom Marketplace 审核） ────────────────────────────────
@@ -319,7 +323,7 @@ def build_app() -> "FastAPI":
         """
         from zoom_metrics import ZoomMetrics
 
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
 
         # 1) 当前 tenant 的 zoom_account（如果有，就是专属视图）
         if tenant_id:
@@ -384,10 +388,10 @@ def build_app() -> "FastAPI":
            Uses Webhook reconstruction as base, Metrics API as Business enhancement."""
         today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
         
-        # ── Online from Webhook reconstruction (Pro default) ──
-        current_online, active_meetings_from_wh = _compute_online_from_webhook(tid)
-        current_online = current_online
-        active_meetings = active_meetings_from_wh
+        # ── Online — Single Source of Truth ──
+        online_data = db.get_current_online(tid)
+        current_online = online_data["online_count"]
+        active_meetings = online_data["active_meetings"]
 
         # ── Only use Metrics API for Business tenants ──
         _tenant = db.get_tenant(tid)
@@ -618,7 +622,7 @@ def build_app() -> "FastAPI":
                 "recent_events": [],
                 "participants": [],
             }
-        tid = request.session.get("tenant_id", "default")
+        tid = request.app.state.get_effective_tenant_id(request)
         kpi = await _compute_kpi_data(tid)
         return {
             "kpi": {
@@ -638,7 +642,7 @@ def build_app() -> "FastAPI":
         if settings.demo_mode:
             events = _ensure_demo().get_demo_events()
         else:
-            events = db.get_recent_events(limit=100, tenant_id=request.session.get("tenant_id"))
+            events = db.get_recent_events(limit=100, tenant_id=request.app.state.get_effective_tenant_id(request))
         return tmpl.TemplateResponse(request, "events.html", {
             "events": events,
             "brand": BRAND,
@@ -647,17 +651,19 @@ def build_app() -> "FastAPI":
 
     @app.get("/participants", response_class=HTMLResponse)
     async def participants_page(request: Request):
-        return tmpl.TemplateResponse(request, "participants.html", {
-            "brand": BRAND,
-            "demo_mode": settings.demo_mode,
-        })
+        """统一重定向到 /dashboard/participants。所有成员管理都在 dashboard 路径下。"""
+        role_val = request.session.get("role")
+        user_id = request.session.get("user_id")
+        if not user_id or not role_val:
+            return RedirectResponse(url="/login")
+        return RedirectResponse(url="/dashboard/participants")
 
     @app.get("/alerts", response_class=HTMLResponse)
     async def alerts_page(request: Request):
         if settings.demo_mode:
             alerts = _ensure_demo().get_demo_alerts()
         else:
-            alerts = db.get_recent_alerts(limit=100, tenant_id=request.session.get("tenant_id"))
+            alerts = db.get_recent_alerts(limit=100, tenant_id=request.app.state.get_effective_tenant_id(request))
         return tmpl.TemplateResponse(request, "alerts.html", {
             "alerts": alerts,
             "brand": BRAND,
@@ -670,7 +676,7 @@ def build_app() -> "FastAPI":
             reports = _ensure_demo().get_demo_reports()
         else:
             conn = db._get_conn()
-            tenant_id = request.session.get("tenant_id")
+            tenant_id = request.app.state.get_effective_tenant_id(request)
             # 今日统计（MYT 边界）
             rs_utc, re_utc = myt_day_range_to_utc()
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -816,6 +822,9 @@ def build_app() -> "FastAPI":
     @app.post("/api/v3/member-groups")
     async def api_v3_create_member_group(request: Request):
         """创建成员分组"""
+        role = request.session.get("role", "tenant")
+        if role != "super_admin":
+            return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         data = await request.json()
         name = data.get("name", "").strip()
         description = data.get("description", "").strip()
@@ -833,6 +842,9 @@ def build_app() -> "FastAPI":
     @app.put("/api/v3/member-groups/{group_id}")
     async def api_v3_update_member_group(group_id: int, request: Request):
         """更新成员分组"""
+        role = request.session.get("role", "tenant")
+        if role != "super_admin":
+            return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         data = await request.json()
         name = data.get("name", "").strip()
         description = data.get("description", "").strip()
@@ -842,8 +854,11 @@ def build_app() -> "FastAPI":
         return {"ok": ok}
 
     @app.delete("/api/v3/member-groups/{group_id}")
-    async def api_v3_delete_member_group(group_id: int):
+    async def api_v3_delete_member_group(group_id: int, request: Request):
         """删除成员分组"""
+        role = request.session.get("role", "tenant")
+        if role != "super_admin":
+            return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         ok = db.delete_member_group(group_id)
         return {"ok": ok}
 
@@ -1079,54 +1094,15 @@ def build_app() -> "FastAPI":
     async def api_participants(request: Request, limit: int = 200):
         if settings.demo_mode:
             return _ensure_demo().get_demo_participants(limit=limit)
-        return db.get_today_participants(limit=limit, tenant_id=request.session.get("tenant_id"))
+        return db.get_today_participants(limit=limit, tenant_id=request.app.state.get_effective_tenant_id(request))
 
     @app.get("/api/v3/attendance-summary")
     async def api_v3_attendance_summary(request: Request):
         if settings.demo_mode:
             return _ensure_demo().get_demo_attendance_summary()
         try:
-            tenant_id = request.session.get("tenant_id")
+            tenant_id = request.app.state.get_effective_tenant_id(request)
             result = db.get_today_attendance_summary(tenant_id=tenant_id)
-            # If DB has no data but Zoom API has people live, use live data
-            if result.get("total_members", 0) == 0:
-                _tenant_att = db.get_tenant(tenant_id)
-                _metrics_att = _tenant_att and _tenant_att.get("metrics_available", 0)
-                if _metrics_att:
-                    zm, _ = _get_tenant_zoom_metrics(request)
-                    if zm is None:
-                        return result
-                    live_data = await zm.get_live()
-                online_list = live_data.get("online_list", [])
-                if online_list:
-                    now_utc = datetime.now(timezone.utc)
-                    members = []
-                    for p in online_list:
-                        members.append({
-                        "standard_name": p.get("name", ""),
-                        "group_name": "",
-                        "status": "online",
-                        "first_join": p.get("join_time", ""),
-                        "today_total_seconds": p.get("online_minutes", 0) * 60,
-                        "today_total_duration": p.get("online_display", ""),
-                        "join_count": 1,
-                        "leave_count": 0,
-                        "last_activity": p.get("join_time", ""),
-                        "last_action": "enter",
-                        "raw_events": [],
-                        "first_join_display": "",
-                        "last_activity_display": "",
-                    })
-                    return {
-                        "ok": True,
-                        "total_members": len(members),
-                        "online_count": len(members),
-                        "offline_count": 0,
-                        "total_duration": members[0]["today_total_duration"] if members else "0m",
-                        "avg_duration": members[0]["today_total_duration"] if members else "0m",
-                        "date": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d"),
-                        "members": members,
-                    }
             return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -1135,13 +1111,13 @@ def build_app() -> "FastAPI":
     async def api_alerts(request: Request, limit: int = 50):
         if settings.demo_mode:
             return _ensure_demo().get_demo_alerts(limit=limit)
-        return db.get_recent_alerts(limit=limit, tenant_id=request.session.get("tenant_id"))
+        return db.get_recent_alerts(limit=limit, tenant_id=request.app.state.get_effective_tenant_id(request))
 
     @app.get("/api/events")
     async def api_events(request: Request, limit: int = 50):
         if settings.demo_mode:
             return _ensure_demo().get_demo_events(limit=limit)
-        return db.get_recent_events(limit=limit, tenant_id=request.session.get("tenant_id"))
+        return db.get_recent_events(limit=limit, tenant_id=request.app.state.get_effective_tenant_id(request))
 
     @app.get("/api/reports")
     async def api_reports():
@@ -1159,7 +1135,7 @@ def build_app() -> "FastAPI":
     async def api_stats(request: Request):
         if settings.demo_mode:
             return _ensure_demo().get_demo_stats()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         participants = db.get_today_participants(limit=200, tenant_id=tenant_id)
         alerts = db.get_recent_alerts(limit=50, tenant_id=tenant_id)
         return {
@@ -1556,7 +1532,7 @@ def build_app() -> "FastAPI":
     async def api_v3_member_aliases_discover_alias(request: Request):
         """别名：/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         now_str = datetime.now(timezone.utc).isoformat()
@@ -1597,7 +1573,7 @@ def build_app() -> "FastAPI":
     @app.get("/api/v3/member-names")
     async def api_v3_member_names(request: Request):
         """返回当前租户的历史用户名（去重）"""
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         conn = db._get_conn()
         if tenant_id:
             rows = conn.execute(
@@ -1613,7 +1589,7 @@ def build_app() -> "FastAPI":
     async def api_v3_discover(request: Request):
         """自动发现历史 Zoom 用户名，统计出现次数和是否在线"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         from datetime import datetime, timezone, timedelta
         
         # 统计最近30天的 Zoom 用户名出现次数
@@ -1741,7 +1717,7 @@ def build_app() -> "FastAPI":
         from datetime import datetime, timezone, timedelta
         from collections import defaultdict
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
         if tenant_id:
             rows = conn.execute(
@@ -1837,7 +1813,7 @@ def build_app() -> "FastAPI":
         conn = db._get_conn()
         merged = {}  # normalized_name -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
-        tenant_id = request.session.get("tenant_id", "")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         
         # Source 1: ZoomMetrics API — only for Business tenants with metrics_available
         _tenant_for_sharing = db.get_tenant(tenant_id) if tenant_id else None
@@ -2069,7 +2045,7 @@ def build_app() -> "FastAPI":
         from datetime import datetime, timezone, timedelta
         now_utc = datetime.now(timezone.utc)
         cutoff = (now_utc - timedelta(minutes=30)).isoformat()
-        _tenant = request.session.get("tenant_id", "")
+        _tenant = request.app.state.get_effective_tenant_id(request)
         events = conn.execute(
             "SELECT id, event_type, created_at, payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC LIMIT 20",
             (cutoff, _tenant)
@@ -2162,7 +2138,7 @@ def build_app() -> "FastAPI":
     async def api_v3_member_discover(request: Request):
         """自动发现历史 Zoom 用户名"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         from datetime import datetime, timezone, timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         if tenant_id:
@@ -2202,11 +2178,14 @@ def build_app() -> "FastAPI":
     async def api_v3_members_alias(request: Request):
         """别名：/api/v3/members -> 同 /api/v3/member-display（按 tenant 隔离）"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        role = request.session.get("role")
         if tenant_id:
             rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
-        else:
+        elif role == "super_admin":
             rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        else:
+            rows = []
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
         items = []
         for r in rows:
@@ -2227,7 +2206,7 @@ def build_app() -> "FastAPI":
         display_name = data.get("display_name", "").strip()
         aliases = data.get("aliases", [])
         group_id = data.get("group_id", None)
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         if not raw_name or not display_name:
             return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
         import re
@@ -2268,11 +2247,14 @@ def build_app() -> "FastAPI":
     async def api_v3_member_display_list(request: Request):
         """所有显示名映射（按 tenant 隔离）"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        role = request.session.get("role")
         if tenant_id:
             rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
-        else:
+        elif role == "super_admin":
             rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+        else:
+            rows = []
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
         items = []
         for r in rows:
@@ -2318,17 +2300,12 @@ def build_app() -> "FastAPI":
         group_id = data.get("group_id", None)
         conn = db._get_conn()
         now = datetime.now(timezone.utc).isoformat()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         try:
             if tenant_id:
                 conn.execute(
-                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ? AND tenant_id=?",
+                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ? AND tenant_id = ?",
                     (group_id, now, display_name, tenant_id)
-                )
-            else:
-                conn.execute(
-                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ?",
-                    (group_id, now, display_name)
                 )
             conn.commit()
             return {"ok": True}
@@ -2338,11 +2315,14 @@ def build_app() -> "FastAPI":
     @app.delete("/api/v3/member-display/{item_id}")
     async def api_v3_member_display_del(item_id: int, request: Request):
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        role = request.session.get("role")
         if tenant_id:
             conn.execute("DELETE FROM member_display WHERE id=? AND tenant_id=?", (item_id, tenant_id))
-        else:
+        elif role == "super_admin":
             conn.execute("DELETE FROM member_display WHERE id=?", (item_id,))
+        else:
+            return {"ok": False, "error": "无权限"}
         conn.commit()
         return {"ok": True}
 
@@ -2350,11 +2330,14 @@ def build_app() -> "FastAPI":
     async def api_v3_members_del_by_name(display_name: str, request: Request):
         """按 display_name 删除成员映射（JS 前端调用）"""
         conn = db._get_conn()
-        tenant_id = request.session.get("tenant_id")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        role = request.session.get("role")
         if tenant_id:
             conn.execute("DELETE FROM member_display WHERE display_name=? AND tenant_id=?", (display_name, tenant_id))
-        else:
+        elif role == "super_admin":
             conn.execute("DELETE FROM member_display WHERE display_name=?", (display_name,))
+        else:
+            return {"ok": False, "error": "无权限"}
         conn.commit()
         return {"ok": True}
 
@@ -2730,7 +2713,7 @@ def build_app() -> "FastAPI":
         except Exception:
             # ── Fallback: sharing_live + zoom_participants ──
             try:
-                _fb_tenant_id = request.session.get("tenant_id", "") or "unknown"
+                _fb_tenant_id = request.app.state.get_effective_tenant_id(request)
                 live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1 AND tenant_id=?", (_fb_tenant_id,)).fetchall()
                 online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
                 sharing_count = online_count
@@ -3250,6 +3233,18 @@ def build_app() -> "FastAPI":
 
     # ── Multi-tenant admin routes ──────────────────────────────────────────
     app.state.compute_kpi_data = _compute_kpi_data
+
+    def _effective_tenant_id(request):
+        """统一获取当前请求的有效租户 ID
+        super_admin: 走 selected_tenant（可切换）→ 默认 default
+        tenant/viewer: 走 tenant_id（绑定固定）
+        """
+        if request.session.get("role") == "super_admin":
+            return request.session.get("selected_tenant", "default")
+        return request.session.get("tenant_id", "default")
+
+    app.state.get_effective_tenant_id = _effective_tenant_id
+
     from admin_routes import router as admin_router
     app.include_router(admin_router, prefix="/dashboard")
 
@@ -3270,13 +3265,20 @@ def build_app() -> "FastAPI":
             return RedirectResponse(url="/login?error=用户名或密码错误", status_code=303)
         if not user.get("is_active"):
             return RedirectResponse(url="/login?error=账号已被禁用", status_code=303)
+        request.session.clear()
         request.session["user_id"] = user["id"]
         request.session["username"] = user["username"]
-        request.session["role"] = user.get("role") or "tenant"
+        request.session["role"] = "super_admin" if user.get("role") == "super_admin" else (user.get("role") or "tenant")
         # ── 租户选择逻辑 ──
-        # tenant_users 是唯一权威的租户绑定关系
-        # users.tenant_id 仅做历史 fallback（不应再使用）
-        # 0个绑定 → 报错（没有 tenant_users 记录，无法登录）
+        # super_admin: 设 selected_tenant=default（可切换）
+        # tenant/viewer: 走 tenant_users 绑定（固定）
+        role = request.session["role"]
+        if role == "super_admin":
+            request.session["selected_tenant"] = "default"
+            request.session["tenant_id"] = "default"  # 保持兼容
+            return RedirectResponse(url="/dashboard", status_code=303)
+        # 非 super_admin: 通过 tenant_users 绑定限制
+        # 0个绑定 → 报错
         # 1个绑定 → 自动进入该租户
         # 2+个绑定 → 弹租户选择页
         user_tenants = db.get_user_tenants(user["id"])
@@ -3288,12 +3290,8 @@ def build_app() -> "FastAPI":
             request.session["pending_tenants"] = [t["tenant_id"] for t in user_tenants]
             return RedirectResponse(url="/select-tenant", status_code=303)
         request.session["tenant_id"] = selected
-        role = request.session["role"]
         # 根据角色决定重定向目标
-        if role == "super_admin":
-            redirect_url = "/dashboard"
-        else:
-            redirect_url = "/dashboard/tenant"
+        redirect_url = "/dashboard/tenant"
         return RedirectResponse(url=redirect_url, status_code=303)
 
     @app.get("/select-tenant")
@@ -3320,6 +3318,25 @@ def build_app() -> "FastAPI":
             redirect_url = "/dashboard"
         else:
             redirect_url = "/dashboard/tenant"
+        return RedirectResponse(url=redirect_url, status_code=303)
+
+    @app.post("/admin/select-tenant")
+    async def admin_select_tenant(request: Request,
+                                   tenant_id: str = Form(...),
+                                   next: str = Form("")):
+        """super_admin 切换当前管理的租户
+        校验：仅 super_admin 可调用，tenant_id 必须存在于 tenants 表
+        """
+        role = request.session.get("role", "tenant")
+        if role != "super_admin":
+            return RedirectResponse(url="/login", status_code=303)
+        # 校验 tenant 存在
+        t = db.get_tenant(tenant_id)
+        if not t:
+            return HTMLResponse("无效的租户 ID", status_code=400)
+        request.session["selected_tenant"] = tenant_id
+        request.session["tenant_id"] = tenant_id  # 保持兼容
+        redirect_url = next or "/dashboard"
         return RedirectResponse(url=redirect_url, status_code=303)
 
     @app.get("/logout")
