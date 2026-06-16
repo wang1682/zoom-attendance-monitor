@@ -169,22 +169,56 @@ async def dashboard_events_page(request: Request, user: dict = Depends(require_u
 
 @router.get("/participants", response_class=HTMLResponse)
 async def dashboard_participants(request: Request, user: dict = Depends(require_user)):
-    """Admin dashboard 成员中心 — 租户可见。admin/super_admin 显示总管理视角。"""
+    """Admin dashboard 成员中心 — 租户可见。
+    
+    在线状态使用实时 live meetings 数据（Zoom Metrics API），
+    今日累计数据（进入、离开、时长、首次/最后活动）用今日考勤汇总。
+    """
     role = user.get("role", "")
-    
+
     from db import get_today_attendance_summary, get_all_groups
-    
+
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
     # ── 参数 ──
     search = request.query_params.get("search", "").strip()
     group_filter = request.query_params.get("group", "").strip()
     status_filter = request.query_params.get("status", "").strip()  # "online" or "offline"
-    
-    # ── 今日考勤汇总 ──
+
+    # ── 获取当前在线名单（live source） ──
+    online_names = set()
+    try:
+        from zoom_metrics import ZoomMetrics
+        from db import get_zoom_accounts
+        accounts = get_zoom_accounts(tenant_id)
+        active = next(
+            (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+            None,
+        )
+        if active:
+            zm = ZoomMetrics(active)
+            live_data = await zm.get_live()
+            meetings = live_data.get("meetings", [])
+            for m in meetings:
+                for p in m.get("participants", []):
+                    name = p.get("name", "").strip()
+                    if name:
+                        online_names.add(name)
+    except Exception:
+        pass  # 静默失败，online_names 为空则全部离线
+
+    # ── 今日考勤汇总（累计数据） ──
     summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
-    
+
+    # ── 用 live 名单覆盖在线状态 ──
+    for m in members:
+        sn = m.get("standard_name", "")
+        m["status"] = "online" if sn in online_names else "offline"
+    # 按 live 数据计算在线/离线数量
+    live_online = len(online_names)
+    live_offline = sum(1 for m in members if m.get("status") == "offline")
+
     # ── 搜索 / 筛选 ──
     if search:
         q = search.lower()
@@ -193,7 +227,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         members = [m for m in members if m.get("group_name", "") == group_filter]
     if status_filter:
         members = [m for m in members if m.get("status", "") == status_filter]
-    
+
     # ── 分组列表（用于筛选器） ──
     all_groups = get_all_groups(tenant_id)
 
@@ -219,13 +253,13 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             "count_enabled": bool(r[4]),
             "group_id": r[5],
         }
-    
+
     return _render_admin(request, "participants", user, "participants.html",
                          title="总管理成员中心" if role in ("admin", "super_admin") else "租户成员中心",
                          members=members,
                          total_members=summary.get("total_members", 0),
-                         online_count=summary.get("online_count", 0),
-                         offline_count=summary.get("offline_count", 0),
+                         online_count=live_online,
+                         offline_count=live_offline,
                          total_duration=summary.get("total_duration", "0m"),
                          avg_duration=summary.get("avg_duration", "0m"),
                          date=summary.get("date", ""),
