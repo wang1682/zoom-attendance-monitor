@@ -2313,10 +2313,11 @@ def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tup
     return page, total
 
 
-def get_sharing_records(tenant_id: str, limit: int = 50, today_only: bool = False) -> list[dict]:
+def get_sharing_records(tenant_id: str, limit: int = 50,
+                        start_time: str | None = None,
+                        end_time: str | None = None) -> list[dict]:
     """获取共享屏幕历史记录
-    today_only=True: 只返回今天 MYT 的数据
-    自动过滤：负数时长、end<start、24h+异常、同人同meeting同时段去重
+    start_time/end_time: UTC ISO 字符串，按 start_time 过滤（MYT 时区的起止由前端计算传入）
     """
     conn = _get_conn()
     from datetime import datetime, timezone, timedelta
@@ -2325,17 +2326,20 @@ def get_sharing_records(tenant_id: str, limit: int = 50, today_only: bool = Fals
     today_start_utc = (now_myt - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
     today_end_utc = today_start_utc + timedelta(days=1)
     stale_threshold_utc = (now_myt - timedelta(hours=6)).astimezone(timezone.utc)
-    
-    if today_only:
-        rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE tenant_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time DESC LIMIT ?",
-            (tenant_id, today_start_utc.isoformat(), today_end_utc.isoformat(), limit),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE tenant_id = ? ORDER BY start_time DESC LIMIT ?",
-            (tenant_id, limit),
-        ).fetchall()
+
+    # 构建 WHERE 条件
+    where_clauses = ["tenant_id = ?"]
+    where_params = [tenant_id]
+    if start_time:
+        where_clauses.append("start_time >= ?")
+        where_params.append(start_time)
+    if end_time:
+        where_clauses.append("start_time < ?")
+        where_params.append(end_time)
+
+    sql = f"SELECT * FROM sharing_live WHERE {' AND '.join(where_clauses)} ORDER BY start_time DESC LIMIT ?"
+    where_params_str = [str(p) for p in where_params] + [str(limit)]
+    rows = conn.execute(sql, where_params_str).fetchall()
     
     seen = set()
     result = []
