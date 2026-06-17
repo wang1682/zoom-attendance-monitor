@@ -115,6 +115,16 @@
     当前范围：<strong>{{ sharing_range_label }}</strong>
     {% if sharing_records|length > 0 %} · 共 {{ sharing_total }} 条记录{% endif %}
   </div>
+  <!-- 搜索框 -->
+  <div class="flex" style="gap:6px;align-items:center;margin-bottom:10px">
+    <input type="text" id="sharing-search" placeholder="搜索成员姓名..."
+           value="{{ sharing_search }}"
+           style="flex:1;max-width:280px;font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text)">
+    <button class="btn btn-sm btn-primary" onclick="applySearch()" style="padding:4px 12px;font-size:12px">搜索</button>
+    {% if sharing_search %}
+    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}" class="text-sm text-muted" style="padding:4px 8px">清除</a>
+    {% endif %}
+  </div>
   {% if sharing_records and sharing_records|length > 0 %}
     <div class="panel">
       <div class="overflow-x">
@@ -126,6 +136,7 @@
               <th>状态</th>
               <th>时长</th>
               <th>时间</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -142,6 +153,7 @@
             </td>
             <td class="td-mono">{{ s.duration }}</td>
             <td class="td-mono">{{ s.start_time_display }} → {{ s.end_time_display }}</td>
+            <td><button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 8px" onclick="showParticipants('{{ s.meeting_id }}', '{{ s.user_name }}')">👤</button></td>
           </tr>
           {% endfor %}
           </tbody>
@@ -162,6 +174,25 @@
 {% endblock %}
 
 {% block scripts %}
+<style>
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto}
+.modal-box h3{margin:0 0 10px 0;font-size:14px}
+.modal-close{float:right;cursor:pointer;font-size:18px;color:var(--text-muted)}
+.participant-item{padding:6px 0;font-size:13px;border-bottom:1px solid var(--border-subtle)}
+.search-filter{display:inline-flex;gap:6px;align-items:center;margin-bottom:8px}
+</style>
+
+<!-- 参会者弹窗 -->
+<div id="participant-modal" class="modal-overlay" onclick="if(event.target===this)closeParticipants()">
+  <div class="modal-box">
+    <span class="modal-close" onclick="closeParticipants()">&times;</span>
+    <h3 id="participant-modal-title">参会者</h3>
+    <div id="participant-list"></div>
+  </div>
+</div>
+
 <script>
 function applyCustomDate() {
   var s = document.getElementById('sharing-start').value;
@@ -170,5 +201,43 @@ function applyCustomDate() {
     window.location.href = '?tab=sharing&range=custom&start=' + s + '&end=' + e;
   }
 }
+function applySearch() {
+  var q = document.getElementById('sharing-search').value;
+  if (!q) return;
+  var url = '?tab=sharing&range={{ sharing_range }}&search=' + encodeURIComponent(q);
+  {% if sharing_start %}
+  url += '&start={{ sharing_start }}&end={{ sharing_end }}';
+  {% endif %}
+  window.location.href = url;
+}
+function showParticipants(meetingId, userName) {
+  document.getElementById('participant-modal-title').textContent = meetingId + ' - ' + userName + ' 的参会者';
+  document.getElementById('participant-list').innerHTML = '<div class="text-sm text-muted">加载中...</div>';
+  document.getElementById('participant-modal').classList.add('open');
+  fetch('/dashboard/api/meeting-participants?meeting_id=' + encodeURIComponent(meetingId))
+    .then(function(r){return r.json()})
+    .then(function(data){
+      var list = document.getElementById('participant-list');
+      if (!data.ok || !data.participants || data.participants.length === 0) {
+        list.innerHTML = '<div class="text-sm text-muted">无参会者记录</div>';
+        return;
+      }
+      var html = '';
+      for (var i=0; i<data.participants.length; i++) {
+        var p = data.participants[i];
+        html += '<div class="participant-item">' + p.name + (p.email ? ' <span class="text-muted" style="font-size:11px">(' + p.email + ')</span>' : '') + '</div>';
+      }
+      list.innerHTML = html;
+    })
+    .catch(function(){document.getElementById('participant-list').innerHTML = '<div class="text-sm text-muted">加载失败</div>';});
+}
+function closeParticipants() {
+  document.getElementById('participant-modal').classList.remove('open');
+}
+// 回车搜索
+document.addEventListener('DOMContentLoaded', function(){
+  var inp = document.getElementById('sharing-search');
+  if (inp) inp.addEventListener('keydown', function(e){if(e.key==='Enter')applySearch();});
+});
 </script>
 {% endblock %}

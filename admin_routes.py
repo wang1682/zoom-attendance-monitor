@@ -355,10 +355,12 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
         pass
 
     history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
+    sharing_search = request.query_params.get("search", "")
     sharing, sharing_total, sharing_meta = get_sharing_records(
         tenant_id, limit=500,
         start_time=sharing_start_utc,
         end_time=sharing_end_utc,
+        search=sharing_search or None,
     )
 
     # 显示筛选范围文本
@@ -386,6 +388,7 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                          sharing_range=range_val,
                          sharing_start=start_param,
                          sharing_end=end_param,
+                         sharing_search=sharing_search,
                          tab=tab)
 
 
@@ -789,6 +792,15 @@ async def admin_channels_test(request: Request, channel_id: int,
             return JSONResponse({"ok": data.get("ok", False), "chat_id": target["chat_id"]})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.get("/api/meeting-participants")
+async def api_meeting_participants(request: Request, meeting_id: str,
+                                    user: dict = Depends(require_user)):
+    """获取指定会议的所有参与者"""
+    from db import get_participants_by_meeting
+    participants = get_participants_by_meeting(meeting_id)
+    return JSONResponse({"ok": True, "participants": participants})
 
 
 # ── Rendering helper ──────────────────────────────────────────────────────────

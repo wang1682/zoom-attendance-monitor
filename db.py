@@ -2315,9 +2315,11 @@ def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tup
 
 def get_sharing_records(tenant_id: str, limit: int = 50,
                         start_time: str | None = None,
-                        end_time: str | None = None) -> list[dict]:
+                        end_time: str | None = None,
+                        search: str | None = None) -> list[dict]:
     """获取共享屏幕历史记录
     start_time/end_time: UTC ISO 字符串，按 start_time 过滤（MYT 时区的起止由前端计算传入）
+    search: 按 user_name 模糊搜索
     """
     conn = _get_conn()
     from datetime import datetime, timezone, timedelta
@@ -2336,6 +2338,9 @@ def get_sharing_records(tenant_id: str, limit: int = 50,
     if end_time:
         where_clauses.append("start_time < ?")
         where_params.append(end_time)
+    if search:
+        where_clauses.append("user_name LIKE ?")
+        where_params.append(f"%{search}%")
 
     sql = f"SELECT * FROM sharing_live WHERE {' AND '.join(where_clauses)} ORDER BY start_time DESC LIMIT ?"
     where_params_str = [str(p) for p in where_params] + [str(limit)]
@@ -2502,3 +2507,15 @@ def get_current_online(tenant_id: str | None = None) -> dict:
         "active_meetings": [],
         "source": "webhook_with_idle",
     }
+
+
+def get_participants_by_meeting(meeting_id: str) -> list[dict]:
+    """获取指定会议的所有参与者（去重）"""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT DISTINCT name, email
+        FROM zoom_participants
+        WHERE meeting_id = ?
+        ORDER BY name
+    """, (meeting_id,)).fetchall()
+    return [dict(r) for r in rows]
