@@ -308,7 +308,7 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
         pass  # live stays empty
 
     history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
-    sharing = get_sharing_records(tenant_id, limit=100)
+    sharing, sharing_total, sharing_meta = get_sharing_records(tenant_id, limit=100)
 
     return _render_admin(request, "meetings", user, "meetings.html",
                          title="会议中心",
@@ -325,8 +325,11 @@ async def dashboard_alerts_page(request: Request, user: dict = Depends(require_u
     tenant_id = request.app.state.get_effective_tenant_id(request)
     rules = db.get_rules_with_channels(tenant_id)
     channels = db.get_tenant_channels(tenant_id)
+    bot_config = db.get_tenant_bot_config(tenant_id)
+    bot_username = bot_config.get("username", "")
     return _render_admin(request, "alerts", user, "tenant_alerts.html",
-                         rules=rules, channels=channels)
+                         rules=rules, channels=channels,
+                         bot_config=bot_config, bot_username=bot_username)
 
 
 @router.get("/settings", response_class=HTMLResponse)

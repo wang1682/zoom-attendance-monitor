@@ -36,7 +36,7 @@
       {% else %}
       <div class="flex items-center gap-2" style="margin-bottom:6px">
         <span class="badge badge-muted">未配置</span>
-        <span class="text-xs text-muted">推送将使用系统默认 Bot</span>
+        <span class="text-xs text-muted">推送将使用系统默认 Bot（推荐配置自有 Bot）</span>
       </div>
       <div id="botEditArea">
         <div class="flex gap-2" style="flex-wrap:wrap">
@@ -116,7 +116,11 @@
 <div class="zone-card" style="text-align:center;padding:2rem">
   <div style="font-size:2rem;margin-bottom:8px;color:var(--text-muted)">📨</div>
   <h4 style="color:var(--text)">暂无推送频道</h4>
+  {% if bot_config and bot_config.username and bot_config.verified_at %}
+  <p class="text-sm text-muted">Bot（@{{ bot_config.username }}）已连接。<br>请添加推送频道——可以是 Telegram 群、频道或私聊 chat_id。</p>
+  {% else %}
   <p class="text-sm text-muted">添加一个 Telegram 群组或私聊作为推送目标。</p>
+  {% endif %}
   <button onclick="openModal('createModal')" class="btn btn-primary" style="margin-top:8px">＋ 添加频道</button>
 </div>
 {% endif %}

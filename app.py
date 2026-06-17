@@ -87,6 +87,8 @@ def parse_utc_iso(s: str) -> datetime | None:
 
 def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
     """UTC ISO → MYT 显示字符串"""
+    if not s:
+        return "—"
     dt = parse_utc_iso(s)
     if dt is None:
         return s[:16] if s else "—"
@@ -98,32 +100,8 @@ def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 def fmt_myt(dt_str: str | None) -> str:
-    """智能格式化 MYT 显示时间
-
-    今天 → HH:mm:ss
-    昨天 → 昨天 HH:mm
-    7天内 → 周X HH:mm
-    其他 → YYYY-MM-DD HH:mm
-    """
-    if not dt_str:
-        return "—"
-    dt = parse_utc_iso(dt_str)
-    if dt is None:
-        return dt_str[:16]
-    myt_dt = dt.astimezone(MYT)
-    now_myt = myt_now()
-    today = now_myt.date()
-    d = myt_dt.date()
-
-    if d == today:
-        return myt_dt.strftime("%H:%M:%S")
-    elif d == today - timedelta(days=1):
-        return myt_dt.strftime("昨天 %H:%M")
-    elif (today - d).days < 7:
-        wd = WEEKDAY_CN[myt_dt.weekday()]
-        return myt_dt.strftime(f"{wd} %H:%M")
-    else:
-        return myt_dt.strftime("%Y-%m-%d %H:%M")
+    """统一 MYT 格式：MM-DD HH:mm:ss"""
+    return iso_to_myt_str(dt_str)
 
 
 
@@ -415,7 +393,7 @@ def build_app() -> "FastAPI":
                                 "id": m.get("id", ""),
                                 "topic": m.get("topic", ""),
                                 "participant_count": len(m.get("participants", [])),
-                                "start_time": m.get("start_time", ""),
+                                "start_time": iso_to_myt_str(m.get("start_time", "")),
                             }
                             for m in meetings_raw
                         ]
@@ -430,8 +408,8 @@ def build_app() -> "FastAPI":
         ).fetchone()
         today_events = row["c"] if row else 0
         row = conn.execute(
-            "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ?",
-            (tid,),
+            "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ? AND created_at >= ? AND alert_type NOT IN ('webhook_push')",
+            (tid, myt_day_start_utc),
         ).fetchone()
         today_alerts = row["c"] if row else 0
         recent_events = db.get_recent_events(limit=5, tenant_id=tid)
@@ -2176,7 +2154,10 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/members")
     async def api_v3_members_alias(request: Request):
-        """别名：/api/v3/members -> 同 /api/v3/member-display（按 tenant 隔离）"""
+        """别名：/api/v3/members -> 同 /api/v3/member-display（按 tenant 隔离）
+
+        排序：在线优先 → 今日时长高到低 → 最近活跃新到旧
+        """
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
@@ -2196,7 +2177,83 @@ def build_app() -> "FastAPI":
                 except:
                     item["aliases"] = []
             items.append(item)
-        return {"ok": True, "items": items}
+
+        # 获取今日时长与在线状态
+        from datetime import datetime, timezone, timedelta
+        myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
+        today_start_utc = (myt_now - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+        # 在线名单
+        online_names = set()
+        try:
+            zm, _ = _get_tenant_zoom_metrics(request)
+            if zm:
+                live_data = await zm.get_live()
+                for m in live_data.get("meetings", []):
+                    for p in m.get("participants", []):
+                        online_names.add(p.get("name", ""))
+        except:
+            pass
+
+        # 获取今日累计时长
+        today_secs = {}
+        last_seen = {}
+        try:
+            session_rows = conn.execute("""
+                SELECT user_name, SUM(duration_seconds) as total, MAX(COALESCE(leave_time_utc, join_time_utc)) as recent
+                FROM participant_sessions
+                WHERE created_at >= ?
+                GROUP BY user_name
+            """, (today_start_utc,)).fetchall()
+            for r in session_rows:
+                nm = r["user_name"]
+                today_secs[nm] = r["total"] or 0
+                last_seen[nm] = r["recent"] or ""
+        except:
+            pass
+
+        # fallback: 从 zoom_participants 获取 last_activity（仅用于排序）
+        if not last_seen:
+            try:
+                for r in conn.execute("""
+                    SELECT name, MAX(action_time) as last_time
+                    FROM zoom_participants
+                    WHERE action_time >= ?
+                    GROUP BY name
+                """, (today_start_utc,)).fetchall():
+                    last_seen[r["name"]] = r["last_time"] or ""
+            except:
+                pass
+
+        def ts(v):
+            if not v:
+                return 0
+            try:
+                return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+            except:
+                return 0
+
+        # 为每个成员计算排序字段
+        for m in items:
+            nm = m["display_name"]
+            m["is_online"] = nm in online_names
+            total_sec = 0
+            latest = ""
+            for alias in [m["raw_name"]] + (m.get("aliases") or []):
+                total_sec += today_secs.get(alias, 0)
+                als = last_seen.get(alias, "")
+                if als and als > latest:
+                    latest = als
+            m["today_seconds"] = total_sec
+            m["last_activity"] = latest
+
+        items.sort(key=lambda m: (
+            0 if m.get("is_online") else 1,
+            -ts(m.get("last_activity")),
+            m.get("display_name") or "",
+        ))
+
+        return {"ok": True, "items": items, "today_seconds_source": "participant_sessions_empty"}
 
     @app.post("/api/v3/members")
     async def api_v3_members_add(request: Request):
@@ -2265,7 +2322,7 @@ def build_app() -> "FastAPI":
                 except:
                     item["aliases"] = []
             items.append(item)
-        return {"ok": True, "items": items}
+        return {"ok": True, "items": items, "today_seconds_source": "participant_sessions_empty"}
 
     @app.post("/api/v3/member-display")
     async def api_v3_member_display_add(request: Request):

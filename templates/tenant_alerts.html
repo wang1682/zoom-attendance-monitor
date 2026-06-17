@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "tenant_base.html" %}
 {% block title %}预警 - Zoom Monitor{% endblock %}
 {% block content %}
 
@@ -62,17 +62,21 @@
           </td>
           <td>
             {% set active_channels = channels|selectattr('is_enabled','equalto',1)|list %}
-            {% if active_channels %}
-              {% for ch in active_channels %}
-                <span class="channel-tag">{{ ch.label or ch.chat_id }}</span>
-              {% endfor %}
+            {% if r.target_channel_id and active_channels %}
+              {% set target_ch = active_channels|selectattr('id','equalto',r.target_channel_id)|first %}
+              {% if target_ch %}
+                <span class="channel-tag">{{ target_ch.label or target_ch.chat_id }}</span>
+              {% else %}
+                <span class="text-muted">频道ID {{ r.target_channel_id }}（已删除）</span>
+              {% endif %}
             {% else %}
-              <span class="text-muted">未配置推送通道</span>
+              <span class="text-muted">—</span>
             {% endif %}
           </td>
           <td>
             <div style="display:flex;gap:4px;white-space:nowrap">
               <button type="button" class="btn-edit js-edit-rule" data-event-type="{{ r.event_type }}" title="编辑" style="font-weight:600;color:#3b82f6">编辑</button>
+              <button type="button" class="btn-test js-test-rule" data-event-type="{{ r.event_type }}" title="测试" style="font-weight:600;color:#10b981">测试</button>
               <button type="button" class="btn-danger js-delete-rule" data-event-type="{{ r.event_type }}" title="删除" style="font-weight:600;color:#ef4444">删除</button>
             </div>
           </td>
@@ -117,18 +121,24 @@
         <input type="number" id="fCooldown" value="60" min="0" style="width:100%">
       </div>
       <div class="form-group" id="pushTargetGroup">
-        <label>推送到</label>
+        <label>推送目标</label>
         {% set active_channels = channels|selectattr('is_enabled','equalto',1)|list %}
         {% if active_channels %}
-          <div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);font-size:13px;color:var(--text-muted)">
-            <div style="margin-bottom:4px">由当前租户 Channels 统一管理</div>
+          <select id="fTargetChannelId">
+            <option value="">请选择推送频道</option>
             {% for ch in active_channels %}
-              <span class="channel-tag">{{ ch.label or ch.chat_id }}</span>
+            <option value="{{ ch.id }}" data-chat-id="{{ ch.chat_id }}">{{ ch.label or ch.chat_id }}</option>
             {% endfor %}
-          </div>
+          </select>
         {% else %}
           <div style="padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);font-size:13px;color:var(--text-muted)">
-            未配置推送通道，请到<a href="/dashboard/settings" style="color:var(--accent)">「推送」页面</a>创建
+            {% if bot_config and bot_config.username and bot_config.verified_at %}
+            ✅ 已连接 Bot（@{{ bot_username }}），但尚未添加推送频道。<br>
+            请到 <a href="/dashboard/tenant/channels" style="color:var(--accent)">【推送】页面</a> 添加群/私聊 chat_id。
+            {% else %}
+            ⚠️ 未配置 Bot 和推送频道。<br>
+            请先在 <a href="/dashboard/tenant/channels" style="color:var(--accent)">【推送】页面</a> 配置机器人并添加频道。
+            {% endif %}
           </div>
         {% endif %}
       </div>
@@ -176,51 +186,68 @@ const rulesData = {{ rules | tojson | safe }};
 })();
 
 function showCreateForm() {
-  document.getElementById('editEventType').value = '';
-  document.getElementById('formTitle').textContent = '新建规则';
-  document.getElementById('fEventType').value = 'participant_joined';
-  document.getElementById('fTitle').value = '';
-  document.getElementById('fEnabled').value = '1';
-  document.getElementById('fCooldown').value = '60';
-  document.getElementById('fQuietEnabled').value = '0';
-  document.getElementById('fQuietStart').value = '00:00';
-  document.getElementById('fQuietEnd').value = '08:00';
-  document.getElementById('ruleForm').classList.add('active');
+  const $ = id => document.getElementById(id);
+  setVal('editEventType', '');
+  setText('formTitle', '新建规则');
+  setVal('fEventType', 'participant_joined');
+  setVal('fTitle', '');
+  setVal('fEnabled', '1');
+  setVal('fCooldown', '60');
+  setVal('fQuietEnabled', '0');
+  setVal('fQuietStart', '00:00');
+  setVal('fQuietEnd', '08:00');
+  const m = $('ruleForm');
+  if (m) m.classList.add('active');
 }
 
 function hideForm() {
-  document.getElementById('ruleForm').classList.remove('active');
+  const el = document.getElementById('ruleForm');
+  if (el) el.classList.remove('active');
 }
 
 function editRule(eventType) {
   console.log('[alerts] editRule opened', eventType);
   const r = rulesData.find(x => x.event_type === eventType);
   if (!r) { console.warn('[alerts] rule not found:', eventType); return; }
-  document.getElementById('editEventType').value = eventType;
-  document.getElementById('formTitle').textContent = '编辑规则: ' + eventType;
-  document.getElementById('fEventType').value = eventType;
-  document.getElementById('fTitle').value = r.title || '';
-  document.getElementById('fEnabled').value = r.enabled ? '1' : '0';
-  document.getElementById('fCooldown').value = r.cooldown_seconds || 0;
-  document.getElementById('fQuietEnabled').value = r.quiet_enabled ? '1' : '0';
-  document.getElementById('fQuietStart').value = r.quiet_start || '00:00';
-  document.getElementById('fQuietEnd').value = r.quiet_end || '08:00';
-  document.getElementById('ruleForm').classList.add('active');
-  console.log('[alerts] editRule done, className:', document.getElementById('ruleForm').className);
+  const $ = id => document.getElementById(id);
+  setVal('editEventType', eventType);
+  setText('formTitle', '编辑规则: ' + eventType);
+  setVal('fEventType', eventType);
+  setVal('fTitle', r.title || '');
+  setVal('fEnabled', r.enabled ? '1' : '0');
+  setVal('fCooldown', r.cooldown_seconds || 0);
+  setVal('fTargetChannelId', r.target_channel_id || '');
+  setVal('fQuietEnabled', r.quiet_enabled ? '1' : '0');
+  setVal('fQuietStart', r.quiet_start || '00:00');
+  setVal('fQuietEnd', r.quiet_end || '08:00');
+  const m = $('ruleForm');
+  if (m) m.classList.add('active');
+  console.log('[alerts] editRule done');
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
 }
 
 async function saveRule() {
-  const editType = document.getElementById('editEventType').value;
-  const eventType = document.getElementById('fEventType').value;
+  const editType = (document.getElementById('editEventType') || {}).value || '';
+  const eventType = (document.getElementById('fEventType') || {}).value || '';
 
   const data = {
     event_type: eventType,
-    title: document.getElementById('fTitle').value.trim(),
-    enabled: parseInt(document.getElementById('fEnabled').value),
-    cooldown_seconds: parseInt(document.getElementById('fCooldown').value) || 0,
-    quiet_enabled: parseInt(document.getElementById('fQuietEnabled').value),
-    quiet_start: document.getElementById('fQuietStart').value,
-    quiet_end: document.getElementById('fQuietEnd').value,
+    title: (document.getElementById('fTitle') || {}).value?.trim() || '',
+    enabled: parseInt((document.getElementById('fEnabled') || {}).value) || 0,
+    cooldown_seconds: parseInt((document.getElementById('fCooldown') || {}).value) || 0,
+    target_channel_id: parseInt((document.getElementById('fTargetChannelId') || {}).value) || null,
+    quiet_enabled: parseInt((document.getElementById('fQuietEnabled') || {}).value) || 0,
+    quiet_start: (document.getElementById('fQuietStart') || {}).value || '00:00',
+    quiet_end: (document.getElementById('fQuietEnd') || {}).value || '08:00',
   };
 
   let url = '/api/v3/telegram-rules';
@@ -249,6 +276,30 @@ async function deleteRule(eventType) {
     else { alert('删除失败'); }
   } catch(e) {
     alert('请求失败: ' + e.message);
+  }
+}
+
+async function testRule(eventType) {
+  const btnEl = document.querySelector('.js-test-rule[data-event-type="' + eventType.replace(/"/g, '') + '"]');
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.textContent = '发送中…';
+  }
+  try {
+    const resp = await fetch('/api/v3/telegram-rules/' + encodeURIComponent(eventType) + '/test', { method: 'POST' });
+    const j = await resp.json();
+    if (j.ok) {
+      alert('✅ 测试消息已发送');
+    } else {
+      alert('✖ 测试失败: ' + (j.error || '未知错误'));
+    }
+  } catch(e) {
+    alert('✖ 请求失败: ' + e.message);
+  } finally {
+    if (btnEl) {
+      btnEl.disabled = false;
+      btnEl.textContent = '测试';
+    }
   }
 }
 
@@ -300,6 +351,16 @@ async function addDiscoveredRule(eventType, title) {
         deleteRule(eventType);
         return false;
       }
+
+      const testBtn = e.target.closest('.js-test-rule');
+      if (testBtn) {
+        e.preventDefault();
+        e.stopPropagation();
+        const eventType = testBtn.dataset.eventType;
+        console.log('[alerts] test click', eventType);
+        testRule(eventType);
+        return false;
+      }
     });
   }
 
@@ -319,6 +380,6 @@ async function addDiscoveredRule(eventType, title) {
 })();
 </script>
 
-<div style="padding:8px;text-align:center;font-size:11px;color:var(--text-muted)">alerts page build: v1.4.7.2-alert-modal-fix</div>
+<div style="padding:8px;text-align:center;font-size:11px;color:var(--text-muted)">alerts page build: v1.8.0-rule-test</div>
 
 {% endblock %}

@@ -140,7 +140,7 @@ select option{background:var(--bg3);color:var(--text)}
     'participants':  ['成员', '/dashboard/participants'],
     'meetings':      ['会议', '/dashboard/meetings'],
     'alerts':        ['预警', '/dashboard/alerts'],
-    'settings': ['账号', '/dashboard/tenant/zoom'],
+    'settings': ['账号', '/dashboard/zoom'],
     'channels': ['推送', '/dashboard/tenant/channels'],
 } %}
 
@@ -185,12 +185,9 @@ select option{background:var(--bg3);color:var(--text)}
 function fmtMYT(value) {
     if (!value) return '-';
     var d = new Date(value);
-    return d.toLocaleString('en-MY', {
-        timeZone: 'Asia/Kuala_Lumpur',
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false
-    });
+    if (isNaN(d.getTime())) return value;
+    var mo=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'),hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0'),ss=String(d.getSeconds()).padStart(2,'0');
+    return mo+'-'+dd+' '+hh+':'+mm+':'+ss;
 }
 /* 兼容旧代码 */
 window.to_myt = fmtMYT;

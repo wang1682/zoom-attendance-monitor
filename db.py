@@ -19,6 +19,21 @@ from pathlib import Path
 
 from config import settings
 
+MYT = timezone(timedelta(hours=8))
+
+def to_myt_str(dt_str: str) -> str:
+    """将 UTC ISO/Datetime 字符串转 MYT MM-DD HH:mm:ss"""
+    if not dt_str:
+        return ""
+    try:
+        s = dt_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+    except Exception:
+        return dt_str[:16]
+
 DB_PATH = settings.database_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
 _local = threading.local()
 
@@ -377,6 +392,9 @@ def get_recent_events(limit: int = 50, tenant_id: str = None) -> list[dict]:
         except:
             d["user_name"] = ""
             d["event_time"] = d.get("created_at", "")
+        # 将 UTC 时间转成 MYT 显示
+        d["event_time"] = to_myt_str(d.get("event_time", ""))
+        d["created_at"] = to_myt_str(d.get("created_at", ""))
         result.append(d)
     return result
 
@@ -479,6 +497,7 @@ def _fmt_dur(seconds: int) -> str:
 
 
 def _myt_short(utc_str: str) -> str:
+    """UTC → MYT MM-DD HH:mm"""
     if not utc_str:
         return ""
     from datetime import datetime, timezone, timedelta
@@ -486,7 +505,9 @@ def _myt_short(utc_str: str) -> str:
     try:
         s = utc_str.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
-        return dt.astimezone(MYT).strftime("%H:%M")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(MYT).strftime("%m-%d %H:%M")
     except:
         return utc_str[:5]
 
@@ -679,6 +700,33 @@ def check_new_email(email: str, name: str, now: datetime) -> bool:
 
 # ── alerts ───────────────────────────────────────────────────────────────────
 
+def log_webhook_push(
+    tenant_id: str, event_type: str, title: str, message: str,
+    target_channel_id: int, telegram_chat_id: str, status: str, error_message: str = "",
+) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO alerts (alert_type, severity, title, message, tenant_id, "
+        "event_type, target_channel_id, telegram_chat_id, status, error_message, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("webhook_push", "info", title, message, tenant_id,
+         event_type, target_channel_id, telegram_chat_id, status, error_message,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_telegram_rule_by_event(event_type: str) -> dict | None:
+    """根据 event_type 查询 telegram_alert_rules"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def create_alert(
     alert_type: str, title: str, message: str = "",
     severity: str = "info", related_name: str = "", related_email: str = "",
@@ -700,6 +748,33 @@ def log_alert_sent(alert_id: int, sent_to: str, success: bool, error: str = ""):
         (sent_to, 1 if success else 0, alert_id),
     )
     conn.commit()
+
+
+def log_webhook_push(
+    tenant_id: str, event_type: str, title: str, message: str,
+    target_channel_id: int, telegram_chat_id: str, status: str, error_message: str = "",
+) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO alerts (alert_type, severity, title, message, tenant_id, "
+        "event_type, target_channel_id, telegram_chat_id, status, error_message, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("webhook_push", "info", title, message, tenant_id,
+         event_type, target_channel_id, telegram_chat_id, status, error_message,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_telegram_rule_by_event(event_type: str) -> dict | None:
+    # 根据 event_type 查询 telegram_alert_rules
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def get_recent_alerts(limit: int = 50, alert_type: str = None, tenant_id: str = None) -> list[dict]:
@@ -938,7 +1013,8 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
         fields = []
         values = []
         for key in ("title", "enabled", "cooldown_seconds",
-                     "quiet_enabled", "quiet_start", "quiet_end"):
+                     "quiet_enabled", "quiet_start", "quiet_end",
+                     "target_channel_id"):
             if key in data:
                 fields.append(f"{key} = ?")
                 values.append(data[key])
@@ -957,8 +1033,9 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
         cur = conn.execute(
             "INSERT INTO telegram_alert_rules "
             "(event_type, title, enabled, cooldown_seconds, "
-            " quiet_enabled, quiet_start, quiet_end, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " quiet_enabled, quiet_start, quiet_end, target_channel_id, "
+            " created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event_type,
                 data.get("title", ""),
@@ -967,6 +1044,7 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
                 data.get("quiet_enabled", 0),
                 data.get("quiet_start", "00:00"),
                 data.get("quiet_end", "08:00"),
+                data.get("target_channel_id"),
                 now,
                 now,
             ),
@@ -994,6 +1072,17 @@ def delete_telegram_rule(event_type: str) -> bool:
     log_audit("delete", "telegram_alert_rule", existing[0],
               f"Deleted rule for {event_type}")
     return True
+
+
+def update_rule_test_result(event_type: str, ok: bool, error: str = ""):
+    """记录规则的最近一次测试结果"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE telegram_alert_rules SET last_test_at=?, last_test_result=?, last_test_error=? WHERE event_type=?",
+        (now, "ok" if ok else "fail", error, event_type),
+    )
+    conn.commit()
 
 
 def _is_within_quiet_hours(rule: dict) -> bool:
@@ -1930,6 +2019,20 @@ def get_all_active_zoom_accounts() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_active_zoom_accounts_for_tenant(tenant_id: str) -> list[dict]:
+    """获取指定租户下激活的 Zoom 账号"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT za.*, t.name AS tenant_name "
+        "FROM zoom_accounts za "
+        "JOIN tenants t ON t.id = za.tenant_id "
+        "WHERE za.is_active = 1 AND t.is_active = 1 AND za.tenant_id = ? "
+        "ORDER BY za.created_at",
+        (tenant_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_zoom_account(account_db_id: int) -> dict | None:
     conn = _get_conn()
     row = conn.execute(
@@ -2196,25 +2299,92 @@ def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tup
     return page, total
 
 
-def get_sharing_records(tenant_id: str, limit: int = 50) -> list[dict]:
-    """获取共享屏幕历史记录"""
+def get_sharing_records(tenant_id: str, limit: int = 50, today_only: bool = False) -> list[dict]:
+    """获取共享屏幕历史记录
+    today_only=True: 只返回今天 MYT 的数据
+    自动过滤：负数时长、end<start、24h+异常、同人同meeting同时段去重
+    """
     conn = _get_conn()
-    rows = conn.execute(
-        "SELECT * FROM sharing_live WHERE tenant_id = ? ORDER BY start_time DESC LIMIT ?",
-        (tenant_id, limit),
-    ).fetchall()
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    now_myt = datetime.now(timezone.utc).astimezone(MYT)
+    today_start_utc = (now_myt - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_utc = today_start_utc + timedelta(days=1)
+    stale_threshold_utc = (now_myt - timedelta(hours=6)).astimezone(timezone.utc)
+    
+    if today_only:
+        rows = conn.execute(
+            "SELECT * FROM sharing_live WHERE tenant_id = ? AND start_time >= ? AND start_time < ? ORDER BY start_time DESC LIMIT ?",
+            (tenant_id, today_start_utc.isoformat(), today_end_utc.isoformat(), limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM sharing_live WHERE tenant_id = ? ORDER BY start_time DESC LIMIT ?",
+            (tenant_id, limit),
+        ).fetchall()
+    
+    seen = set()
     result = []
+    meta = {"invalid_count": 0, "stale_active_count": 0, "stale_active_items": []}
     for r in rows:
         d = dict(r)
-        d["start_time_display"] = _myt_short(d.get("start_time", ""))
-        d["end_time_display"] = _myt_short(d.get("end_time", ""))
+        
+        # 过滤负数时长/end<start
+        if d.get("end_time") and d.get("start_time"):
+            try:
+                s = d["start_time"].replace("Z", "+00:00")
+                e = d["end_time"].replace("Z", "+00:00")
+                st = datetime.fromisoformat(s)
+                et = datetime.fromisoformat(e)
+                if et.tzinfo is None: et = et.replace(tzinfo=timezone.utc)
+                if st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+                dur_sec = int((et - st).total_seconds())
+                # 负数 / end<start / 超过24h
+                if dur_sec < 0 or et < st or dur_sec > 86400:
+                    meta["invalid_count"] += 1
+                    continue
+            except:
+                meta["invalid_count"] += 1
+                continue
+        
+        # 去重：meeting_id + user_name + start_time + end_time（空值保护）
+        dedup_key = f"{d.get('meeting_id','')}|{d.get('user_name','')}|{(d.get('start_time') or '')[:16]}|{(d.get('end_time') or '')[:16]}"
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+        
+        # 标记 stale active：is_active=1 且 start_time 超过 6h
+        is_stale = False
+        if d.get("is_active") == 1 and d.get("start_time"):
+            try:
+                st_dt = datetime.fromisoformat(d["start_time"].replace("Z", "+00:00"))
+                if st_dt.tzinfo is None: st_dt = st_dt.replace(tzinfo=timezone.utc)
+                if st_dt < stale_threshold_utc:
+                    is_stale = True
+            except:
+                pass
+        if is_stale:
+            meta["stale_active_count"] += 1
+            meta["stale_active_items"].append({
+                "user_name": d.get("user_name"),
+                "start_time": _myt_short(d.get("start_time", "")),
+                "meeting_id": d.get("meeting_id"),
+            })
+            continue  # 不在"当前共享"中展示
+        
+        # 时长计算
         try:
-            dur = int((datetime.fromisoformat(d["end_time"].replace("Z", "+00:00")) - datetime.fromisoformat(d["start_time"].replace("Z", "+00:00"))).total_seconds())
-            d["duration"] = _fmt_dur(dur)
+            dur_sec = int((et - st).total_seconds()) if d.get("end_time") and d.get("start_time") else 0
+            d["duration"] = _fmt_dur(dur_sec)
+            d["duration_seconds"] = dur_sec
         except:
             d["duration"] = "—"
+            d["duration_seconds"] = 0
+        
+        d["start_time_display"] = _myt_short(d.get("start_time", ""))
+        d["end_time_display"] = _myt_short(d.get("end_time", ""))
         result.append(d)
-    return result
+    return result, len(result), meta
 
 
 # ── 统一的在线计算（Single Source of Truth）────────────────────────────────────

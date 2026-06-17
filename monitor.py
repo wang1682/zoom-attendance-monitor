@@ -25,6 +25,10 @@ def in_push_slot(hour: int) -> bool:
     s, e = settings.push_start_hour, settings.push_end_hour
     return s <= hour < e if s < e else (hour >= s or hour < e)
 
+def in_report_slot(hour: int) -> bool:
+    # 每 3 小时推一次在线报告（MYT 0, 3, 6, 9, 12, 15, 18, 21）
+    return hour % 3 == 0
+
 
 def get_room_label(mid: str) -> str:
     if mid == settings.zoom_pmi_id:
@@ -295,78 +299,70 @@ async def monitor_loop():
             if accounts:
                 detail += f" {len(accounts)+1}账号"
 
-                        # ── Periodic online report (按租户 tenant_channels 推送) ──
-            if push_now:
+                        # ── Periodic online report (每 3 小时一次，按租户 tenant_channels 推送) ──
+            if in_report_slot(now_hour):
+                # 按租户分别推送在线报告 – 每租户拉自己的数据
                 import httpx
-                from app import resolve_member
-                _v2_participants = []
-                try:
-                    _v2r = httpx.get("http://zoom-api:8000/api/v3/live", timeout=10)
-                    if _v2r.status_code == 200:
-                        _v2d = _v2r.json()
-                        for _m in _v2d.get("data", {}).get("meetings", []):
-                            for _p in _m.get("participants", []):
-                                _raw = _p.get("name", "").strip()
-                                if not _raw:
-                                    continue
-                                _rm = resolve_member(_raw)
-                                _std = _rm["standard_name"]
-                                _grp = _rm.get("group_name") or "未分组"
-                                _join = _p.get("join_time", "")
-                                try:
-                                    _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
-                                    _enter = _join_dt.astimezone(MYT).strftime("%H:%M")
-                                except Exception:
-                                    _enter = _join[11:16] if len(_join) > 11 else "??:??"
-                                _mins = _p.get("online_minutes", 0)
-                                _h, _m = _mins // 60, _mins % 60
-                                _dur = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
-                                _v2_participants.append((_std, _grp, _enter, _dur))
-                except Exception:
-                    pass
-                _grouped = {}
-                for _std, _grp, _ent, _dur in _v2_participants:
-                    _grouped.setdefault(_grp, []).append((_std, _ent, _dur))
-                _ordered = []
-                for _g in ("核销", "推进"):
-                    if _g in _grouped:
-                        _ordered.append((_g, _grouped.pop(_g)))
-                for _g, _members in _grouped.items():
-                    _ordered.append((_g, _members))
-                _lines = [
-                    "🟠 实时在线",
-                    "",
-                    f"⏰ 更新时间：{now_myt.strftime('%m-%d %H:%M')}",
-                    f"👥 在线人数：{len(_v2_participants)}",
-                    "",
-                ]
-                if _v2_participants:
-                    _g_emoji = {"核销": "🔵", "推进": "🟡"}
-                    _idx = 0
-                    for _g, _members in _ordered:
-                        _emoji = _g_emoji.get(_g, "⚪")
-                        _lines.append(f"{_emoji}【{_g}】")
-                        for _std, _ent, _dur in _members:
-                            _idx += 1
-                            _lines.append(f"{_idx}. **{_std}**")
-                            _lines.append(f"  ↳ 加入：{_ent}")
-                            _lines.append(f"  ↳ 在线：{_dur}")
-                        _lines.append("")
-                else:
-                    _lines.append("当前无人在线")
-                    _lines.append("")
-                _lines.append(f"📊 共{len(_v2_participants)}人在线")
-                _report_text = "\n".join(_lines)
-
-                # 按租户推送在线报告 – 各租户的 channel 自己决定是否接收
                 import db as _db
+                from app import resolve_member
+
                 _all_channels = _db.get_tenant_channels_periodic_report()
                 for _ch in _all_channels:
                     _cp_chat_id = _ch["chat_id"]
                     _cp_bot_token = _ch.get("bot_token", "")
                     if not _cp_bot_token or not _cp_chat_id:
                         continue
-                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 {_ch.get('label','?')} tenant={_ch['tenant_id']} chat_id={_cp_chat_id}\n")
+                    _tid = _ch["tenant_id"]
+                    try:
+                        _v2r = httpx.get(f"http://zoom-api:8000/api/v3/live/tenant/{_tid}", timeout=10)
+                        _v2d = _v2r.json() if _v2r.status_code == 200 else {"data": {"meetings": []}}
+                    except Exception:
+                        _v2d = {"data": {"meetings": []}}
+                    _v2_participants = []
+                    for _m in _v2d.get("data", {}).get("meetings", []):
+                        for _p in _m.get("participants", []):
+                            _raw = _p.get("name", "").strip()
+                            if not _raw:
+                                continue
+                            _rm = resolve_member(_raw)
+                            _std = _rm["standard_name"]
+                            _grp = _rm.get("group_name") or "未分组"
+                            _join = _p.get("join_time", "")
+                            try:
+                                _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
+                            except Exception:
+                                _join_dt = None
+                            _mins = _p.get("online_minutes", 0)
+                            _h, _m = _mins // 60, _mins % 60
+                            _v2_participants.append((_std, _grp, _mins, _h, _m))
+                    _grouped = {}
+                    for _std, _grp, _mins, _h, _m in _v2_participants:
+                        _grouped.setdefault(_grp, []).append((_std, _mins, _h, _m))
+                    for _g in _grouped:
+                        _grouped[_g].sort(key=lambda x: x[1], reverse=True)
+                    _ordered = []
+                    for _g in ("核销", "推进"):
+                        if _g in _grouped:
+                            _ordered.append((_g, _grouped.pop(_g)))
+                    for _g, _members in _grouped.items():
+                        _ordered.append((_g, _members))
+                    _num_emoji = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+                    _lines = ["🟠 实时在线", "", f"👥 在线人数：{len(_v2_participants)}", ""]
+                    if _v2_participants:
+                        _g_emoji = {"核销": "🔵", "推进": "🟡"}
+                        for _g, _members in _ordered:
+                            _emoji = _g_emoji.get(_g, "⚪")
+                            _lines.append(f"{_emoji} {_g}（{len(_members)}）")
+                            for _gi, (_std, _mins, _h, _m) in enumerate(_members):
+                                _num = _num_emoji[_gi] if _gi < len(_num_emoji) else f"({_gi+1})"
+                                _dur_cn = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
+                                _lines.append(f"{_num} {_std}        {_dur_cn}")
+                            _lines.append("")
+                    else:
+                        _lines.append("当前无人在线")
+                        _lines.append("")
+                    _report_text = "\n".join(_lines)
+                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 {_ch.get('label','?')} tenant={_tid} chat_id={_cp_chat_id} ({len(_v2_participants)}人)\n")
                     sys.stdout.flush()
                     _cp_tg = TelegramNotifier(bot_token=_cp_bot_token)
                     await _cp_tg.send(_report_text, chat_id=_cp_chat_id)

@@ -50,7 +50,7 @@ def _render_tenant(request: Request, active: str, user: dict,
     from fastapi.templating import Jinja2Templates
 
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
 
     current_user = {
         "id": user["id"],
@@ -106,37 +106,15 @@ def _account_dict(a: dict) -> dict:
 # ── Overview (运营面板) ─────────────────────────────────────────────────────
 
 
-async def _compute_kpi_data(tenant_id: str) -> dict:
+def _compute_kpi_data(tenant_id: str) -> dict:
     """Compute KPI data for tenant dashboard — all queries tenant-isolated."""
     # 今日参与者
     today_participants = len(db.get_today_participants(limit=10000, tenant_id=tenant_id))
 
-    # 当前在线 + 活跃会议 (from Zoom API)
-    current_online = 0
-    active_meetings = []
-    try:
-        accounts = db.get_zoom_accounts(tenant_id)
-        active = next(
-            (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
-            None,
-        )
-        if active:
-            from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics(active)
-            live_data = await zm.get_live()
-            current_online = live_data.get("total_online", 0)
-            meetings_raw = live_data.get("meetings", [])
-            active_meetings = [
-                {
-                    "id": m.get("id", ""),
-                    "topic": m.get("topic", ""),
-                    "participant_count": len(m.get("participants", [])),
-                    "start_time": m.get("start_time", ""),
-                }
-                for m in meetings_raw
-            ]
-    except Exception:
-        pass
+    # 当前在线 + 活跃会议 (unified from webhook)
+    online_data = db.get_current_online(tenant_id)
+    current_online = online_data["online_count"]
+    active_meetings = online_data["active_meetings"]
 
     # 今日事件
     conn = db._get_conn()
@@ -193,7 +171,7 @@ async def tenant_setup_redirect():
 @router.get("/zoom", response_class=HTMLResponse)
 async def tenant_zoom(request: Request, user: dict = Depends(require_user)):
     """Zoom account self-service page — create, edit, test connection."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     accounts = db.get_zoom_accounts(tenant_id)
     # Mask secrets in display dicts
     display_accounts = []
@@ -218,7 +196,7 @@ async def tenant_zoom_create(
     client_secret: str = Form(...),
     webhook_secret: str = Form(""),
 ):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_zoom_account(
         tenant_id=tenant_id,
         label=label or account_id,
@@ -241,7 +219,7 @@ async def tenant_zoom_update(
     client_secret: str = Form(""),
     webhook_secret: str = Form(""),
 ):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     # Verify ownership
     acct = db.get_zoom_account(account_db_id)
     if not acct or str(acct.get("tenant_id")) != str(tenant_id):
@@ -382,7 +360,7 @@ async def tenant_zoom_test_existing(
     user: dict = Depends(require_editor),
 ):
     """Test connection for an existing account (multi-step)."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     acct = db.get_zoom_account(account_db_id)
     if not acct or str(acct.get("tenant_id")) != str(tenant_id):
         return _test_result([{"name": "权限", "status": "error",
@@ -486,7 +464,7 @@ async def tenant_zoom_delete(
     account_db_id: int,
     user: dict = Depends(require_editor),
 ):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     acct = db.get_zoom_account(account_db_id)
     if not acct or str(acct.get("tenant_id")) != str(tenant_id):
         raise HTTPException(status_code=404)
@@ -499,7 +477,7 @@ async def tenant_zoom_delete(
 
 @router.get("/channels", response_class=HTMLResponse)
 async def tenant_channels_page(request: Request, user: dict = Depends(require_user)):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = [_channel_dict(c) for c in db.get_tenant_channels(tenant_id)]
     bot_config = db.get_tenant_bot_config(tenant_id)
     return _render_tenant(request, "channels", user, "tenant_channels.html",
@@ -514,7 +492,7 @@ async def tenant_channels_create(request: Request,
                                   bot_token: str = Form(""),
                                   bot_username: str = Form(""),
                                   user: dict = Depends(require_editor)):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_tenant_channel(tenant_id, chat_id.strip(), label.strip(), is_group == "true",
                              bot_token.strip(), bot_username.strip())
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
@@ -561,7 +539,7 @@ async def tenant_channels_edit(request: Request, channel_id: int,
 async def tenant_channels_test(request: Request, channel_id: int,
                                 user: dict = Depends(require_editor)):
     """Send a test push to the given channel. Uses channel's own bot if configured."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = db.get_tenant_channels(tenant_id)
     target = next((c for c in channels if c["id"] == channel_id), None)
     if not target:
@@ -576,7 +554,11 @@ async def tenant_channels_test(request: Request, channel_id: int,
                 "text": "✅ 测试消息 — 推送配置正常，机器人已接入",
             })
             data = resp.json()
-            return JSONResponse({"ok": data.get("ok", False), "chat_id": target["chat_id"]})
+            if data.get("ok"):
+                return JSONResponse({"ok": True, "message": "✅ 测试消息已发送", "chat_id": target["chat_id"]})
+            else:
+                err = data.get("description", "Telegram API returned error")
+                return JSONResponse({"ok": False, "error": err, "chat_id": target["chat_id"]})
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
 
@@ -609,7 +591,7 @@ async def tenant_bot_config_save(request: Request,
                                    bot_token: str = Form(""),
                                    user: dict = Depends(require_editor)):
     """Save tenant's bot token. If empty, do not overwrite (edit-safe)."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     token = bot_token.strip()
     if not token:
         # Edit-safe: empty means "don't change"
@@ -637,7 +619,7 @@ async def tenant_bot_config_save(request: Request,
 async def tenant_bot_config_clear(request: Request,
                                     user: dict = Depends(require_editor)):
     """Clear tenant's bot config."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     db.update_tenant_bot_config(tenant_id, "", "", "")
     return RedirectResponse(url="/dashboard/tenant/channels", status_code=303)
 
@@ -647,7 +629,7 @@ async def tenant_bot_config_clear(request: Request,
 
 @router.get("/alerts", response_class=HTMLResponse)
 async def tenant_alerts_page(request: Request, user: dict = Depends(require_user)):
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     rules = db.get_telegram_rules_by_tenant(tenant_id)
     channels = db.get_tenant_channels(tenant_id)
     bot_config = db.get_tenant_bot_config(tenant_id)
@@ -829,5 +811,5 @@ async def _compute_setup_status(tenant_id: str) -> dict:
 @router.get("/api/setup/status")
 async def setup_status(request: Request, user: dict = Depends(require_user)):
     """Setup Center readiness score for the current tenant."""
-    tenant_id = request.session.get("tenant_id", "default")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
     return await _compute_setup_status(tenant_id)

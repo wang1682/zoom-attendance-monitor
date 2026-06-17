@@ -188,7 +188,7 @@ async function refreshDashboard() {
     if (data.active_meetings && data.active_meetings.length > 0) {
       mhtml = '<table class="data-table"><thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead><tbody>';
       data.active_meetings.forEach(function(m) {
-        mhtml += '<tr><td class="td-name">' + (m.topic || '-') + '</td><td class="td-num">' + (m.participant_count || 0) + '</td><td class="td-mono">' + (to_myt(m.start_time) || '-') + '</td><td class="td-mono">' + (m.id || '-') + '</td></tr>';
+        mhtml += '<tr><td class="td-name">' + (m.topic || '-') + '</td><td class="td-num">' + (m.participant_count || 0) + '</td><td class="td-mono">' + (m.start_time && m.start_time !== '—' ? m.start_time : '-') + '</td><td class="td-mono">' + (m.id || '-') + '</td></tr>';
       });
       mhtml += '</tbody></table>';
     } else {
@@ -267,7 +267,7 @@ async function refreshDashboard() {
           var label = (et.includes('joined') || et.includes('admitted')) ? '进入' : '离开';
           var name = ev.user_name || '?';
           var t = ev.event_time || ev.created_at || '';
-          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name" style="font-size:11px;color:var(--text-muted)">' + label + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + to_myt(t) + '</td></tr>';
+          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name" style="font-size:11px;color:var(--text-muted)">' + label + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + t + '</td></tr>';
         });
         ehtml += '</tbody></table>';
         eventsEl.innerHTML = ehtml;
