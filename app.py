@@ -2249,6 +2249,7 @@ def build_app() -> "FastAPI":
 
         items.sort(key=lambda m: (
             0 if m.get("is_online") else 1,
+            -m.get("today_seconds", 0),
             -ts(m.get("last_activity")),
             m.get("display_name") or "",
         ))
