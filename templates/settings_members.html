@@ -478,7 +478,7 @@ function renderMembersTable(members){
   const groupMap = {};
   (groupsData || []).forEach(g => { groupMap[g.id] = g.name; });
   tbody.innerHTML = members.map(m => {
-    const rawOnline = onlineSet.has(m.raw_name);
+    const rawOnline = m.is_online;
     const dotColor = rawOnline ? 'var(--sc)' : 'var(--tm)';
     const statusText = rawOnline ? '在线' : '离线';
     const aliasTags = (m.aliases || []).map(a =>
@@ -515,9 +515,9 @@ function applyMemberFilters(){
     filtered = filtered.filter(m => String(m.group_id || '') === groupVal);
   }
   if(onlineVal === 'online'){
-    filtered = filtered.filter(m => onlineSet.has(m.raw_name));
+    filtered = filtered.filter(m => m.is_online);
   } else if(onlineVal === 'offline'){
-    filtered = filtered.filter(m => !onlineSet.has(m.raw_name));
+    filtered = filtered.filter(m => !m.is_online);
   }
   renderMembersTable(filtered);
 }
