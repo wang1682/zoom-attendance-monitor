@@ -195,6 +195,7 @@ def build_app() -> "FastAPI":
             "/static/",
             "/api/v2/auth/",
             "/api/v3/live",
+            "/api/health-check",
             "/webhook",
             "/health",
         ]
@@ -866,7 +867,8 @@ def build_app() -> "FastAPI":
         member_name = data.get("member_name", "").strip()
         if not member_name:
             return {"ok": False, "error": "member_name is required"}
-        ok = db.add_member_to_group(group_id, member_name)
+        tenant_id = request.session.get("tenant_id", "")
+        ok = db.add_member_to_group(group_id, member_name, tenant_id)
         return {"ok": ok}
 
     @app.delete("/api/v3/member-groups/{group_id}/members/{member_name}")
@@ -1068,6 +1070,33 @@ def build_app() -> "FastAPI":
                 docker_status[name] = r.stdout.strip()
             except: docker_status[name] = "unknown"
         result["docker"] = docker_status
+        # 跨租户分组自检
+        try:
+            conn = db._get_conn()
+            bad = conn.execute("""
+                SELECT COUNT(*) FROM member_display md
+                LEFT JOIN member_groups mg ON md.group_id = mg.id
+                WHERE md.group_id IS NOT NULL
+                  AND mg.tenant_id != md.tenant_id
+            """).fetchone()[0]
+            # 检测 member_group_members 表是否有跨租户脏数据
+            bad_mgm = conn.execute("""
+                SELECT COUNT(*) FROM member_group_members mgm
+                JOIN member_display md ON md.raw_name = mgm.member_name
+                JOIN member_groups mg ON mg.id = mgm.group_id
+                WHERE md.tenant_id != mg.tenant_id
+            """).fetchone()[0]
+            conn.close()
+            result["group_integrity"] = {
+                "ok": bad == 0,
+                "cross_tenant_count": bad,
+            }
+            result["mgm_integrity"] = {
+                "ok": bad_mgm == 0,
+                "cross_tenant_count": bad_mgm,
+            }
+        except Exception as e:
+            result["group_integrity"] = {"ok": False, "error": str(e)}
         return {"ok": True, **result}
 
     @app.get("/api/report-data")

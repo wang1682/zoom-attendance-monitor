@@ -282,26 +282,31 @@ def init_db(readonly: bool = False):
         pass
 
     # migrate: move member_group_members data to member_display.group_id
+    # ⚠️ 校验：只同步同租户数据，md.tenant_id == mg.tenant_id 才写入
     try:
         rows = conn.execute(
-            "SELECT mgm.group_id, mgm.member_name FROM member_group_members mgm "
-            "LEFT JOIN member_display md ON md.raw_name = mgm.member_name "
-            "WHERE md.id IS NOT NULL"
+            "SELECT mgm.group_id, mgm.member_name, md.raw_name, md.tenant_id "
+            "FROM member_group_members mgm "
+            "JOIN member_display md ON md.raw_name = mgm.member_name "
+            "JOIN member_groups mg ON mg.id = mgm.group_id "
+            "WHERE md.tenant_id == mg.tenant_id"
         ).fetchall()
-        for gid, mname in rows:
+        for gid, mname, raw_name, md_tenant in rows:
             conn.execute(
                 "UPDATE member_display SET group_id = ? WHERE raw_name = ? AND (group_id IS NULL OR group_id != ?)",
-                (gid, mname, gid),
+                (gid, raw_name, gid),
             )
         # For members not yet in member_display, create placeholder entries
         rows2 = conn.execute(
-            "SELECT mgm.group_id, mgm.member_name FROM member_group_members mgm "
+            "SELECT mgm.group_id, mgm.member_name, mg.tenant_id "
+            "FROM member_group_members mgm "
+            "JOIN member_groups mg ON mg.id = mgm.group_id "
             "LEFT JOIN member_display md ON md.raw_name = mgm.member_name "
             "WHERE md.id IS NULL"
         ).fetchall()
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        for gid, mname in rows2:
+        for gid, mname, mgm_tenant in rows2:
             match_key = mname.strip().lower().replace(" ", "")
             conn.execute(
                 "INSERT OR IGNORE INTO member_display (raw_name, display_name, match_key, group_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -1430,10 +1435,19 @@ def get_all_groups(tenant_id: str = None) -> list[dict]:
     return result
 
 
-def add_member_to_group(group_id: int, member_name: str) -> bool:
+def add_member_to_group(group_id: int, member_name: str, tenant_id: str | None = None) -> bool:
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     try:
+        # 校验 group_id 的租户归属
+        if tenant_id:
+            group = conn.execute(
+                "SELECT tenant_id FROM member_groups WHERE id = ?", (group_id,)
+            ).fetchone()
+            if group and group[0] != tenant_id:
+                log_audit("reject", "member_group_member", group_id,
+                          f"跨租户拒绝: group租户{group[0]}!=成员租户{tenant_id}, member={member_name}")
+                return False
         # 新方式：写入 member_display.group_id
         # 先确保 member_display 中有该成员
         existing = conn.execute(

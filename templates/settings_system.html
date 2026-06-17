@@ -71,9 +71,18 @@ async function health(){
       {l:"Webhook",k:"webhook",s:j.webhook_status,e:j.webhook_last_event,a:j.webhook_last_event_age_text},
       {l:"Telegram",k:"telegram"},
       {l:"AI",k:"sub2api"},
-      {l:"数据库",k:"database"}
+      {l:"数据库",k:"database"},
+      {l:"分组完整性",k:"group_integrity",custom:true},
+      {l:"MGM 脏数据",k:"mgm_integrity",custom:true}
     ];
     e.innerHTML=items.map(i=>{
+      if(i.custom){
+        let gi=j.group_integrity||{};
+        let ok=gi.ok;
+        let text=ok?'✅ 0 条异常':'❌ '+gi.cross_tenant_count+' 条异常';
+        if(gi.error)text='❌ '+gi.error;
+        return '<div style="display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid var(--div)"><span style="color:var(--ts)">'+i.l+'</span><span class="bg '+(ok?'bg-g':'bg-r')+'">'+text+'</span></div>'
+      }
       const v=j[i.k]||"?";const ok=v==="ok"||v.startsWith("ok");
       let extra="";
       if(i.s){
