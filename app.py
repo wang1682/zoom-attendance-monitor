@@ -150,6 +150,25 @@ def resolve_member(raw_name: str, tenant_id: str = None) -> dict:
     return {"raw_name": raw_name, "standard_name": standard, "group_name": group_name, "is_mapped": is_mapped}
 
 
+def _validate_group_tenant(group_id: int | None, member_tenant_id: str | None) -> None:
+    """校验 group_id 的租户归属，跨租户则抛 ValueError"""
+    if group_id is None or not member_tenant_id:
+        return
+    from db import _get_conn
+    row = _get_conn().execute(
+        "SELECT tenant_id, name FROM member_groups WHERE id = ?", (group_id,)
+    ).fetchone()
+    if row is None:
+        # 分组可能已被删除，允许清理但记录
+        return
+    if row["tenant_id"] != member_tenant_id:
+        raise ValueError(
+            f"跨租户分组绑定被拒绝: "
+            f"group '{row['name']}' (tenant={row['tenant_id']}) "
+            f"!= member_tenant={member_tenant_id}"
+        )
+
+
 def build_app() -> "FastAPI":
     """创建并配置完整的 FastAPI 应用（只在 api/webhook 模式下调用）"""
     global _app
@@ -2267,6 +2286,7 @@ def build_app() -> "FastAPI":
         tenant_id = request.app.state.get_effective_tenant_id(request)
         if not raw_name or not display_name:
             return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
+        _validate_group_tenant(group_id, tenant_id)
         import re
         match_key = re.sub(r'\s+', '', raw_name.lower())
         from datetime import datetime, timezone
@@ -2336,6 +2356,8 @@ def build_app() -> "FastAPI":
         aliases = data.get("aliases", [])
         if not raw_name or not display_name:
             return {"ok": False, "error": "raw_name 和 display_name 不能为空"}
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        _validate_group_tenant(group_id, tenant_id)
         import re
         match_key = re.sub(r'\s+', '', raw_name.lower())
         from datetime import datetime, timezone
@@ -2361,6 +2383,7 @@ def build_app() -> "FastAPI":
         tenant_id = request.app.state.get_effective_tenant_id(request)
         try:
             if tenant_id:
+                _validate_group_tenant(group_id, tenant_id)
                 conn.execute(
                     "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ? AND tenant_id = ?",
                     (group_id, now, display_name, tenant_id)
