@@ -71,6 +71,44 @@ Zoom Meeting -> Webhook (9000) -> SQLite -> Dashboard (8082)
 - Example config fully sanitized
 - Cloudflare Tunnel recommended
 
+## Ops
+
+### 跨租户 group_id 完整性检查
+
+检测 `member_display.group_id` 是否指向了错误租户的分组。
+
+```bash
+# 容器内运行
+docker compose exec -T zoom-api python3 /app/scripts/check_member_group_tenant_integrity.py
+
+# 或先用 docker cp 同步
+docker cp scripts/check_member_group_tenant_integrity.py zoom-api:/app/scripts/
+docker exec zoom-api python3 /app/scripts/check_member_group_tenant_integrity.py
+```
+
+**返回码**：
+- `0` — 无脏数据
+- `2` — 检测到跨租户分组绑定（输出见 stdout）
+
+**自动修复（生产谨慎使用）**：
+当同一租户下存在同名分组时，可安全迁移：
+
+```bash
+docker exec zoom-api python3 /app/scripts/check_member_group_tenant_integrity.py --fix
+```
+
+`--fix` 模式仅在 `member_groups` 中存在与当前分组同名的同租户记录时，
+才将 `group_id` 迁移到正确值。非同名的跨租户绑定（手动废弃的分组）不会被自动处理。
+
+### Cron 推荐配置
+
+```cron
+# 每天 10:00 检查，有脏数据则推送给管理员
+0 10 * * * cd /path/to/project && \
+  docker compose exec -T zoom-api python3 /app/scripts/check_member_group_tenant_integrity.py \
+  2>&1 | mail -s "[Zoom Monitor] 分组完整性告警" admin@example.com
+```
+
 ## License
 
 MIT License 2026
