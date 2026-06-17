@@ -96,6 +96,25 @@
 
 <!-- ── Tab: 共享记录 ── -->
 {% elif tab == 'sharing' %}
+  <!-- 时间筛选 -->
+  <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+    <span class="text-sm text-muted" style="margin-right:4px">时间范围：</span>
+    {% set ranges = [('today','今天'),('yesterday','昨天'),('7d','最近7天'),('30d','最近30天')] %}
+    {% for rk, rl in ranges %}
+    <a href="?tab=sharing&range={{ rk }}" class="btn btn-sm {% if sharing_range == rk %}btn-primary{% endif %}" style="padding:2px 10px;font-size:12px">{{ rl }}</a>
+    {% endfor %}
+    <a href="?tab=sharing&range=custom" class="btn btn-sm {% if sharing_range == 'custom' %}btn-primary{% endif %}" style="padding:2px 10px;font-size:12px">自定义</a>
+    {% if sharing_range == 'custom' %}
+    <input type="date" id="sharing-start" value="{{ sharing_start }}" style="width:130px;font-size:12px;padding:2px 6px">
+    <span class="text-muted" style="font-size:12px">~</span>
+    <input type="date" id="sharing-end" value="{{ sharing_end }}" style="width:130px;font-size:12px;padding:2px 6px">
+    <button class="btn btn-sm btn-primary" onclick="applyCustomDate()" style="padding:2px 10px;font-size:12px">确定</button>
+    {% endif %}
+  </div>
+  <div class="text-sm text-muted" style="margin-bottom:8px">
+    当前范围：<strong>{{ sharing_range_label }}</strong>
+    {% if sharing_records|length > 0 %} · 共 {{ sharing_total }} 条记录{% endif %}
+  </div>
   {% if sharing_records and sharing_records|length > 0 %}
     <div class="panel">
       <div class="overflow-x">
@@ -140,4 +159,16 @@
 
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function applyCustomDate() {
+  var s = document.getElementById('sharing-start').value;
+  var e = document.getElementById('sharing-end').value;
+  if (s && e) {
+    window.location.href = '?tab=sharing&range=custom&start=' + s + '&end=' + e;
+  }
+}
+</script>
 {% endblock %}

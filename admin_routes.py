@@ -278,11 +278,56 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
     """Meetings center — live meetings from Zoom Metrics API + history + sharing."""
     from db import get_meeting_history, get_sharing_records, get_zoom_accounts
     from zoom_metrics import ZoomMetrics
+    from datetime import datetime, timezone, timedelta
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
     tab = request.query_params.get("tab", "live")
 
-    # ── Live meetings from Zoom API (同源 /api/v3/live) ──
+    # ── Sharing time filter ──
+    MYT = timezone(timedelta(hours=8))
+    range_val = request.query_params.get("range", "today")
+    start_param = request.query_params.get("start", "")
+    end_param = request.query_params.get("end", "")
+
+    sharing_start_utc = None
+    sharing_end_utc = None
+    now_myt = datetime.now(timezone.utc).astimezone(MYT)
+
+    if start_param and end_param:
+        # 自定义日期范围：MYT 日期 → UTC 起止
+        try:
+            s_dt = datetime.strptime(start_param, "%Y-%m-%d").replace(tzinfo=MYT)
+            e_dt = datetime.strptime(end_param, "%Y-%m-%d").replace(tzinfo=MYT) + timedelta(days=1)
+            sharing_start_utc = s_dt.astimezone(timezone.utc).isoformat()
+            sharing_end_utc = e_dt.astimezone(timezone.utc).isoformat()
+            range_val = "custom"
+        except:
+            pass
+    elif range_val == "today":
+        myt_day_start = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+        myt_day_end = myt_day_start + timedelta(days=1)
+        sharing_start_utc = myt_day_start.astimezone(timezone.utc).isoformat()
+        sharing_end_utc = myt_day_end.astimezone(timezone.utc).isoformat()
+    elif range_val == "yesterday":
+        myt_yesterday = now_myt - timedelta(days=1)
+        myt_day_start = myt_yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+        myt_day_end = myt_day_start + timedelta(days=1)
+        sharing_start_utc = myt_day_start.astimezone(timezone.utc).isoformat()
+        sharing_end_utc = myt_day_end.astimezone(timezone.utc).isoformat()
+    elif range_val == "7d":
+        myt_day_start = (now_myt - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+        myt_day_end = now_myt.replace(hour=23, minute=59, second=59, microsecond=0) + timedelta(days=1)
+        myt_day_end = myt_day_end.replace(hour=0, minute=0, second=0, microsecond=0)
+        sharing_start_utc = myt_day_start.astimezone(timezone.utc).isoformat()
+        sharing_end_utc = myt_day_end.astimezone(timezone.utc).isoformat()
+    elif range_val == "30d":
+        myt_day_start = (now_myt - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+        myt_day_end = now_myt.replace(hour=23, minute=59, second=59, microsecond=0) + timedelta(days=1)
+        myt_day_end = myt_day_end.replace(hour=0, minute=0, second=0, microsecond=0)
+        sharing_start_utc = myt_day_start.astimezone(timezone.utc).isoformat()
+        sharing_end_utc = myt_day_end.astimezone(timezone.utc).isoformat()
+
+    # ── Live meetings ──
     live = []
     try:
         accounts = get_zoom_accounts(tenant_id)
@@ -307,10 +352,28 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                     "last_activity": last_join,
                 })
     except Exception:
-        pass  # live stays empty
+        pass
 
     history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
-    sharing, sharing_total, sharing_meta = get_sharing_records(tenant_id, limit=100)
+    sharing, sharing_total, sharing_meta = get_sharing_records(
+        tenant_id, limit=500,
+        start_time=sharing_start_utc,
+        end_time=sharing_end_utc,
+    )
+
+    # 显示筛选范围文本
+    if range_val == "today":
+        range_label = "今天"
+    elif range_val == "yesterday":
+        range_label = "昨天"
+    elif range_val == "7d":
+        range_label = "最近7天"
+    elif range_val == "30d":
+        range_label = "最近30天"
+    elif range_val == "custom":
+        range_label = f"{start_param} ~ {end_param}"
+    else:
+        range_label = "全部"
 
     return _render_admin(request, "meetings", user, "meetings.html",
                          title="会议中心",
@@ -318,6 +381,11 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                          history_meetings=history,
                          total_meetings=total_meetings,
                          sharing_records=sharing,
+                         sharing_total=sharing_total,
+                         sharing_range_label=range_label,
+                         sharing_range=range_val,
+                         sharing_start=start_param,
+                         sharing_end=end_param,
                          tab=tab)
 
 
