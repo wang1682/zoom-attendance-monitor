@@ -215,6 +215,8 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     for m in members:
         sn = m.get("standard_name", "")
         m["status"] = "online" if sn in online_names else "offline"
+    # 重新排序：在线优先 → 今日时长降序（status 被 live 数据覆盖后重新排）
+    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("today_total_seconds", 0) or 0)))
     # 按 live 数据计算在线/离线数量
     live_online = len(online_names)
     live_offline = sum(1 for m in members if m.get("status") == "offline")
