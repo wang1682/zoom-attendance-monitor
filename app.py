@@ -489,7 +489,7 @@ def build_app() -> "FastAPI":
                             active_meetings = [
                                 {
                                     "id": m.get("id", ""),
-                                    "topic": m.get("meeting_topic", m.get("topic", "")),
+                                    "topic": m.get("meeting_topic", ""),
                                     "participant_count": len(m.get("participants", [])),
                                     "start_time": iso_to_myt_str(m.get("start_time", "")),
                                 }
