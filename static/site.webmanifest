@@ -1,0 +1,26 @@
+{
+    "name": "DHBW Zoom Monitor",
+    "short_name": "DZ Monitor",
+    "description": "Zoom Attendance Intelligence Platform",
+    "start_url": "/dashboard",
+    "display": "standalone",
+    "background_color": "#003DA5",
+    "theme_color": "#003DA5",
+    "icons": [
+        {
+            "src": "/static/favicon-16x16.png?v=2",
+            "sizes": "16x16",
+            "type": "image/png"
+        },
+        {
+            "src": "/static/favicon-32x32.png?v=2",
+            "sizes": "32x32",
+            "type": "image/png"
+        },
+        {
+            "src": "/static/apple-touch-icon.png?v=2",
+            "sizes": "180x180",
+            "type": "image/png"
+        }
+    ]
+}
