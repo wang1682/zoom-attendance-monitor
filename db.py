@@ -773,6 +773,270 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
     }
 
 
+# ── 班次出勤分析 ─────────────────────────────────────────────────────────────
+
+def _calc_shift(now_myt):
+    """返回当前班次信息，基于 MYT 时间。"""
+    if now_myt.hour < 7:
+        # 00:00-06:59 → 夜班（前一天的 19:00-07:00）
+        shift_date = (now_myt - timedelta(days=1)).strftime("%Y-%m-%d")
+        shift_name = "夜班"
+        shift_start_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 19, 0, 0) - timedelta(days=1)
+        shift_end_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 7, 0, 0)
+    elif now_myt.hour < 19:
+        # 07:00-18:59 → 早班
+        shift_date = now_myt.strftime("%Y-%m-%d")
+        shift_name = "早班"
+        shift_start_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 7, 0, 0)
+        shift_end_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 19, 0, 0)
+    else:
+        # 19:00-23:59 → 夜班
+        shift_date = now_myt.strftime("%Y-%m-%d")
+        shift_name = "夜班"
+        shift_start_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 19, 0, 0)
+        shift_end_myt = datetime(now_myt.year, now_myt.month, now_myt.day, 7, 0, 0) + timedelta(days=1)
+    return shift_name, shift_start_myt, shift_end_myt, shift_date
+
+
+def get_shift_attendance(tenant_id: str = None) -> dict:
+    """按班次分析出勤。
+
+    早班 07:00-19:00，夜班 19:00-次日 07:00。
+    meeting_start 取班次窗口内最早的会议开始时间。
+    effective_start = max(shift_start, meeting_start)
+    effective_end = min(shift_end, now)
+
+    返回每位成员的班次在线时长、出勤率、缺勤、中途离开、提前离场等数据。
+    """
+    from datetime import datetime, timezone, timedelta
+    from collections import OrderedDict
+
+    now_utc = datetime.now(timezone.utc)
+    now_myt = now_utc + timedelta(hours=8)
+
+    shift_name, shift_start_myt, shift_end_myt, shift_date = _calc_shift(now_myt)
+
+    shift_start_utc = shift_start_myt - timedelta(hours=8)
+    shift_end_utc = shift_end_myt - timedelta(hours=8)
+
+    # 转为 aware UTC
+    shift_start_utc = shift_start_utc.replace(tzinfo=timezone.utc)
+    shift_end_utc = shift_end_utc.replace(tzinfo=timezone.utc)
+
+    # ── 查班次窗口内的所有事件 ──
+    query_start_utc = shift_start_utc - timedelta(hours=1)  # 多查 1h 缓冲
+    query_start_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    query_end_str = shift_end_utc.strftime("%Y-%m-%dT%H:%M:%S")
+
+    if tenant_id:
+        rows = _get_conn().execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? AND tenant_id = ? ORDER BY name, action_time",
+            (query_start_str, query_end_str, tenant_id),
+        ).fetchall()
+    else:
+        rows = _get_conn().execute(
+            "SELECT * FROM zoom_participants WHERE action_time >= ? AND action_time < ? ORDER BY name, action_time",
+            (query_start_str, query_end_str),
+        ).fetchall()
+
+    all_events = [dict(r) for r in rows]
+
+    # ── 找班次内最早的会议开始时间 ──
+    # 从最早的 enter/joined 事件反推会议开始时间
+    meeting_start = None
+    for ev in all_events:
+        if ev["action"] in ("enter", "joined"):
+            try:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+            except:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if at_dt >= shift_start_utc:
+                meeting_start = at_dt
+                break
+    if meeting_start is None:
+        # 没有任何事件，用 shift_start 作为 fallback
+        meeting_start = shift_start_utc
+
+    # ── 计算 effective range ──
+    effective_start = max(shift_start_utc, meeting_start)
+    effective_end = min(shift_end_utc, now_utc)
+
+    meeting_not_open_seconds = int((meeting_start - shift_start_utc).total_seconds()) if meeting_start > shift_start_utc else 0
+    required_seconds = int((effective_end - effective_start).total_seconds())
+    if required_seconds < 0:
+        required_seconds = 0
+
+    # ── 批量加载分组映射 ──
+    _group_map_cache = {}
+    if tenant_id:
+        conn = _get_conn()
+        grp_rows = conn.execute(
+            "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+            "FROM member_display md "
+            "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+            "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
+            (tenant_id,),
+        ).fetchall()
+        for gr in grp_rows:
+            grd = dict(gr)
+            for key in (grd.get("raw_name", "").strip().lower().replace(" ", ""),
+                        grd.get("display_name", "").strip().lower().replace(" ", "")):
+                if key:
+                    _group_map_cache[key] = grd.get("group_name", "")
+
+    def _batch_group_lookup(name: str) -> str:
+        key = name.strip().lower().replace(" ", "")
+        return _group_map_cache.get(key, "")
+
+    # ── 按 resolved name 分组 ──
+    from db import resolve_display_name as _resolve_display_name
+
+    members = OrderedDict()
+    for e in all_events:
+        resolved = _resolve_display_name(e["name"])
+        display_name = resolved["display_name"]
+
+        if display_name not in members:
+            members[display_name] = {
+                "standard_name": display_name,
+                "raw_name": resolved.get("raw_name", display_name),
+                "group_name": _batch_group_lookup(display_name),
+                "raw_events": [],
+            }
+
+        action = e["action"]
+        if action not in ("enter", "joined", "leave", "left"):
+            continue
+        members[display_name]["raw_events"].append({
+            "action": action,
+            "action_time": e["action_time"],
+        })
+
+    # ── 计算每位成员的班次数据 ──
+    for m in members.values():
+        m["raw_events"].sort(key=lambda x: x["action_time"])
+        # 去重（连续相同 action 只保留第一个）
+        deduped = []
+        for ev in m["raw_events"]:
+            if deduped and deduped[-1]["action"] in ("enter", "joined", "leave", "left") \
+               and deduped[-1]["action"] == ev["action"]:
+                continue
+            deduped.append(ev)
+
+        online_seconds = 0
+        away_seconds = 0  # 中途离开总时长
+        max_away = 0       # 最大单次离开
+        away_over_15_count = 0  # 离开>15分钟次数
+        last_enter = None
+        last_leave = None
+        is_online = False
+
+        i = 0
+        while i < len(deduped):
+            ev = deduped[i]
+            if ev["action"] in ("enter", "joined"):
+                enter_dt = datetime.fromisoformat(ev["action_time"])
+                enter_clamped = max(enter_dt, effective_start)
+                last_enter = enter_dt
+
+                # 找对应的 leave
+                leave_dt = None
+                for j in range(i + 1, len(deduped)):
+                    if deduped[j]["action"] in ("leave", "left"):
+                        leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
+                        last_leave = leave_dt
+                        i = j
+                        break
+
+                end_dt = leave_dt if leave_dt else min(now_utc, effective_end)
+                end_clamped = min(end_dt, effective_end)
+
+                dur = (end_clamped - enter_clamped).total_seconds()
+                if dur < 0:
+                    dur = 0
+                online_seconds += dur
+
+                if leave_dt is None:
+                    is_online = True
+                else:
+                    is_online = False
+
+            elif ev["action"] in ("leave", "left"):
+                leave_dt = datetime.fromisoformat(ev["action_time"])
+                last_leave = leave_dt
+                is_online = False
+            i += 1
+
+        # ── 计算中途离开（两次 enter 之间的间隔） ──
+        prev_leave = None
+        for ev in deduped:
+            if ev["action"] in ("leave", "left"):
+                prev_leave = datetime.fromisoformat(ev["action_time"])
+                if prev_leave > effective_end:
+                    prev_leave = None
+            elif ev["action"] in ("enter", "joined"):
+                if prev_leave:
+                    enter_dt = datetime.fromisoformat(ev["action_time"])
+                    away = (enter_dt - prev_leave).total_seconds()
+                    if away > 0:
+                        away_seconds += away
+                        if away > max_away:
+                            max_away = away
+                        if away > 15 * 60:
+                            away_over_15_count += 1
+                    prev_leave = None
+
+        # ── 提前离场 ──
+        early_leave_seconds = 0
+        if last_leave and last_leave < effective_end and not is_online:
+            early_leave_seconds = int((effective_end - last_leave).total_seconds())
+            if early_leave_seconds < 0:
+                early_leave_seconds = 0
+
+        online_seconds_int = int(online_seconds)
+        absent_seconds = max(0, required_seconds - online_seconds_int)
+        rate = online_seconds_int / required_seconds if required_seconds > 0 else 0.0
+
+        m["shift_online_minutes"] = online_seconds_int // 60
+        m["shift_online_duration"] = _fmt_dur(online_seconds_int)
+        m["attendance_rate"] = min(rate, 1.0)
+        m["absent_minutes"] = absent_seconds // 60
+        m["away_minutes"] = int(away_seconds) // 60
+        m["max_away_minutes"] = int(max_away) // 60
+        m["away_over_15_count"] = away_over_15_count
+        m["early_leave_minutes"] = early_leave_seconds // 60
+        m["status"] = "online" if is_online else "offline"
+        m["last_leave"] = last_leave.isoformat() if last_leave else None
+        m["sessions"] = len([ev for ev in deduped if ev["action"] in ("enter", "joined")])
+
+    # ── 排序：在线优先 → 在线时长降序 ──
+    sorted_members = sorted(
+        members.values(),
+        key=lambda m: (0 if m["status"] == "online" else 1, -(m["shift_online_minutes"] or 0)),
+    )
+
+    # ── 构建 shift_info ──
+    shift_info = {
+        "name": shift_name,
+        "start": shift_start_myt.isoformat(),
+        "end": shift_end_myt.isoformat(),
+        "meeting_start": meeting_start.isoformat(),
+        "effective_start": effective_start.isoformat(),
+        "effective_end": effective_end.isoformat(),
+        "meeting_not_open_minutes": meeting_not_open_seconds // 60,
+        "required_minutes": required_seconds // 60,
+        "shift_date": shift_date,
+    }
+
+    return {
+        "ok": True,
+        "shift": shift_info,
+        "members": sorted_members,
+        "total_members": len(sorted_members),
+        "online_count": sum(1 for m in sorted_members if m["status"] == "online"),
+    }
+
+
 # ── seen_emails ──────────────────────────────────────────────────────────────
 
 def check_new_email(email: str, name: str, now: datetime) -> bool:

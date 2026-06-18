@@ -1,503 +1,308 @@
-{% extends "tenant_base.html" %}
-{% block title %}{{ page_title|default("成员中心") }}{% endblock %}
-{% block head_extra %}
-<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-{% endblock %}
+{% extends "admin_base.html" %}
+{% block title %}{{ title }}{% endblock %}
 {% block content %}
 
-<!-- build: v1.4.7.3-group-permissions2 --><style>
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;justify-content:center;align-items:center}
-.modal-overlay.active{display:flex}
-.modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-/* 分组颜色 */
-.badge-group-推进{background:rgba(239,68,68,.18);color:#ef4444;border:1px solid rgba(239,68,68,.3)}
-.badge-group-核销{background:rgba(59,130,246,.18);color:#3b82f6;border:1px solid rgba(59,130,246,.3)}
-.badge-group-Allan{background:rgba(6,182,212,.18);color:#06b6d4;border:1px solid rgba(6,182,212,.3)}
-.badge-group-AI标签{background:rgba(168,85,247,.18);color:#a855f7;border:1px solid rgba(168,85,247,.3)}
-.badge-group-DC组员{background:rgba(34,197,94,.18);color:#22c55e;border:1px solid rgba(34,197,94,.3)}
-.modal-box h2{margin:0 0 16px;font-size:16px}
-.modal-box .form-group{margin-bottom:12px}
-.modal-box .form-group label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:4px}
-.modal-box .form-group input,.modal-box .form-group textarea{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:13px}
-.modal-box .form-group textarea{min-height:60px;resize:vertical}
-.modal-box .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
-.modal-box .modal-actions .btn{padding:6px 16px;font-size:12px}
-.group-list{max-height:300px;overflow-y:auto;margin:8px 0}
-.group-item{display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-bottom:1px solid var(--border-light);font-size:13px}
-.group-item:last-child{border-bottom:none}
-.group-item .group-info{flex:1}
-.group-item .group-name{font-weight:500}
-.group-item .group-desc{font-size:11px;color:var(--text-muted)}
-.group-item .group-actions{display:flex;gap:4px;flex-shrink:0}
-.btn-icon{background:none;border:none;cursor:pointer;padding:4px 8px;border-radius:6px;color:var(--text-muted);font-size:12px;display:inline-flex;align-items:center;gap:3px;transition:all .15s}
-.btn-icon:hover{background:var(--bg3);color:var(--text)}
-.btn-icon.danger:hover{background:rgba(239,68,68,.12);color:var(--danger)}
-.btn-icon-group{background:none;border:1px solid var(--border-light);cursor:pointer;padding:3px 8px;border-radius:6px;color:var(--text-muted);font-size:11px;display:inline-flex;align-items:center;gap:3px;transition:all .15s}
-.btn-icon-group:hover{background:var(--bg3);color:var(--text);border-color:var(--border)}
-.ml-p{margin-left:12px}
+<style>
+:root {
+  --rate-green: #22c55e;
+  --rate-yellow: #eab308;
+  --rate-red: #ef4444;
+}
+
+.member-grid { max-width:1400px; margin:0 auto; }
+.shift-card {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border:1px solid #334155;
+  border-radius:12px;
+  padding:20px 24px;
+  margin-bottom:20px;
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap:16px;
+}
+.shift-item { text-align:center; }
+.shift-item .label { font-size:11px; color:#94a3b8; margin-bottom:4px; }
+.shift-item .value { font-size:18px; font-weight:600; color:#f1f5f9; }
+.shift-item .value small { font-size:13px; font-weight:400; color:#94a3b8; }
+.meeting-not-open {
+  background:#1e3a5f;
+  border:1px solid #3b82f6;
+  border-radius:8px;
+  padding:10px 16px;
+  margin-bottom:16px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#93c5fd;
+  font-size:13px;
+}
+.meeting-not-open strong { color:#60a5fa; }
+
+.table-wrap {
+  background:#1e293b;
+  border:1px solid #334155;
+  border-radius:12px;
+  overflow:visible;
+}
+.table-wrap table { width:100%; border-collapse:collapse; font-size:13px; }
+.table-wrap th {
+  text-align:left;
+  padding:12px 10px;
+  color:#94a3b8;
+  font-weight:500;
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:0.5px;
+  border-bottom:1px solid #334155;
+  white-space:nowrap;
+  position:sticky;
+  top:0;
+  background:#1e293b;
+  z-index:2;
+}
+.table-wrap td { padding:10px; border-bottom:1px solid #2d3a4e; vertical-align:middle; }
+.table-wrap tr:hover td { background:rgba(59,130,246,0.05); }
+
+.rate-badge {
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:2px 8px;
+  border-radius:6px;
+  font-weight:600;
+  font-size:12px;
+}
+.rate-green { background:rgba(34,197,94,0.15); color:#22c55e; }
+.rate-yellow { background:rgba(234,179,8,0.15); color:#eab308; }
+.rate-red { background:rgba(239,68,68,0.15); color:#ef4444; }
+
+.away-badge {
+  display:inline-flex;
+  align-items:center;
+  gap:3px;
+  padding:1px 6px;
+  border-radius:4px;
+  font-size:11px;
+}
+.away-warn { background:rgba(234,179,8,0.12); color:#fbbf24; }
+.away-ok { color:#94a3b8; }
+
+.status-dot {
+  display:inline-block;
+  width:8px; height:8px;
+  border-radius:50%;
+  margin-right:6px;
+}
+.dot-online { background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,0.5); }
+.dot-offline { background:#475569; }
+
+.early-leave { color:#f87171; font-size:11px; }
+.absent-num { color:#94a3b8; font-size:11px; }
+
+.filter-row {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:16px;
+  flex-wrap:wrap;
+}
+.filter-row input, .filter-row select {
+  background:#1e293b;
+  border:1px solid #334155;
+  border-radius:8px;
+  padding:8px 12px;
+  color:#f1f5f9;
+  font-size:13px;
+  outline:none;
+}
+.filter-row input:focus, .filter-row select:focus { border-color:#3b82f6; }
+.stats-line {
+  color:#94a3b8;
+  font-size:12px;
+  margin-bottom:12px;
+}
+.stats-line strong { color:#f1f5f9; }
 </style>
 
-<div class="page-header">
-  <div class="flex" style="justify-content:space-between;align-items:flex-start">
-    <div>
-      <h1 class="page-title">{{ page_title|default("成员中心") }} <span class="highlight">{{ date }}</span></h1>
-      <p class="page-subtitle">实时考勤聚合 · 在线率 / 累计时长</p>
-      {% if data_source == 'metrics' %}
-      <div class="data-source-badge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:#22c55e;font-size:11px;font-weight:500;margin-top:4px">
-        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block"></span>
-        实时数据：Zoom Metrics API
-      </div>
-      {% else %}
-      <div class="data-source-badge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:rgba(234,179,8,.1);color:#eab308;font-size:11px;font-weight:500;margin-top:4px">
-        <span style="width:6px;height:6px;border-radius:50%;background:#eab308;display:inline-block"></span>
-        准实时数据：Webhook 推断
-      </div>
-      {% endif %}
-    </div>
-    <div class="flex" style="gap:12px;align-items:center;flex-shrink:0">
-      <span class="text-sm"><span class="status-dot online" style="vertical-align:middle;margin-right:4px"></span>在线 <strong class="text-accent">{{ online_count }}</strong></span>
-      <span class="text-sm"><span class="status-dot offline" style="vertical-align:middle;margin-right:4px"></span>离线 <strong class="text-muted">{{ offline_count }}</strong></span>
-      <span class="text-sm text-muted">总时长 <strong class="text-accent">{{ total_duration }}</strong></span>
-      <span class="text-sm text-muted">均时 <strong class="text-accent">{{ avg_duration }}</strong></span>
-      <button class="btn btn-sm" onclick="openGroupManager()">📁 管理组</button>
-      <button class="btn btn-sm btn-primary" onclick="openAddMember()">+ 添加成员</button>
-      {% if is_super_admin %}
-      <div class="tenant-selector ml-p">
-        <span class="tenant-label">当前租户：</span>
-        <select onchange="switchTenant(this.value)">
-          {% for t in available_tenants %}
-          <option value="{{ t.id }}" {% if t.id == current_tenant_id %}selected{% endif %}>{{ t.display_name or t.id }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
+{% set shift_name = shift.get("name", "") %}
+{% set shift_mnot = shift.get("meeting_not_open_minutes", 0) %}
+{% set shift_req = shift.get("required_minutes", 0) %}
+{% set shift_start_s = shift.get("start", "")[:16].replace("T", " ") %}
+
+<div class="member-grid">
+
+{# ── 标题 ── #}
+<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px">
+  <h2 style="font-size:20px;font-weight:600;color:#f1f5f9;margin:0">
+    {{ title }}
+  </h2>
+  <span style="font-size:14px;color:#94a3b8;font-weight:500">
+    · 当前班次：{{ shift_name }} {{ shift_start_s }}-{{ shift.get("end","")[:16].replace("T"," ") }}
+  </span>
+</div>
+<p style="color:#64748b;font-size:12px;margin:-8px 0 16px 0">
+  班次统计说明：如会议室晚于班次开启，晚开时间不计入员工缺勤。
+</p>
+
+{# ── 班次信息卡 ── #}
+<div class="shift-card">
+  <div class="shift-item">
+    <div class="label">当前班次</div>
+    <div class="value">{{ shift_name }}</div>
+  </div>
+  <div class="shift-item">
+    <div class="label">班次时间</div>
+    <div class="value">{{ shift_start_s }}<br><small>至 {{ shift.get("end","")[11:16] }}</small></div>
+  </div>
+  <div class="shift-item">
+    <div class="label">会议开启</div>
+    <div class="value">{{ shift.get("meeting_start","")[11:16] }}</div>
+  </div>
+  <div class="shift-item">
+    <div class="label">会议未开启</div>
+    <div class="value" style="color:#60a5fa">{{ shift_mnot }}h{{ "0" if shift_mnot%60==0 else shift_mnot%60 }}</div>
+  </div>
+  <div class="shift-item">
+    <div class="label">有效应出勤</div>
+    <div class="value">{{ shift_req//60 }}h{% if shift_req%60 %}{{ shift_req%60 }}m{% endif %}</div>
+  </div>
+  <div class="shift-item">
+    <div class="label">数据源</div>
+    <div class="value" style="font-size:14px">
+      {% if is_realtime %}🟢 Zoom Metrics API{% else %}🟡 Webhook{% endif %}
     </div>
   </div>
 </div>
 
-<!-- 搜索 & 筛选 -->
-<form method="GET" action="/dashboard/participants" class="flex" style="gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
-  <div style="flex:1;min-width:180px">
-    <input type="text" name="search" value="{{ search }}" placeholder="搜索成员姓名..." style="width:100%">
-  </div>
-  <select name="group" onchange="this.form.submit()">
-    <option value="">全部组</option>
+{# ── 会议晚开提示 ── #}
+{% if shift_mnot > 0 %}
+<div class="meeting-not-open">
+  ℹ️ 会议延迟 <strong>{{ shift_mnot//60 }}h{% if shift_mnot%60 %}{{ shift_mnot%60 }}m{% endif %}</strong> 开启
+  （班次 {{ shift_start_s }}，会议 {{ shift.get("meeting_start","")[11:16] }}）
+  —— 此期间不计入员工缺勤。
+</div>
+{% endif %}
+
+{# ── 筛选器 ── #}
+<div class="filter-row">
+  <input type="text" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
+  <select id="groupFilter">
+    <option value="">所有分组</option>
     {% for g in groups %}
-    <option value="{{ g.name }}" {% if group_filter == g.name %}selected{% endif %}>{{ g.name }}</option>
+    <option value="{{ g.name }}" {{ 'selected' if group_filter == g.name }}>{{ g.name }}</option>
     {% endfor %}
   </select>
-  <select name="status" onchange="this.form.submit()">
-    <option value="">全部状态</option>
-    <option value="online" {% if status_filter == 'online' %}selected{% endif %}>在线</option>
-    <option value="offline" {% if status_filter == 'offline' %}selected{% endif %}>离线</option>
+  <select id="statusFilter">
+    <option value="">所有状态</option>
+    <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
+    <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
   </select>
-  {% if search or group_filter or status_filter %}
-  <a href="/dashboard/participants" class="btn btn-sm">✕ 清除</a>
-  {% endif %}
-</form>
-
-<!-- 成员列表 -->
-<div class="panel">
-  {% if members|length > 0 %}
-  <div class="overflow-x">
-    <table class="data-table" id="memberTable">
-      <thead>
-        <tr>
-          <th>成员</th>
-          <th>状态</th>
-          <th>分组</th>
-          <th>今日累计</th>
-          <th>进入</th>
-          <th>离开</th>
-          <th>首次</th>
-          <th>最近活动</th>
-          <th>电邮</th>
-          <th style="width:80px">操作</th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for m in members %}
-      <tr data-member="{{ m.standard_name }}">
-        <td>
-          <div class="flex" style="gap:8px;align-items:center">
-            <div style="width:22px;height:22px;border-radius:2px;border:1px solid var(--border-light);background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:var(--text-muted);flex-shrink:0">
-              {{ m.standard_name[:1] }}
-            </div>
-            <span class="td-name">{{ m.standard_name }}</span>
-          </div>
-        </td>
-        <td>
-          <span class="badge {% if m.status == 'online' %}badge-success{% else %}badge-muted{% endif %}">
-            <span class="status-dot {% if m.status == 'online' %}online{% else %}offline{% endif %}" style="margin-right:2px"></span>
-            {% if m.status == 'online' %}在线{% else %}离线{% endif %}
-          </span>
-        </td>
-        <td>
-          <span class="member-group-badge" data-member="{{ m.standard_name }}">
-            {% if m.group_name %}
-            <span class="badge badge-group-{{ m.group_name }}">{{ m.group_name }}</span>
-            {% else %}
-            <span class="text-muted">—</span>
-            {% endif %}
-          </span>
-        </td>
-        <td class="td-mono text-accent">{{ m.today_total_duration }}</td>
-        <td class="text-success">{{ m.join_count }}</td>
-        <td class="text-danger">{{ m.leave_count }}</td>
-        <td class="td-mono">{{ m.first_join_display }}</td>
-        <td class="td-mono">{{ m.last_activity_display }}</td>
-        <td><span class="td-mono text-muted" style="font-size:11px">{{ m.email if m.email else '—' }}</span></td>
-        <td>
-          <div style="display:flex;gap:4px;white-space:nowrap">
-            <button class="btn-icon" onclick="openEditMember('{{ m.raw_name|e }}', '{{ m.standard_name|e }}', '{{ m.group_id|e }}')" title="编辑别名" style="font-weight:600;color:#3b82f6">编辑</button>
-            <button class="btn-icon" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员" style="font-weight:600;color:#ef4444">删除</button>
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <div class="empty-state">
-    <div class="es-icon">📋</div>
-    <div class="es-title">
-      {% if search or group_filter or status_filter %}
-      没有匹配的成员记录
-      {% else %}
-      暂无今日参与记录
-      {% endif %}
-    </div>
-    <div class="es-desc">
-      {% if search or group_filter or status_filter %}
-      <a href="/dashboard/participants" class="btn btn-sm">清除筛选条件</a>
-      {% else %}
-      会议数据尚未采集，等待 Zoom Webhook 事件写入
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
+  <span class="stats-line" style="margin-left:auto">
+    <strong>{{ online_count }}</strong> 在线 · <strong>{{ offline_count }}</strong> 离线 · 共 <strong>{{ total_members }}</strong> 人
+  </span>
 </div>
 
-<!-- ── 管理组弹窗 ── -->
-<div class="modal-overlay" id="groupManagerModal">
-  <div class="modal-box">
-    <h2>📁 管理分组</h2>
-    <div class="group-list" id="groupList">
-      <div style="text-align:center;padding:20px;color:var(--text-muted)">加载中...</div>
-    </div>
-    <div id="groupCreateArea" style="border-top:1px solid var(--border-light);padding-top:12px;margin-top:8px;display:none">
-      <div class="flex" style="gap:8px;align-items:center">
-        <input type="text" id="newGroupName" placeholder="新分组名称" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
-        <input type="text" id="newGroupDesc" placeholder="可选描述" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:12px">
-        <button class="btn btn-sm btn-primary" onclick="createGroup()">创建</button>
+{# ── 表格 ── #}
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+  <th>成员</th>
+  <th style="width:60px">状态</th>
+  <th>分组</th>
+  <th>班次在线</th>
+  <th>出勤率</th>
+  <th>缺勤</th>
+  <th>中途离开&gt;15m</th>
+  <th>最大离开</th>
+  <th>提前离场</th>
+  <th>进入/离开</th>
+  <th>首次/最近</th>
+</tr>
+</thead>
+<tbody id="memberTable">
+{% for m in members %}
+{% set rate = m.get("attendance_rate", 0) %}
+{% set rate_pct = (rate * 100)|int %}
+{% set rate_cls = "rate-green" if rate >= 0.95 else ("rate-yellow" if rate >= 0.80 else "rate-red") %}
+{% set aw15 = m.get("away_over_15_count", 0) %}
+{% set early = m.get("early_leave_minutes", 0) %}
+{% set abs_min = m.get("absent_minutes", 0) %}
+{% set online_m = m.get("shift_online_minutes", 0) %}
+{% set sessions = m.get("sessions", 0) %}
+{% set grp = m.get("group_name", "") %}
+<tr class="member-row"
+    data-name="{{ m.get("standard_name","")|lower }}"
+    data-group="{{ grp }}"
+    data-status="{{ m.get("status","offline") }}">
+  <td>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#6366f1);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;flex-shrink:0">
+        {{ m.get("standard_name","?")[:2]|upper }}
+      </div>
+      <div>
+        <div style="color:#f1f5f9;font-weight:500">{{ m.get("standard_name","") }}</div>
       </div>
     </div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('groupManagerModal')">关闭</button>
-    </div>
-  </div>
+  </td>
+  <td>
+    <span class="status-dot dot-{{ 'online' if m.get('status')=='online' else 'offline' }}"></span>
+  </td>
+  <td style="color:#94a3b8;font-size:12px">{{ grp }}</td>
+  <td style="color:#f1f5f9;font-weight:500">{{ online_m // 60 }}h{{ "%02d"|format(online_m % 60) }}m</td>
+  <td>
+    <span class="rate-badge {{ rate_cls }}">{{ rate_pct }}%</span>
+  </td>
+  <td class="absent-num">{{ abs_min // 60 }}h{{ "%02d"|format(abs_min % 60) }}m</td>
+  <td>
+    {% if aw15 > 0 %}
+    <span class="away-badge away-warn">⚠ {{ aw15 }}次</span>
+    {% else %}
+    <span class="away-badge away-ok">—</span>
+    {% endif %}
+  </td>
+  <td style="color:#94a3b8;font-size:12px">{% set maxa = m.get("max_away_minutes", 0) %}{% if maxa > 0 %}{{ maxa // 60 }}h{{ "%02d"|format(maxa % 60) }}m{% else %}—{% endif %}</td>
+  <td>{% if early > 0 %}<span class="early-leave">☰ {{ early // 60 }}h{{ "%02d"|format(early % 60) }}m</span>{% else %}<span style="color:#475569">—</span>{% endif %}</td>
+  <td style="color:#94a3b8;font-size:12px">{{ sessions }}次</td>
+  <td style="color:#64748b;font-size:11px;white-space:nowrap">
+    {% set m_act = m.get("last_activity", "") %}
+    {% if m_act %}{{ m_act[:16].replace("T"," ") }}{% else %}—{% endif %}
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
 </div>
 
-<!-- ── 添加成员弹窗 ── -->
-<div class="modal-overlay" id="addMemberModal">
-  <div class="modal-box">
-    <h2>+ 添加成员</h2>
-    <div class="form-group">
-      <label>成员名称（必填）</label>
-      <input type="text" id="addMemberName" placeholder="输入成员原始名称">
-    </div>
-    <div class="form-group">
-      <label>显示名称（可选）</label>
-      <input type="text" id="addMemberDisplay" placeholder="留空则使用成员名称">
-    </div>
-    <div class="form-group">
-      <label>备注（可选）</label>
-      <textarea id="addMemberNote" placeholder="可选备注信息"></textarea>
-    </div>
-    <div id="addMemberResult" style="font-size:12px;padding:4px 0"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('addMemberModal')">取消</button>
-      <button class="btn btn-primary" onclick="submitAddMember()">添加</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── 编辑成员弹窗 ── -->
-<div class="modal-overlay" id="editMemberModal">
-  <div class="modal-box">
-    <h2>✏️ 别名编辑 · <span id="editMemberName" style="font-weight:400"></span></h2>
-    <div class="form-group">
-      <label>显示名称</label>
-      <input type="text" id="editDisplayName" placeholder="展示用的名称">
-    </div>
-    <div class="form-group">
-      <label>备注</label>
-      <input type="text" id="editNote" placeholder="可选备注信息">
-    </div>
-    <div class="form-group">
-      <label>别名（逗号分隔）</label>
-      <input type="text" id="editAliasesList" placeholder="DinoJun, dino, dj">
-    </div>
-    <div class="form-group">
-      <label>分组</label>
-      <select id="editGroupSelect" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg3);color:var(--text);font-size:13px">
-        <option value="">— 无分组 —</option>
-        {% for g in groups %}
-        <option value="{{ g.id }}">{{ g.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="form-group">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="editCountEnabled" checked> 计入统计
-      </label>
-    </div>
-    <div class="modal-actions">
-      <button class="btn" onclick="document.getElementById('editMemberModal').classList.remove('active')">取消</button>
-      <button class="btn btn-primary" onclick="saveEditMember()">保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── 编辑组弹窗 ── -->
-<div class="modal-overlay" id="editGroupModal">
-  <div class="modal-box">
-    <h2>✏️ 编辑分组</h2>
-    <input type="hidden" id="editGroupId">
-    <div class="form-group">
-      <label>分组名称</label>
-      <input type="text" id="editGroupName">
-    </div>
-    <div class="form-group">
-      <label>描述</label>
-      <textarea id="editGroupDesc"></textarea>
-    </div>
-    <div id="editGroupResult" style="font-size:12px;padding:4px 0"></div>
-    <div class="modal-actions">
-      <button class="btn" onclick="closeModal('editGroupModal')">取消</button>
-      <button class="btn btn-primary" onclick="submitEditGroup()">保存</button>
-    </div>
-  </div>
 </div>
 
 <script>
-// ── 组管理 ──
-function openGroupManager() {
-  document.getElementById('groupManagerModal').classList.add('active');
-  loadGroups();
-}
-function loadGroups() {
-  const canEdit = window.__role === 'super_admin';
-  document.getElementById('groupCreateArea').style.display = canEdit ? 'block' : 'none';
-  fetch('/api/v3/member-groups').then(r=>r.json()).then(data=>{
-    const groups = data.groups;
-    renderGroups(groups);
-  }).catch(()=>{
-    document.getElementById('groupList').innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">加载失败</div>';
-  });
-}
-function renderGroups(groups) {
-  const el = document.getElementById('groupList');
-  const canEdit = window.__role === 'super_admin';
-  if (!groups || groups.length === 0) {
-    el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted)">暂无分组，创建一个吧</div>';
-    return;
-  }
-  el.innerHTML = groups.map(g => `
-    <div class="group-item">
-      <div class="group-info">
-        <div class="group-name">${g.name}</div>
-        ${g.description ? `<div class="group-desc">${g.description}</div>` : ''}
-      </div>
-      <div class="group-actions">
-        ${canEdit ? `
-        <button class="btn-icon-group" onclick="editGroup(${g.id},'${g.name.replace(/'/g,"\\'")}','${(g.description||'').replace(/'/g,"\\'")}')" title="编辑">编辑</button>
-        <button class="btn-icon-group danger" onclick="deleteGroup(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除">删除</button>
-        ` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-function createGroup() {
-  const name = document.getElementById('newGroupName').value.trim();
-  const desc = document.getElementById('newGroupDesc').value.trim();
-  if (!name) return alert('请输入分组名称');
-  fetch('/api/v3/member-groups', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name, description:desc})
-  }).then(r=>r.json()).then(d=>{
-    if(d.ok){
-      document.getElementById('newGroupName').value='';
-      document.getElementById('newGroupDesc').value='';
-      loadGroups();
-      location.reload();
-    } else alert(d.message);
-  });
-}
-function editGroup(id, name, desc) {
-  document.getElementById('editGroupId').value = id;
-  document.getElementById('editGroupName').value = name;
-  document.getElementById('editGroupDesc').value = desc;
-  document.getElementById('editGroupResult').textContent = '';
-  document.getElementById('editGroupModal').classList.add('active');
-}
-function submitEditGroup() {
-  const id = parseInt(document.getElementById('editGroupId').value);
-  const name = document.getElementById('editGroupName').value.trim();
-  const desc = document.getElementById('editGroupDesc').value.trim();
-  if (!name) return alert('请输入分组名称');
-  fetch('/api/v3/member-groups/' + id, {
-    method:'PUT', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name, description:desc})
-  }).then(r=>r.json()).then(d=>{
-    document.getElementById('editGroupResult').textContent = d.message;
-    if(d.ok){ setTimeout(()=>{ closeModal('editGroupModal'); loadGroups(); }, 500); }
-  });
-}
-function deleteGroup(id, name) {
-  if(!confirm(`确定删除分组「${name}」？`)) return;
-  fetch('/api/v3/member-groups/' + id, {
-    method:'DELETE'
-  }).then(r=>r.json()).then(d=>{
-    if(d.ok){ loadGroups(); location.reload(); }
-    else alert(d.message);
-  });
-}
+(function() {
+  var searchInput = document.getElementById('searchInput');
+  var groupFilter = document.getElementById('groupFilter');
+  var statusFilter = document.getElementById('statusFilter');
+  var rows = document.querySelectorAll('.member-row');
 
-// ── 分组分配 ──
-function assignGroup(sel) {
-  const member = sel.dataset.member;
-  const groupId = sel.value;
-  fetch('/dashboard/members/assign-group', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({member_name:member, group_id:groupId || 0})
-  }).then(r=>r.json()).then(d=>{
-    if(!d.ok) alert(d.message);
-  });
-}
+  function filterTable() {
+    var q = searchInput.value.toLowerCase().trim();
+    var g = groupFilter.value;
+    var s = statusFilter.value;
 
-// ── 添加成员 ──
-function openAddMember() {
-  document.getElementById('addMemberName').value = '';
-  document.getElementById('addMemberDisplay').value = '';
-  document.getElementById('addMemberNote').value = '';
-  document.getElementById('addMemberResult').textContent = '';
-  document.getElementById('addMemberModal').classList.add('active');
-}
-function submitAddMember() {
-  const name = document.getElementById('addMemberName').value.trim();
-  const display = document.getElementById('addMemberDisplay').value.trim();
-  const note = document.getElementById('addMemberNote').value.trim();
-  if (!name) return alert('请输入成员名称');
-  const btn = document.querySelector('#addMemberModal .btn-primary');
-  btn.textContent = '添加中...'; btn.disabled = true;
-  fetch('/dashboard/members/add', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({raw_name:name, display_name:display||null, note})
-  }).then(r=>r.json()).then(d=>{
-    document.getElementById('addMemberResult').textContent = d.message;
-    document.getElementById('addMemberResult').style.color = d.ok ? 'var(--success)' : 'var(--danger)';
-    if(d.ok) setTimeout(()=>{ closeModal('addMemberModal'); location.reload(); }, 800);
-  }).finally(()=>{ btn.textContent = '添加'; btn.disabled = false; });
-}
-
-// ── 删除成员 ──
-function deleteMember(name) {
-  if(!confirm(`确定删除成员「${name}」？此操作不可撤销。`)) return;
-  fetch('/dashboard/members/delete', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({raw_name:name})
-  }).then(r=>r.json()).then(d=>{
-    if(d.ok) location.reload();
-    else alert(d.message || d.detail || '删除失败，请稍后重试');
-  }).catch(() => alert('网络请求失败，请稍后重试'));
-}
-
-// ── 辅助 ──
-function closeModal(id) {
-  document.getElementById(id).classList.remove('active');
-}
-
-// ── 别名编辑弹窗 ──
-const memberDisplays = {{ member_displays|safe }};
-console.log('memberDisplays keys:', Object.keys(memberDisplays));
-console.log('Anthea data:', memberDisplays['Anthea']);
-const allGroups = {{ groups|safe }};
-console.log('allGroups:', allGroups);
-let editMemberName = '';
-let editMemberDisplayName = '';
-
-function openEditMember(rawName, displayName, groupId) {
-  editMemberName = rawName;
-  editMemberDisplayName = displayName;
-  document.getElementById('editMemberName').textContent = displayName;
-  document.getElementById('editDisplayName').value = displayName;
-  document.getElementById('editNote').value = '';
-  document.getElementById('editCountEnabled').checked = true;
-  document.getElementById('editGroupSelect').value = groupId || '';
-  // 别名从 memberDisplays 反查（根据 rawName）
-  const data = memberDisplays[rawName] || {};
-  if (data.note) document.getElementById('editNote').value = data.note;
-  if (data.count_enabled !== undefined) document.getElementById('editCountEnabled').checked = data.count_enabled !== false;
-  const aliases = data.aliases || [];
-  document.getElementById('editAliasesList').value = aliases.join(', ');
-  document.getElementById('editMemberModal').classList.add('active');
-}
-
-async function saveEditMember() {
-  const name = editMemberName;
-  const displayName = document.getElementById('editDisplayName').value.trim();
-  const note = document.getElementById('editNote').value.trim();
-  const countEnabled = document.getElementById('editCountEnabled').checked;
-  const aliasesStr = document.getElementById('editAliasesList').value.trim();
-  const aliases = aliasesStr ? aliasesStr.split(',').map(s => s.trim()).filter(Boolean) : [];
-  const newGroupId = document.getElementById('editGroupSelect').value;
-  if (!displayName) return alert('显示名称不能为空');
-  const btn = document.querySelector('#editMemberModal .btn-primary');
-  btn.textContent = '保存中...'; btn.disabled = true;
-  try {
-    const r = await fetch('/dashboard/members/update-display', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        raw_name: name,
-        display_name: displayName,
-        note,
-        count_enabled: countEnabled,
-        aliases,
-        group_id: newGroupId || null
-      })
+    rows.forEach(function(row) {
+      var name = row.getAttribute('data-name') || '';
+      var grp = row.getAttribute('data-group') || '';
+      var st = row.getAttribute('data-status') || '';
+      var show = true;
+      if (q && name.indexOf(q) === -1) show = false;
+      if (g && grp !== g) show = false;
+      if (s && st !== s) show = false;
+      row.style.display = show ? '' : 'none';
     });
-    const d = await r.json();
-    if (d.ok) {
-      document.getElementById('editMemberModal').classList.remove('active');
-      location.reload();
-    } else {
-      alert(d.message || '保存失败');
-    }
-  } catch(e) {
-    alert('网络错误');
-  } finally {
-    btn.textContent = '保存'; btn.disabled = false;
   }
-}
-window.__role = '{{ role }}';
-/* 租户切换 */
-function switchTenant(tenantId) {
-    var f = document.createElement('form');
-    f.method = 'post';
-    f.action = '/admin/select-tenant';
-    var i = document.createElement('input');
-    i.type = 'hidden'; i.name = 'tenant_id'; i.value = tenantId;
-    f.appendChild(i);
-    var n = document.createElement('input');
-    n.type = 'hidden'; n.name = 'next'; n.value = window.location.pathname;
-    f.appendChild(n);
-    document.body.appendChild(f);
-    f.submit();
-}
-</script>
 
+  searchInput.addEventListener('input', filterTable);
+  groupFilter.addEventListener('change', filterTable);
+  statusFilter.addEventListener('change', filterTable);
+})();
+</script>
 {% endblock %}

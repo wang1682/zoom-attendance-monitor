@@ -206,7 +206,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     """
     role = user.get("role", "")
 
-    from db import get_today_attendance_summary, get_all_groups
+    from db import get_shift_attendance, get_all_groups
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
@@ -216,7 +216,6 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     status_filter = request.query_params.get("status", "").strip()  # "online" or "offline"
 
     # ── 获取当前在线数据（live source） ──
-    # 对 Business 租户，在线成员时长优先用 Zoom Metrics 的实时 online_minutes
     live_map = {}
     try:
         from zoom_metrics import ZoomMetrics
@@ -236,37 +235,44 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     if name:
                         live_map[name] = p
     except Exception:
-        pass  # 静默失败，live_map 为空
+        pass
 
     # ── 数据源标注 ──
     data_source = "metrics" if live_map else "webhook"
     is_realtime = data_source == "metrics"
     metrics_online = bool(live_map)
 
-    # ── 今日考勤汇总（累计数据） ──
-    summary = get_today_attendance_summary(tenant_id=tenant_id)
+    # ── 班次出勤分析（替代旧的今日考勤汇总） ──
+    summary = get_shift_attendance(tenant_id=tenant_id)
+    shift_info = summary.get("shift", {})
     members = summary.get("members", [])
 
-    # ── 合并 live 数据：在线成员用实时时长，离线成员保留 webhook 累计 ──
+    # ── 合并 live 数据：在线成员状态用实时数据标记 ──
     from db import _fmt_dur
     for m in members:
         sn = m.get("standard_name", "")
         lp = live_map.get(sn)
         if lp:
             m["status"] = "online"
-            # 优先用 Zoom Metrics 的实时时长
+            # 班次在线时长优先用 Metrics 实时数据（取大值）
             live_secs = lp.get("online_minutes", 0) * 60
-            m["today_total_seconds"] = max(m.get("today_total_seconds", 0), live_secs)
-            m["today_total_duration"] = _fmt_dur(live_secs)
-            # 最后活动优先用 live join_time
+            shift_secs = m.get("shift_online_minutes", 0) * 60
+            actual_secs = max(live_secs, shift_secs)
+            m["shift_online_minutes"] = actual_secs // 60
+            m["shift_online_duration"] = _fmt_dur(actual_secs)
+            # 更新出勤率
+            required_secs = shift_info.get("required_minutes", 0) * 60
+            if required_secs > 0:
+                m["attendance_rate"] = min(actual_secs / required_secs, 1.0)
+                m["absent_minutes"] = max(0, (required_secs - actual_secs) // 60)
             jt = lp.get("join_time", "")
             if jt:
                 m["last_activity"] = jt
         else:
             m["status"] = "offline"
-    # 重新排序：在线优先 → 今日时长降序
-    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("today_total_seconds", 0) or 0)))
-    # 按 live 数据计算在线/离线数量
+
+    # 排序：在线优先 → 班次在线时长降序
+    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("shift_online_minutes", 0) or 0)))
     live_online = len(live_map)
     live_offline = sum(1 for m in members if m.get("status") == "offline")
 
@@ -331,9 +337,8 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          total_members=summary.get("total_members", 0),
                          online_count=live_online,
                          offline_count=live_offline,
-                         total_duration=summary.get("total_duration", "0m"),
-                         avg_duration=summary.get("avg_duration", "0m"),
-                         date=summary.get("date", ""),
+                         shift=shift_info,
+                         date=shift_info.get("shift_date", ""),
                          groups=all_groups,
                          search=search,
                          group_filter=group_filter,
