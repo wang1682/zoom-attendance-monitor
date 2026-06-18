@@ -2,121 +2,292 @@
 {% block title %}用户管理{% endblock %}
 {% block content %}
 
-<div class="page-header">
-  <h2 class="page-title">用户管理</h2>
-  <p class="page-subtitle">管理系统用户、角色和权限</p>
-</div>
-
 {% set role_labels = {"super_admin":"超级管理员","admin":"管理员","tenant_admin":"租户管理员","user":"普通用户"} %}
-{% set role_colors = {"super_admin":"badge-accent","admin":"badge-primary","tenant_admin":"badge-warning","user":"badge-muted"} %}
+{% set admin_roles = ["super_admin","admin"] %}
 
-<!-- Stats -->
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:24px">
-  <div class="panel" style="padding:14px;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:var(--text);">{{ users|length if users else 0 }}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">总用户数</div>
+<style>
+/* ── Drawer ── */
+.drawer-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.3);
+  z-index: 999; display: none;
+}
+.drawer-overlay.active { display: block; }
+.drawer-panel {
+  position: fixed; top: 0; right: -420px; width: 400px; height: 100%;
+  background: var(--bg-card); z-index: 1000;
+  box-shadow: -4px 0 24px rgba(0,0,0,.12);
+  transition: right .2s ease;
+  overflow-y: auto;
+}
+.drawer-panel.active { right: 0; }
+.drawer-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px; border-bottom: 1px solid var(--border);
+}
+.drawer-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.drawer-close {
+  background: none; border: none; font-size: 22px; cursor: pointer;
+  color: var(--text-muted); padding: 4px; line-height: 1;
+}
+.drawer-close:hover { color: var(--text); }
+.drawer-body { padding: 20px 24px; }
+.drawer-section { margin-bottom: 24px; }
+.drawer-section-title {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-muted); margin-bottom: 10px;
+}
+.drawer-field {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--border-light);
+}
+.drawer-field:last-child { border: none; }
+.drawer-field-label { font-size: 12px; color: var(--text-muted); }
+.drawer-field-value { font-size: 13px; color: var(--text); font-weight: 500; }
+
+/* ── Avatar ── */
+.avatar {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; color: #fff;
+  flex-shrink: 0; line-height: 1;
+}
+
+/* ── Dropdown (操作) ── */
+.dropdown-wrap { position: relative; display: inline-block; }
+.dropdown-toggle {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; color: var(--text-secondary);
+  cursor: pointer; white-space: nowrap; display: inline-flex;
+  align-items: center; gap: 4px;
+}
+.dropdown-toggle:hover { background: var(--bg-hover); border-color: var(--border-hover); }
+.dropdown-menu {
+  position: absolute; right: 0; top: calc(100% + 4px);
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.1);
+  min-width: 170px; z-index: 50; display: none;
+  padding: 4px;
+}
+.dropdown-menu.active { display: block; }
+.dropdown-item {
+  display: block; width: 100%; text-align: left;
+  padding: 7px 12px; font-size: 12px; color: var(--text);
+  background: none; border: none; cursor: pointer;
+  border-radius: 6px; white-space: nowrap;
+}
+.dropdown-item:hover { background: var(--bg-hover); }
+.dropdown-item.danger { color: var(--danger); }
+.dropdown-item.danger:hover { background: rgba(239,68,68,.08); }
+.dropdown-divider {
+  height: 1px; background: var(--border); margin: 4px 0;
+}
+
+/* ── Badge standardisation ── */
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 500; }
+.badge-green { background: #05966915; color: #059669; }
+.badge-gray { background: #6b728015; color: #6b7280; }
+.badge-purple { background: #8b5cf615; color: #7c3aed; }
+.badge-blue { background: #2563eb15; color: #2563eb; }
+.badge-orange { background: #d9770615; color: #b45309; }
+.badge-teal { background: #0d948815; color: #0f766e; }
+.badge-red { background: #dc262615; color: #b91c1c; }
+
+/* ── Toolbar ── */
+.toolbar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.toolbar-search {
+  flex: 1; min-width: 200px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font-size: 13px; background: var(--bg-card);
+  color: var(--text);
+}
+.toolbar-search::placeholder { color: var(--text-muted); }
+.toolbar-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+.toolbar-select {
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; background: var(--bg-card);
+  color: var(--text-secondary); cursor: pointer;
+}
+.toolbar-select:focus { outline: none; border-color: var(--accent); }
+
+/* ── Table ── */
+.user-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.user-table th {
+  text-align: left; padding: 10px 12px;
+  font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .04em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.user-table td {
+  padding: 12px; font-size: 13px; color: var(--text);
+  border-bottom: 1px solid var(--border-light);
+  vertical-align: middle;
+}
+.user-table tr:last-child td { border-bottom: none; }
+.user-table tr:hover td { background: var(--bg-hover); }
+.user-cell-name {
+  display: flex; align-items: center; gap: 10px;
+}
+.user-cell-name .name-text {
+  display: flex; flex-direction: column;
+}
+.user-cell-name .name-text .primary { font-weight: 500; font-size: 13px; }
+.user-cell-name .name-text .secondary { font-size: 11px; color: var(--text-muted); }
+</style>
+
+<!-- ===== Statistics Cards ===== -->
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px">
+  <div class="panel" style="padding:16px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">总用户</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text);">{{ users|length if users else 0 }}</div>
   </div>
-  {% set sa = users|selectattr("role","equalto","super_admin")|list|length %}
-  {% set ad = users|selectattr("role","equalto","admin")|list|length %}
-  {% set ta = users|selectattr("role","equalto","tenant_admin")|list|length %}
-  {% set uu = users|selectattr("role","equalto","user")|list|length %}
-  <div class="panel" style="padding:14px;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:var(--accent);">{{ sa }}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">超级管理员</div>
+  {% set active_count = users|selectattr("is_active","equalto",1)|list|length %}
+  <div class="panel" style="padding:16px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">启用</div>
+    <div style="font-size:24px;font-weight:700;color:#059669;">{{ active_count }}</div>
   </div>
-  <div class="panel" style="padding:14px;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:var(--success);">{{ ad }}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">管理员</div>
+  <div class="panel" style="padding:16px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">禁用</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text-muted);">{{ (users|length) - active_count }}</div>
   </div>
-  <div class="panel" style="padding:14px;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:var(--warning);">{{ ta }}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">租户管理员</div>
-  </div>
-  <div class="panel" style="padding:14px;text-align:center;">
-    <div style="font-size:22px;font-weight:700;color:var(--text-muted);">{{ uu }}</div>
-    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">普通用户</div>
+  <div class="panel" style="padding:16px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">所属租户</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text);">{{ all_tenants|length if all_tenants else 0 }}</div>
   </div>
 </div>
 
-<!-- Actions bar -->
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-  <div style="font-size:12px;color:var(--text-muted);">共 {{ users|length if users else 0 }} 个用户</div>
+<!-- ===== Toolbar ===== -->
+<div class="toolbar">
+  <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索用户名、显示名称..." oninput="filterTable()">
+  <select class="toolbar-select" id="roleFilter" onchange="filterTable()">
+    <option value="">全部角色</option>
+    <option value="super_admin">超级管理员</option>
+    <option value="admin">管理员</option>
+    <option value="tenant_admin">租户管理员</option>
+    <option value="user">普通用户</option>
+  </select>
+  <select class="toolbar-select" id="statusFilter" onchange="filterTable()">
+    <option value="">全部状态</option>
+    <option value="active">启用</option>
+    <option value="inactive">禁用</option>
+  </select>
   {% if can_create %}
-  <button onclick="showModal('createModal')" class="btn btn-primary">+ 创建用户</button>
+  <button onclick="showModal('createModal')" class="btn btn-primary" style="margin-left:auto;white-space:nowrap;font-size:13px;">+ 创建用户</button>
   {% endif %}
 </div>
 
-<!-- Users table -->
-<div class="panel">
-  <div class="data-table" style="overflow-x:auto">
-    <div class="data-table-header" style="display:flex;min-width:900px">
-      <span class="data-table-th" style="width:140px;flex-shrink:0">用户名</span>
-      <span class="data-table-th" style="width:120px;flex-shrink:0">显示名称</span>
-      <span class="data-table-th" style="width:100px;flex-shrink:0">所属租户</span>
-      <span class="data-table-th" style="width:90px;flex-shrink:0">角色</span>
-      <span class="data-table-th" style="width:80px;flex-shrink:0">Telegram</span>
-      <span class="data-table-th" style="width:100px;flex-shrink:0">最后登录</span>
-      <span class="data-table-th" style="width:90px;flex-shrink:0">创建时间</span>
-      <span class="data-table-th" style="width:60px;flex-shrink:0">状态</span>
-      <span class="data-table-th" style="width:260px;flex-shrink:0;text-align:right">操作</span>
-    </div>
+<!-- ===== Users Table ===== -->
+<div class="panel" style="padding:0;overflow:hidden">
+  <table class="user-table" id="userTable">
+    <thead>
+      <tr>
+        <th style="width:180px">用户</th>
+        <th style="width:120px">租户</th>
+        <th style="width:90px">角色</th>
+        <th style="width:100px">Telegram</th>
+        <th style="width:120px">最后登录</th>
+        <th style="width:70px">状态</th>
+        <th style="width:90px;text-align:right">操作</th>
+      </tr>
+    </thead>
+    <tbody>
     {% for u in users %}
-    <div class="data-table-row" style="display:flex;min-width:900px;align-items:center">
-      <span class="td-name" style="width:140px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        {{ u.display_name or u.username }}
-        <span class="td-mono">@{{ u.username }}</span>
-      </span>
-      <span class="data-table-cell" style="width:120px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        {{ u.display_name or '-' }}
-      </span>
-      <span class="data-table-cell td-mono" style="width:100px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        {{ tenants_map.get(u.tenant_id, u.tenant_id) if u.tenant_id else '-' }}
-      </span>
-      <span class="data-table-cell" style="width:90px;flex-shrink:0">
-        <span class="badge {{ role_colors.get(u.role, 'badge-muted') }}">{{ role_labels.get(u.role, u.role) }}</span>
-      </span>
-      <span class="data-table-cell" style="width:80px;flex-shrink:0">
+    {% set avatar_colors = ["#6366f1","#8b5cf6","#a855f7","#ec4899","#f43f5e","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#64748b"] %}
+    {% set char = (u.display_name or u.username)[0]|upper %}
+    {% set color_idx = loop.index0 % 12 %}
+    <tr data-username="{{ u.username|lower }}" data-display="{{ (u.display_name or u.username)|lower }}" data-role="{{ u.role }}" data-status="{% if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' %}active{% else %}inactive{% endif %}">
+      <td>
+        <div class="user-cell-name">
+          <div class="avatar" style="background:{{ avatar_colors[color_idx] }}">{{ char }}</div>
+          <div class="name-text">
+            <span class="primary">{{ u.display_name or u.username }}</span>
+            <span class="secondary">@{{ u.username }}</span>
+          </div>
+        </div>
+      </td>
+      <td><span class="td-mono" style="font-size:12px">{{ tenants_map.get(u.tenant_id, u.tenant_id) if u.tenant_id else '-' }}</span></td>
+      <td>
+        {% if u.role == "super_admin" %}
+        <span class="badge badge-purple">超级管理员</span>
+        {% elif u.role == "admin" %}
+        <span class="badge badge-blue">管理员</span>
+        {% elif u.role == "tenant_admin" %}
+        <span class="badge badge-orange">租户管理员</span>
+        {% else %}
+        <span class="badge badge-teal">普通用户</span>
+        {% endif %}
+      </td>
+      <td>
         {% if u.telegram_chat_id %}
-        <span class="badge badge-success" title="Chat ID: {{ u.telegram_chat_id }}">已绑定</span>
+        <span class="badge badge-green">已绑定</span>
         {% else %}
-        <span class="badge badge-muted">未绑定</span>
+        <span class="badge badge-gray">未绑定</span>
         {% endif %}
-      </span>
-      <span class="data-table-cell td-mono" style="width:100px;flex-shrink:0;font-size:10px">
-        {{ fmt_myt(u.last_login) if u.last_login else '-' }}
-      </span>
-      <span class="data-table-cell td-mono" style="width:90px;flex-shrink:0;font-size:10px">
-        {{ fmt_myt(u.created_at) if u.created_at else '-' }}
-      </span>
-      <span class="data-table-cell" style="width:60px;flex-shrink:0">
+      </td>
+      <td><span class="td-mono" style="font-size:11px">{{ fmt_myt(u.last_login) if u.last_login else '-' }}</span></td>
+      <td>
         {% if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' %}
-        <span class="badge badge-success">启用</span>
+        <span class="badge badge-green">启用</span>
         {% else %}
-        <span class="badge badge-danger">禁用</span>
+        <span class="badge badge-gray">禁用</span>
         {% endif %}
-      </span>
-      <span class="data-table-cell" style="width:260px;flex-shrink:0;text-align:right;white-space:nowrap">
+      </td>
+      <td style="text-align:right">
         {% if u.can_manage %}
-        <button class="btn btn-sm" onclick="showEditModal({{ u.id }}, '{{ u.username|e }}', '{{ u.display_name|e }}', '{{ u.role|e }}', '{{ u.tenant_id|e }}', '{{ u.telegram_chat_id|e }}')">编辑</button>
-        <button class="btn btn-sm" onclick="showResetPwModal({{ u.id }}, '{{ u.username|e }}')">重置密码</button>
-        {% if u.role != 'super_admin' and current_user.role == 'super_admin' %}
-        <button class="btn btn-sm" onclick="showRoleModal({{ u.id }}, '{{ u.role|e }}')">角色</button>
-        <button class="btn btn-sm" onclick="showTenantModal({{ u.id }}, '{{ u.tenant_id|e }}')">租户</button>
+        <div class="dropdown-wrap" onclick="event.stopPropagation()">
+          <button class="dropdown-toggle" onclick="toggleDropdown(this)">⋯ 操作</button>
+          <div class="dropdown-menu">
+            <button class="dropdown-item" onclick="openDrawer('{{ u.username|e }}', '{{ u.display_name|e }}', '{{ u.role|e }}', '{{ u.tenant_id|e }}', '{{ u.telegram_chat_id|e }}', '{{ fmt_myt(u.last_login) if u.last_login else '-' }}', '{{ fmt_myt(u.created_at) if u.created_at else '-' }}')">查看详情</button>
+            <button class="dropdown-item" onclick="showEditModal({{ u.id }}, '{{ u.username|e }}', '{{ u.display_name|e }}', '{{ u.role|e }}', '{{ u.tenant_id|e }}', '{{ u.telegram_chat_id|e }}')">编辑用户</button>
+            {% if u.role != 'super_admin' and is_super_admin %}
+            <button class="dropdown-item" onclick="showRoleModal({{ u.id }}, '{{ u.role|e }}')">修改角色</button>
+            <button class="dropdown-item" onclick="showTenantModal({{ u.id }}, '{{ u.tenant_id|e }}')">修改租户</button>
+            {% endif %}
+            <button class="dropdown-item" onclick="showResetPwModal({{ u.id }}, '{{ u.username|e }}')">重置密码</button>
+            <div class="dropdown-divider"></div>
+            <form method="POST" action="/dashboard/users/{{ u.id }}/toggle" style="display:inline">
+              <button class="dropdown-item danger" onclick="return confirm('确认{{ '禁用' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用' }}此用户？')">{{ '禁用用户' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用用户' }}</button>
+            </form>
+            <form method="POST" action="/dashboard/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除用户 {{ u.username|e }}？')">
+              <button class="dropdown-item danger">删除用户</button>
+            </form>
+          </div>
+        </div>
         {% endif %}
-        <form method="POST" action="/dashboard/users/{{ u.id }}/toggle" style="display:inline">
-          <button class="btn btn-sm {{ 'btn-warning' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else 'btn-success' }}" onclick="return confirm('确认{{ '禁用' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用' }}此用户？')">
-            {{ '禁用' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用' }}
-          </button>
-        </form>
-        <form method="POST" action="/dashboard/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除用户 {{ u.username|e }}？')">
-          <button class="btn btn-sm btn-danger">删除</button>
-        </form>
-        {% endif %}
-      </span>
-    </div>
+      </td>
+    </tr>
     {% else %}
-    <div class="data-table-empty" style="padding:40px;text-align:center;color:var(--text-muted)">暂无用户数据</div>
+    <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px">暂无用户数据</td></tr>
     {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- ===== User Detail Drawer ===== -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<div class="drawer-panel" id="drawerPanel">
+  <div class="drawer-header">
+    <h3 id="drawerTitle">用户详情</h3>
+    <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+  </div>
+  <div class="drawer-body">
+    <div class="drawer-section">
+      <div class="drawer-section-title">账号信息</div>
+      <div class="drawer-field"><span class="drawer-field-label">用户名</span><span class="drawer-field-value td-mono" id="drawerUsername">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">显示名称</span><span class="drawer-field-value" id="drawerDisplayName">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">邮箱</span><span class="drawer-field-value" id="drawerEmail">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">Telegram</span><span class="drawer-field-value" id="drawerTelegram">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">所属租户</span><span class="drawer-field-value" id="drawerTenant">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">角色</span><span class="drawer-field-value" id="drawerRole">-</span></div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">时间</div>
+      <div class="drawer-field"><span class="drawer-field-label">最后登录</span><span class="drawer-field-value td-mono" id="drawerLastLogin">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">创建时间</span><span class="drawer-field-value td-mono" id="drawerCreatedAt">-</span></div>
+    </div>
   </div>
 </div>
 
@@ -279,31 +450,64 @@
 </div>
 
 <script>
-// Generic modal helpers
-function showModal(id) {
-  document.getElementById(id).style.display = 'flex';
+// ── Dropdown ──
+function toggleDropdown(btn) {
+  var menu = btn.nextElementSibling;
+  var active = menu.classList.contains('active');
+  // close all dropdowns first
+  document.querySelectorAll('.dropdown-menu.active').forEach(function(m) { m.classList.remove('active'); });
+  if (!active) menu.classList.add('active');
 }
-function hideModal(id) {
-  document.getElementById(id).style.display = 'none';
-}
+// Close dropdowns on outside click
+document.addEventListener('click', function() {
+  document.querySelectorAll('.dropdown-menu.active').forEach(function(m) { m.classList.remove('active'); });
+});
 
-// ESC key closes all modals
+// ── Drawer ──
+function openDrawer(username, displayName, role, tenantId, telegramChatId, lastLogin, createdAt) {
+  document.getElementById('drawerUsername').textContent = username;
+  document.getElementById('drawerDisplayName').textContent = displayName || '-';
+  document.getElementById('drawerEmail').textContent = '-';
+  document.getElementById('drawerTelegram').textContent = telegramChatId ? '已绑定 (' + telegramChatId + ')' : '未绑定';
+  document.getElementById('drawerTenant').textContent = tenantId || '-';
+  var roleLabels = {'super_admin':'超级管理员','admin':'管理员','tenant_admin':'租户管理员','user':'普通用户'};
+  document.getElementById('drawerRole').textContent = roleLabels[role] || role;
+  document.getElementById('drawerLastLogin').textContent = lastLogin || '-';
+  document.getElementById('drawerCreatedAt').textContent = createdAt || '-';
+  document.getElementById('drawerPanel').classList.add('active');
+  document.getElementById('drawerOverlay').classList.add('active');
+}
+function closeDrawer() {
+  document.getElementById('drawerPanel').classList.remove('active');
+  document.getElementById('drawerOverlay').classList.remove('active');
+}
+// ESC to close drawer
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
-    document.querySelectorAll('.modal-overlay[style*="flex"]').forEach(function(el) {
-      el.style.display = 'none';
-    });
+    closeDrawer();
+    document.querySelectorAll('.modal-overlay[style*="flex"]').forEach(function(el) { el.style.display = 'none'; });
   }
 });
 
-// Click background to close
-document.addEventListener('click', function(e) {
-  if (e.target.classList.contains('modal-overlay')) {
-    e.target.style.display = 'none';
-  }
-});
+// ── Table Filter ──
+function filterTable() {
+  var q = document.getElementById('searchInput').value.toLowerCase();
+  var role = document.getElementById('roleFilter').value;
+  var status = document.getElementById('statusFilter').value;
+  document.querySelectorAll('#userTable tbody tr').forEach(function(row) {
+    if (row.cells.length < 2) return; // empty row
+    var matchSearch = !q || row.dataset.username.includes(q) || row.dataset.display.includes(q);
+    var matchRole = !role || row.dataset.role === role;
+    var matchStatus = !status || row.dataset.status === status;
+    row.style.display = (matchSearch && matchRole && matchStatus) ? '' : 'none';
+  });
+}
 
-// Edit modal
+// ── Modal helpers ──
+function showModal(id) { document.getElementById(id).style.display = 'flex'; }
+function hideModal(id) { document.getElementById(id).style.display = 'none'; }
+
+// ── Edit modal ──
 function showEditModal(id, username, displayName, role, tenantId, telegramChatId) {
   document.getElementById('editForm').action = '/dashboard/users/' + id + '/update';
   document.getElementById('editUsername').value = username;
@@ -316,46 +520,37 @@ function showEditModal(id, username, displayName, role, tenantId, telegramChatId
   showModal('editModal');
 }
 
-// Reset password modal
+// ── Reset password modal ──
 function showResetPwModal(id, username) {
   document.getElementById('resetPwForm').action = '/dashboard/users/' + id + '/reset-password';
   document.getElementById('resetPwUser').textContent = username;
   document.getElementById('resetPwConfirm').value = '';
   showModal('resetPwModal');
 }
-
-// Password confirmation validation
 document.getElementById('resetPwForm')?.addEventListener('submit', function(e) {
   var pw = this.querySelector('input[name="new_password"]').value;
   var confirm = document.getElementById('resetPwConfirm').value;
-  if (pw !== confirm) {
-    alert('两次输入的密码不一致');
-    e.preventDefault();
-    return false;
-  }
+  if (pw !== confirm) { alert('两次输入的密码不一致'); e.preventDefault(); }
 });
 
-// Role modal
+// ── Role modal ──
 function showRoleModal(id, role) {
   document.getElementById('roleForm').action = '/dashboard/users/' + id + '/role';
   document.getElementById('roleSelect').value = role;
   showModal('roleModal');
 }
 
-// Tenant modal
+// ── Tenant modal ──
 function showTenantModal(id, tenantId) {
   document.getElementById('tenantForm').action = '/dashboard/users/' + id + '/tenant';
   document.getElementById('tenantSelect').value = tenantId || '';
   showModal('tenantModal');
 }
 
-// Create form validation
+// ── Create form validation ──
 function validateCreateForm() {
   var pw = document.querySelector('#createModal input[name="password"]').value;
-  if (pw.length < 4) {
-    alert('密码长度不能少于 4 位');
-    return false;
-  }
+  if (pw.length < 4) { alert('密码长度不能少于 4 位'); return false; }
   return true;
 }
 </script>
