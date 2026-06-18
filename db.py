@@ -823,10 +823,10 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
     shift_start_utc = shift_start_utc.replace(tzinfo=timezone.utc)
     shift_end_utc = shift_end_utc.replace(tzinfo=timezone.utc)
 
-    # ── 查班次窗口内的所有事件 ──
-    query_start_utc = shift_start_utc - timedelta(hours=1)  # 多查 1h 缓冲
+    # ── 扩大查询窗口：班次前后各 12h，覆盖跨班次 session ──
+    query_start_utc = shift_start_utc - timedelta(hours=12)
     query_start_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-    query_end_str = shift_end_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    query_end_str = (shift_end_utc + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S")
 
     if tenant_id:
         rows = _get_conn().execute(
@@ -912,7 +912,7 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
             "action_time": e["action_time"],
         })
 
-    # ── 计算每位成员的班次数据 ──
+    # ── 计算每位成员的班次数据（session overlap 算法）──
     for m in members.values():
         m["raw_events"].sort(key=lambda x: x["action_time"])
         # 去重（连续相同 action 只保留第一个）
@@ -924,75 +924,90 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
             deduped.append(ev)
 
         online_seconds = 0
-        away_seconds = 0  # 中途离开总时长
+        away_seconds = 0  # 中途离开总时长（within effective window）
         max_away = 0       # 最大单次离开
         away_over_15_count = 0  # 离开>15分钟次数
-        last_enter = None
-        last_leave = None
         is_online = False
+        last_overlap_leave = None  # 最后一条与班次重叠的 session 的 leave 时间
+
+        overlap_sessions = 0
 
         i = 0
         while i < len(deduped):
             ev = deduped[i]
             if ev["action"] in ("enter", "joined"):
                 enter_dt = datetime.fromisoformat(ev["action_time"])
-                enter_clamped = max(enter_dt, effective_start)
-                last_enter = enter_dt
+                # 如果 enter 在班次窗口之前太远（超过 12h），可能无意义
+                # 但保留以防跨夜班场景—等待对应 leave
 
                 # 找对应的 leave
                 leave_dt = None
                 for j in range(i + 1, len(deduped)):
                     if deduped[j]["action"] in ("leave", "left"):
                         leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
-                        last_leave = leave_dt
                         i = j
                         break
 
-                end_dt = leave_dt if leave_dt else min(now_utc, effective_end)
-                end_clamped = min(end_dt, effective_end)
+                # --- session overlap 计算 ---
+                session_start_raw = enter_dt
+                session_end_raw = leave_dt if leave_dt else None  # None = 仍在线
 
-                dur = (end_clamped - enter_clamped).total_seconds()
-                if dur < 0:
-                    dur = 0
-                online_seconds += dur
+                # 计算有效重叠区间
+                ol_start = max(session_start_raw, effective_start)
+                ol_end = session_end_raw if session_end_raw else now_utc
+                ol_end = min(ol_end, effective_end)
 
-                if leave_dt is None:
-                    is_online = True
-                else:
-                    is_online = False
+                if ol_end > ol_start:
+                    dur = (ol_end - ol_start).total_seconds()
+                    online_seconds += dur
+                    overlap_sessions += 1
+
+                    if session_end_raw is None or session_end_raw > effective_end:
+                        # session 覆盖到班次结束时仍在——不算提前离场
+                        pass
+                    else:
+                        # session 在当前班次内有 leave 且 leave < effective_end
+                        last_overlap_leave = session_end_raw
+
+                    # 仍在在线状态检查
+                    if session_end_raw is None:
+                        is_online = True
+                    else:
+                        is_online = False
 
             elif ev["action"] in ("leave", "left"):
-                leave_dt = datetime.fromisoformat(ev["action_time"])
-                last_leave = leave_dt
-                is_online = False
+                # 孤立 leave：可能来自上一个班次，与班次内 enter 配对即可
+                pass
             i += 1
 
-        # ── 计算中途离开（两次 enter 之间的间隔） ──
-        prev_leave = None
+        # ── 计算中途离开（两次班次内 enter 之间的间隔） ──
+        # 只统计班次窗口内的离开→进入间隔
+        prev_leave_ol = None
         for ev in deduped:
             if ev["action"] in ("leave", "left"):
-                prev_leave = datetime.fromisoformat(ev["action_time"])
-                if prev_leave > effective_end:
-                    prev_leave = None
+                lv_dt = datetime.fromisoformat(ev["action_time"])
+                # 只考虑班次窗口内的离开
+                if effective_start <= lv_dt <= effective_end:
+                    prev_leave_ol = lv_dt
             elif ev["action"] in ("enter", "joined"):
-                if prev_leave:
-                    enter_dt = datetime.fromisoformat(ev["action_time"])
-                    away = (enter_dt - prev_leave).total_seconds()
-                    if away > 0:
-                        away_seconds += away
-                        if away > max_away:
-                            max_away = away
-                        if away > 15 * 60:
+                en_dt = datetime.fromisoformat(ev["action_time"])
+                if en_dt >= effective_start and prev_leave_ol:
+                    away_raw = (en_dt - prev_leave_ol).total_seconds()
+                    if away_raw > 0:
+                        # 限制到班次窗口
+                        away_clamped = min(away_raw, (effective_end - prev_leave_ol).total_seconds())
+                        away_seconds += away_clamped
+                        if away_clamped > max_away:
+                            max_away = away_clamped
+                        if away_clamped > 15 * 60:
                             away_over_15_count += 1
-                    prev_leave = None
+                    prev_leave_ol = None
 
         # ── 提前离场 ──
-        # 只有本班次有实际进入记录才计算提前离场
-        # 如果成员本班次没有任何 enter/joined，则 last_leave 可能是其他班次的遗留值
+        # 条件：有 overlap session，最后有效在线结束 < effective_end，且当前不在线
         early_leave_seconds = 0
-        has_enter_this_shift = len([ev for ev in deduped if ev["action"] in ("enter", "joined") and datetime.fromisoformat(ev["action_time"]) >= effective_start]) > 0
-        if has_enter_this_shift and last_leave and last_leave < effective_end and not is_online:
-            early_leave_seconds = int((effective_end - last_leave).total_seconds())
+        if overlap_sessions > 0 and not is_online and last_overlap_leave and last_overlap_leave < effective_end:
+            early_leave_seconds = int((effective_end - last_overlap_leave).total_seconds())
             if early_leave_seconds < 0:
                 early_leave_seconds = 0
 
@@ -1016,8 +1031,8 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
             m['status'] = 'offline'
         else:
             m['status'] = 'absent'
-        m['last_leave'] = last_leave.isoformat() if last_leave else None
-        m["sessions"] = len([ev for ev in deduped if ev["action"] in ("enter", "joined")])
+        m['last_leave'] = last_overlap_leave.isoformat() if last_overlap_leave else None
+        m['sessions'] = overlap_sessions
 
     # ── 排序：在线优先 → 在线时长降序 ──
     sorted_members = sorted(
