@@ -273,7 +273,15 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 搜索 / 筛选 ──
     if search:
         q = search.lower()
-        members = [m for m in members if q in m.get("standard_name", "").lower()]
+        search_members = []
+        for m in members:
+            sn = m.get("standard_name", "").lower()
+            disp = m.get("display_name", "").lower()
+            aliases = m.get("aliases", [])
+            alias_match = any(q in a.lower().replace(" ", "") for a in aliases) if aliases else False
+            if q in sn or q in disp or alias_match:
+                search_members.append(m)
+        members = search_members
     if group_filter:
         members = [m for m in members if m.get("group_name", "") == group_filter]
     if status_filter:
