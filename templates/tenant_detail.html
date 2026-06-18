@@ -1,0 +1,183 @@
+{% extends "tenant_base.html" %}
+{% block content %}
+<div class="page-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div>
+            <h2 class="page-title">🏢 租户详情</h2>
+            <p class="page-subtitle">
+                <a href="/dashboard/tenants" style="color:var(--accent);font-size:11px">← 返回租户列表</a>
+                &nbsp;/&nbsp;
+                <span class="mono">{{ tenant.display_name or tenant.name }}</span>
+                <span class="text-muted">({{ tenant.id }})</span>
+            </p>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <form method="post" action="/dashboard/tenants/{{ tenant.id }}/toggle" style="display:inline">
+                <button type="submit" class="btn btn-sm {{ 'btn-warning' if tenant.active == 'true' else 'btn-success' }}">
+                    {{ '停用' if tenant.active == 'true' else '启用' }}租户
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- KPI Stats Row -->
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-label">用户数</div>
+        <div class="stat-value">{{ user_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Zoom 账号</div>
+        <div class="stat-value">{{ zoom_account_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">频道数</div>
+        <div class="stat-value">{{ channel_count }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">成员数</div>
+        <div class="stat-value">{{ member_count }}</div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <h3>基础信息</h3>
+    </div>
+    <div class="panel-body">
+        <div class="zone-card">
+            <div class="row">
+                <span class="label">租户名称</span>
+                <span class="value">{{ tenant.display_name or tenant.name }}</span>
+            </div>
+            <div class="row">
+                <span class="label">租户 ID</span>
+                <span class="value">{{ tenant.id }}</span>
+            </div>
+            <div class="row">
+                <span class="label">创建时间</span>
+                <span class="value">{{ tenant.created_at[:19] if tenant.created_at else '—' }}</span>
+            </div>
+            <div class="row">
+                <span class="label">状态</span>
+                <span class="badge {{ 'badge-success' if tenant.active == 'true' else 'badge-muted' }}">
+                    {{ '已启用' if tenant.active == 'true' else '已停用' }}
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-header">
+        <h3>Zoom 账号 ({{ zoom_accounts|length }})</h3>
+    </div>
+    <div class="panel-body" style="padding:0;overflow-x:auto">
+        {% if zoom_accounts %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>Account ID</th>
+                    <th>Host Email</th>
+                    <th>OAuth 状态</th>
+                    <th>Webhook</th>
+                    <th class="td-action">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in zoom_accounts %}
+                <tr>
+                    <td class="td-name">{{ a.label or '—' }}</td>
+                    <td class="td-mono" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">{{ a.account_id }}</td>
+                    <td style="color:var(--text-secondary);font-size:11px">{{ a.host_email or '—' }}</td>
+                    <td>
+                        {% set oa = a.get('status','inactive') %}
+                        {% if oa == 'active' %}
+                        <span class="badge badge-success">已授权</span>
+                        {% elif oa == 'verifying' %}
+                        <span class="badge badge-warning">验证中</span>
+                        {% else %}
+                        <span class="badge badge-muted">未授权</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if a.webhook_last_event %}
+                        <span class="badge badge-success">已启用</span>
+                        <span class="text-xs text-muted" style="margin-left:4px">{{ a.webhook_last_time[:10] if a.webhook_last_time else '' }}</span>
+                        {% else %}
+                        <span class="badge badge-muted">未启用</span>
+                        {% endif %}
+                    </td>
+                    <td class="td-action">
+                        <a href="/dashboard/admin/accounts" class="btn btn-sm">管理</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="panel-body">
+            <p class="text-muted" style="margin:0;text-align:center;padding:12px">暂无绑定的 Zoom 账号</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="flex" style="gap:12px;flex-wrap:wrap">
+    <!-- Telegram -->
+    <div class="zone-card" style="flex:1;min-width:240px">
+        <h4>📡 Telegram</h4>
+        <div class="row">
+            <span class="label">频道数</span>
+            <span class="value">{{ channel_count }}</span>
+        </div>
+        <div class="row">
+            <span class="label">Bot 状态</span>
+            {% if bot_status.has_bot %}
+            <span class="badge badge-success">已配置</span>
+            <span class="text-xs text-muted">@{{ bot_status.username }}</span>
+            {% else %}
+            <span class="badge badge-muted">未配置</span>
+            {% endif %}
+        </div>
+        <div class="row" style="margin-top:8px">
+            <span class="text-muted text-xs">Bot {{ '已配置' if bot_status.has_bot else '未配置' }}</span>
+        </div>
+    </div>
+
+    <!-- Member Management -->
+    <div class="zone-card" style="flex:1;min-width:240px">
+        <h4>👥 成员管理</h4>
+        <div class="row">
+            <span class="label">分组数</span>
+            <span class="value">{{ group_count }}</span>
+        </div>
+        <div class="row">
+            <span class="label">成员数</span>
+            <span class="value">{{ member_count }}</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+            <a href="/dashboard/zoom" class="btn btn-sm btn-primary">进入成员中心 →</a>
+        </div>
+    </div>
+
+    <!-- Alert Rules -->
+    <div class="zone-card" style="flex:1;min-width:240px">
+        <h4>🔔 预警规则</h4>
+        <div class="row">
+            <span class="label">规则数</span>
+            <span class="value">{{ alert_rule_count }}</span>
+        </div>
+        <div class="row">
+            <span class="label">启用数</span>
+            <span class="value {{ 'text-success' if enabled_alert_count > 0 else 'text-muted' }}">{{ enabled_alert_count }}</span>
+        </div>
+        <div class="row" style="margin-top:8px">
+            <a href="/dashboard/alerts" class="btn btn-sm btn-primary">进入规则页 →</a>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

@@ -3,34 +3,34 @@
 <div class="page-header">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div>
-            <h2 class="page-title">客户管理</h2>
+            <h2 class="page-title">🏢 租户管理</h2>
             <p class="page-subtitle">
-                当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
+                多租户管理中心 — 共 <strong>{{ tenants|length }}</strong> 个租户
             </p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a href="/dashboard/users" class="btn btn-sm">用户管理</a>
             <a href="/dashboard/admin/accounts" class="btn btn-sm">Zoom 账号</a>
-            <a href="/dashboard/admin/users" class="btn btn-sm">后台用户</a>
-            <a href="/dashboard/admin/channels" class="btn btn-sm">推送频道</a>
-            <button onclick="document.getElementById('createModal').classList.add('active')" class="btn btn-primary btn-sm">新增租户</button>
+            <button onclick="document.getElementById('createModal').classList.add('active')" class="btn btn-primary btn-sm">+ 新增租户</button>
         </div>
     </div>
 </div>
 
 <div class="panel">
     <div class="panel-header">
-        <h3>租户列表</h3>
+        <h3>全部租户</h3>
     </div>
     <div class="panel-body" style="padding:0;overflow-x:auto">
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>ID</th>
                     <th>名称</th>
-                    <th>方案</th>
+                    <th>ID</th>
+                    <th style="text-align:center">用户数</th>
+                    <th style="text-align:center">Zoom账号</th>
+                    <th style="text-align:center">频道数</th>
+                    <th style="text-align:center">成员数</th>
                     <th>状态</th>
-                    <th>全局管理</th>
-                    <th>API Token</th>
                     <th>创建时间</th>
                     <th class="td-action">操作</th>
                 </tr>
@@ -38,39 +38,25 @@
             <tbody>
                 {% for t in tenants %}
                 <tr>
-                    <td class="td-mono">{{ t.id }}</td>
                     <td class="td-name">{{ t.display_name or t.name }}</td>
-                    <td><span class="badge badge-cyan">{{ t.plan }}</span></td>
+                    <td class="td-mono">{{ t.id }}</td>
+                    <td style="text-align:center;font-family:var(--mono);font-size:11px">{{ t.user_count }}</td>
+                    <td style="text-align:center;font-family:var(--mono);font-size:11px">{{ t.zoom_account_count }}</td>
+                    <td style="text-align:center;font-family:var(--mono);font-size:11px">{{ t.channel_count }}</td>
+                    <td style="text-align:center;font-family:var(--mono);font-size:11px">{{ t.member_count }}</td>
                     <td>
                         <span class="badge {{ 'badge-success' if t.active == 'true' else 'badge-muted' }}">
                             {{ '启用' if t.active == 'true' else '停用' }}
                         </span>
                     </td>
-                    <td style="color:var(--text-secondary);font-size:11px">{{ '是' if t.is_global_admin == 'true' else '否' }}</td>
-                    <td style="max-width:200px; overflow:hidden; text-overflow:ellipsis;">
-                        {% if t.api_token %}
-                        <code class="td-mono" style="display:block;word-break:break-all;">{{ t.api_token }}</code>
-                        <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/token" style="display:inline;margin-top:2px;">
-                            <button type="submit" class="btn btn-sm btn-warning" style="padding:1px 6px;font-size:10px"
-                                    onclick="return confirm('确认重新生成 API Token？已有客户端将立即失效。')">重新生成</button>
-                        </form>
-                        {% else %}
-                        <span style="color:var(--text-muted);font-size:11px">未设置</span>
-                        <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/token" style="display:inline;">
-                            <button type="submit" class="btn btn-sm btn-primary" style="padding:1px 6px;font-size:10px">生成</button>
-                        </form>
-                        {% endif %}
-                    </td>
                     <td style="color:var(--text-muted);font-size:11px">{{ t.created_at[:10] if t.created_at else '' }}</td>
                     <td class="td-action">
                         <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
-                            <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/toggle" style="display:inline">
+                            <a href="/dashboard/tenants/{{ t.id }}" class="btn btn-sm btn-primary" style="padding:2px 10px">查看详情</a>
+                            <form method="post" action="/dashboard/tenants/{{ t.id }}/toggle" style="display:inline">
                                 <button type="submit" class="btn btn-sm" style="padding:2px 10px">
                                     {{ '停用' if t.active == 'true' else '启用' }}
                                 </button>
-                            </form>
-                            <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/switch" style="display:inline">
-                                <button type="submit" class="btn btn-sm btn-primary" style="padding:2px 10px">切换</button>
                             </form>
                             {% if t.id != 'default' %}
                             <form method="post" action="/dashboard/admin/tenants/{{ t.id }}/delete" style="display:inline"

@@ -3,14 +3,129 @@
 <div class="page-header">
     <div>
         <h2 class="page-title">审计日志</h2>
-        <p class="page-subtitle">系统操作记录（开发中）</p>
+        <p class="page-subtitle">登录审计 &amp; 操作记录</p>
     </div>
 </div>
 
-<div class="panel">
-    <div class="panel-body" style="text-align:center;padding:60px 20px">
-        <p style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">审计日志功能正在开发中</p>
-        <p style="font-size:12px;color:var(--text-muted)">后续将记录所有用户的管理操作、登录记录、角色变更等</p>
-    </div>
+<!-- ── Tab navigation ── -->
+<div class="flex" style="gap:4px;margin-bottom:16px" id="auditTabs">
+    <button class="btn btn-sm btn-primary" data-tab="login" onclick="switchTab('login')">登录审计</button>
+    <button class="btn btn-sm" data-tab="operation" onclick="switchTab('operation')">操作审计</button>
 </div>
+
+<!-- ── Tab: 登录审计 ── -->
+<div class="tab-content" id="tab-login">
+  {% if security_logs and security_logs|length > 0 %}
+    <div class="panel">
+      <div class="overflow-x">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>用户名</th>
+              <th>IP</th>
+              <th>User-Agent</th>
+              <th>结果</th>
+              <th>详情</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for log in security_logs %}
+          <tr>
+            <td class="td-mono">{{ log.created_at_display }}</td>
+            <td>{{ log.username }}</td>
+            <td class="td-mono">{{ log.ip }}</td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ log.user_agent }}">{{ log.user_agent[:40] }}{% if log.user_agent|length > 40 %}…{% endif %}</td>
+            <td>
+              {% if log.result == 'success' %}
+                <span class="badge badge-green">成功</span>
+              {% else %}
+                <span class="badge badge-red">失败</span>
+              {% endif %}
+            </td>
+            <td>{{ log.details }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% else %}
+    <div class="panel">
+      <div class="empty-state">
+        <div class="es-icon">🔐</div>
+        <div class="es-title">暂无登录审计记录</div>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<!-- ── Tab: 操作审计 ── -->
+<div class="tab-content" id="tab-operation" style="display:none">
+  {% if operation_logs and operation_logs|length > 0 %}
+    <div class="panel">
+      <div class="overflow-x">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>操作</th>
+              <th>对象类型</th>
+              <th>对象ID</th>
+              <th>详情</th>
+              <th>操作人</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for log in operation_logs %}
+          <tr>
+            <td class="td-mono">{{ log.created_at_display }}</td>
+            <td>
+              {% if log.action == 'create' %}
+                <span class="badge badge-green">create</span>
+              {% elif log.action == 'update' %}
+                <span class="badge badge-cyan">update</span>
+              {% elif log.action == 'delete' %}
+                <span class="badge badge-red">delete</span>
+              {% elif log.action == 'reject' %}
+                <span class="badge badge-yellow">reject</span>
+              {% else %}
+                <span class="badge">{{ log.action }}</span>
+              {% endif %}
+            </td>
+            <td class="td-mono">{{ log.entity_type }}</td>
+            <td class="td-mono">{{ log.entity_id if log.entity_id else '-' }}</td>
+            <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ log.details }}">{{ log.details[:50] }}{% if log.details|length > 50 %}…{% endif %}</td>
+            <td><span class="text-muted">system</span></td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% else %}
+    <div class="panel">
+      <div class="empty-state">
+        <div class="es-icon">📝</div>
+        <div class="es-title">暂无操作审计记录</div>
+      </div>
+    </div>
+  {% endif %}
+</div>
+
+<script>
+function switchTab(tab) {
+  // Hide all tab contents
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  // Show selected
+  document.getElementById('tab-' + tab).style.display = '';
+  // Update button styles
+  document.querySelectorAll('#auditTabs .btn').forEach(btn => {
+    btn.classList.remove('btn-primary');
+  });
+  document.querySelector('#auditTabs [data-tab="' + tab + '"]').classList.add('btn-primary');
+}
+// Default: show login tab
+switchTab('login');
+</script>
 {% endblock %}

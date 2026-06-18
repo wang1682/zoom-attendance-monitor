@@ -2,21 +2,154 @@
 {% block content %}
 
 <div class="page-header">
-  <h2 class="page-title">系统设置</h2>
-  <p class="page-subtitle">Zoom API、安全、TOTP 等配置</p>
+  <h2 class="page-title">⚙️ 系统设置</h2>
+  <p class="page-subtitle">全局系统参数配置</p>
 </div>
 
-<div class="panel">
-  <div class="panel-header">
-    <h3>系统设置</h3>
+<form method="post" action="/dashboard/settings/update">
+
+<!-- 站点设置 -->
+<div class="zone-card">
+  <h4>🌐 站点设置</h4>
+  <div class="row">
+    <span class="label">站点名称</span>
+    <input type="text" name="site_name" value="{{ site_name }}" placeholder="Zoom Monitor" style="flex:1;max-width:300px">
   </div>
-  <div class="panel-body" style="text-align:center;padding:60px 20px">
-    <p style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">系统设置功能开发中</p>
-    <p style="font-size:12px;color:var(--text-muted)">后续将支持 Zoom API 配置、安全策略、TOTP 全局设置等</p>
-    <div style="margin-top:20px">
-      <a href="/dashboard/zoom" class="btn btn-primary">前往安全中心</a>
-    </div>
+  <div class="row">
+    <span class="label">Logo URL</span>
+    <input type="text" name="logo_url" value="{{ logo_url }}" placeholder="https://example.com/logo.png" style="flex:1;max-width:300px">
+  </div>
+  <div class="row">
+    <span class="label">默认时区</span>
+    <select name="default_timezone" style="flex:1;max-width:300px">
+      <option value="Asia/Kuala_Lumpur" {% if default_timezone == 'Asia/Kuala_Lumpur' %}selected{% endif %}>Asia/Kuala_Lumpur (MYT, UTC+8)</option>
+      <option value="Asia/Shanghai" {% if default_timezone == 'Asia/Shanghai' %}selected{% endif %}>Asia/Shanghai (CST, UTC+8)</option>
+      <option value="Asia/Tokyo" {% if default_timezone == 'Asia/Tokyo' %}selected{% endif %}>Asia/Tokyo (JST, UTC+9)</option>
+      <option value="Asia/Hong_Kong" {% if default_timezone == 'Asia/Hong_Kong' %}selected{% endif %}>Asia/Hong_Kong (UTC+8)</option>
+      <option value="America/New_York" {% if default_timezone == 'America/New_York' %}selected{% endif %}>America/New_York (EST/EDT)</option>
+      <option value="America/Los_Angeles" {% if default_timezone == 'America/Los_Angeles' %}selected{% endif %}>America/Los_Angeles (PST/PDT)</option>
+      <option value="Europe/London" {% if default_timezone == 'Europe/London' %}selected{% endif %}>Europe/London (GMT/BST)</option>
+      <option value="UTC" {% if default_timezone == 'UTC' %}selected{% endif %}>UTC</option>
+    </select>
+  </div>
+  <div class="row">
+    <span class="label">默认语言</span>
+    <select name="default_language" style="flex:1;max-width:300px">
+      <option value="zh-CN" {% if default_language == 'zh-CN' %}selected{% endif %}>中文（简体）</option>
+      <option value="en" {% if default_language == 'en' %}selected{% endif %}>English</option>
+      <option value="ms" {% if default_language == 'ms' %}selected{% endif %}>Bahasa Melayu</option>
+    </select>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button type="submit" class="btn btn-primary">保存站点设置</button>
   </div>
 </div>
+
+<!-- 安全设置 -->
+<div class="zone-card">
+  <h4>🔒 安全设置</h4>
+  <div class="row">
+    <span class="label">密码最小长度</span>
+    <input type="number" name="password_min_length" value="{{ password_min_length }}" min="4" max="64" style="width:80px">
+  </div>
+  <div class="row">
+    <span class="label">复杂度要求</span>
+    <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" name="password_require_digit" value="1" {% if password_require_digit == '1' %}checked{% endif %}> 数字
+    </label>
+    <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" name="password_require_upper" value="1" {% if password_require_upper == '1' %}checked{% endif %}> 大写字母
+    </label>
+    <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" name="password_require_special" value="1" {% if password_require_special == '1' %}checked{% endif %}> 特殊字符
+    </label>
+  </div>
+  <div class="row">
+    <span class="label">登录失败锁定次数</span>
+    <input type="number" name="login_max_attempts" value="{{ login_max_attempts }}" min="1" max="50" style="width:80px">
+  </div>
+  <div class="row">
+    <span class="label">Session 有效期（分钟）</span>
+    <input type="number" name="session_ttl_minutes" value="{{ session_ttl_minutes }}" min="5" max="1440" style="width:80px">
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button type="submit" class="btn btn-primary">保存安全设置</button>
+  </div>
+</div>
+
+<!-- Zoom 设置 -->
+<div class="zone-card">
+  <h4>📹 Zoom 设置</h4>
+  <div class="row">
+    <span class="label">OAuth 回调地址</span>
+    <code class="mono" style="color:var(--text-secondary)">{{ oauth_callback_url }}</code>
+    <span class="badge badge-muted">只读</span>
+  </div>
+  <div class="row">
+    <span class="label">Webhook 地址</span>
+    <code class="mono" style="color:var(--text-secondary)">{{ webhook_url }}</code>
+    <span class="badge badge-muted">只读</span>
+  </div>
+  <div class="row">
+    <span class="label">默认 Scopes</span>
+    <input type="text" name="default_scopes" value="{{ default_scopes }}" placeholder="user:read, meeting:read" style="flex:1;max-width:400px">
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button type="submit" class="btn btn-primary">保存 Zoom 设置</button>
+  </div>
+</div>
+
+</form>
+
+<!-- Telegram 设置 (separate form for test button) -->
+<div class="zone-card">
+  <h4>✈️ Telegram 设置</h4>
+  <form method="post" action="/dashboard/settings/update" style="display:contents">
+  <div class="row">
+    <span class="label">默认 Bot Token</span>
+    <input type="password" name="default_bot_token" value="{{ default_bot_token }}" placeholder="123456:ABC-DEF..." style="flex:1;max-width:400px;font-family:var(--mono);font-size:11px">
+  </div>
+  <div class="row">
+    <span class="label">默认消息模板</span>
+    <textarea name="default_message_template" rows="3" style="flex:1;max-width:400px;font-family:var(--mono);font-size:11px">{{ default_message_template }}</textarea>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button type="submit" class="btn btn-primary">保存 Telegram 设置</button>
+  </div>
+  </form>
+  <div class="row" style="margin-top:6px;border-top:1px solid var(--border-light);padding-top:8px">
+    <span class="label" style="min-width:auto">测试推送</span>
+    <button type="button" class="btn btn-success" onclick="testTelegram()">📤 发送测试消息</button>
+    <span id="tg-test-result" class="text-muted" style="font-size:11px"></span>
+  </div>
+</div>
+
+<script>
+async function testTelegram() {
+  const btn = event.target;
+  const resultEl = document.getElementById('tg-test-result');
+  btn.disabled = true;
+  btn.textContent = '⏳ 发送中...';
+  resultEl.textContent = '';
+
+  try {
+    const res = await fetch('/dashboard/settings/test-telegram', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      resultEl.textContent = '✅ ' + data.message;
+      resultEl.style.color = 'var(--success)';
+    } else {
+      resultEl.textContent = '❌ ' + data.message;
+      resultEl.style.color = 'var(--danger)';
+    }
+  } catch (e) {
+    resultEl.textContent = '❌ 网络错误: ' + e.message;
+    resultEl.style.color = 'var(--danger)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📤 发送测试消息';
+  }
+}
+</script>
 
 {% endblock %}

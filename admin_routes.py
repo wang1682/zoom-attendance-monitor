@@ -83,8 +83,15 @@ def _user_dict(u: dict) -> dict:
         "username": u["username"],
         "display_name": u.get("display_name", ""),
         "role": u.get("role", "viewer"),
+        "is_active": u.get("is_active", 1),
         "active": "true" if u.get("is_active") else "false",
+        "tenant_id": u.get("tenant_id", ""),
         "created_at": u.get("created_at", ""),
+        "updated_at": u.get("updated_at", ""),
+        "telegram_chat_id": u.get("telegram_chat_id", ""),
+        "telegram_2fa_enabled": u.get("telegram_2fa_enabled", 0),
+        "telegram_2fa_verified_at": u.get("telegram_2fa_verified_at", ""),
+        "last_login": u.get("last_login", ""),
     }
 
 
@@ -487,7 +494,131 @@ async def dashboard_settings(request: Request, user: dict = Depends(require_user
     role = user.get("role", "")
     if role not in ("super_admin", "admin"):
         raise HTTPException(status_code=403, detail="权限不足")
-    return _render_admin(request, "admin_center", user, "system_settings.html")
+
+    # Read current settings from DB
+    all_settings = db.get_all_settings()
+
+    # Zoom OAuth callback and webhook URLs (read-only)
+    from config import settings as app_settings
+    base_url = getattr(app_settings, "base_url", "") or "https://example.com"
+    oauth_callback_url = f"{base_url.rstrip('/')}/api/v3/zoom/oauth/callback"
+    webhook_url = f"{base_url.rstrip('/')}/api/v3/zoom/webhook"
+
+    settings_dict = {
+        # Site
+        "site_name": all_settings.get("site_name", ""),
+        "logo_url": all_settings.get("logo_url", ""),
+        "default_timezone": all_settings.get("default_timezone", "Asia/Kuala_Lumpur"),
+        "default_language": all_settings.get("default_language", "zh-CN"),
+        # Security
+        "password_min_length": all_settings.get("password_min_length", "8"),
+        "password_require_digit": all_settings.get("password_require_digit", "1"),
+        "password_require_upper": all_settings.get("password_require_upper", "1"),
+        "password_require_special": all_settings.get("password_require_special", "1"),
+        "login_max_attempts": all_settings.get("login_max_attempts", "5"),
+        "session_ttl_minutes": all_settings.get("session_ttl_minutes", "60"),
+        # Zoom
+        "oauth_callback_url": oauth_callback_url,
+        "webhook_url": webhook_url,
+        "default_scopes": all_settings.get("default_scopes", ""),
+        # Telegram
+        "default_bot_token": all_settings.get("default_bot_token", ""),
+        "default_message_template": all_settings.get("default_message_template", ""),
+    }
+
+    return _render_admin(request, "admin_center", user, "system_settings.html",
+                         **settings_dict)
+
+
+@router.post("/settings/update")
+async def dashboard_settings_update(request: Request, user: dict = Depends(require_user)):
+    """Save system settings."""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    form = await request.form()
+    # Map form field names to settings keys
+    field_map = {
+        "site_name": "site_name",
+        "logo_url": "logo_url",
+        "default_timezone": "default_timezone",
+        "default_language": "default_language",
+        "password_min_length": "password_min_length",
+        "password_require_digit": "password_require_digit",
+        "password_require_upper": "password_require_upper",
+        "password_require_special": "password_require_special",
+        "login_max_attempts": "login_max_attempts",
+        "session_ttl_minutes": "session_ttl_minutes",
+        "default_scopes": "default_scopes",
+        "default_bot_token": "default_bot_token",
+        "default_message_template": "default_message_template",
+    }
+    for field, key in field_map.items():
+        val = form.get(field, "").strip()
+        db.set_setting(key, val)
+
+    return RedirectResponse(url="/dashboard/settings", status_code=303)
+
+
+@router.post("/settings/test-telegram")
+async def dashboard_settings_test_telegram(request: Request, user: dict = Depends(require_user)):
+    """Test Telegram push with current settings."""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    bot_token = db.get_setting("default_bot_token", "")
+    if not bot_token:
+        return JSONResponse(status_code=400, content={"ok": False, "message": "请先配置默认 Bot Token"})
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as cl:
+            # Get bot info first
+            r = await cl.get(f"https://api.telegram.org/bot{bot_token}/getMe")
+            if r.status_code != 200:
+                return JSONResponse(status_code=400, content={
+                    "ok": False, "message": f"Bot Token 无效: HTTP {r.status_code}"
+                })
+            bot_info = r.json()
+            bot_username = bot_info.get("result", {}).get("username", "unknown")
+
+            # Get the user's chat_id from session
+            chat_id = request.session.get("user_chat_id", "")
+            if not chat_id:
+                # Try to find the user's telegram_chat_id from DB
+                fresh_user = db.get_user_by_id(user["id"])
+                chat_id = fresh_user.get("telegram_chat_id", "") if fresh_user else ""
+
+            if not chat_id:
+                return JSONResponse(status_code=400, content={
+                    "ok": False, "message": "当前用户未绑定 Telegram。请先在安全中心绑定 Telegram 后再测试。"
+                })
+
+            # Send test message
+            msg = (
+                "🧪 *Zoom Monitor 测试推送*\n\n"
+                "这是一条来自系统设置的测试消息。\n"
+                f"发送时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                f"Bot: @{bot_username}"
+            )
+            pr = await cl.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+            )
+            if pr.status_code == 200:
+                return JSONResponse(content={
+                    "ok": True, "message": f"✅ 测试推送成功！已发送至 @{bot_username}"
+                })
+            else:
+                return JSONResponse(status_code=400, content={
+                    "ok": False, "message": f"发送失败: HTTP {pr.status_code}"
+                })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "ok": False, "message": f"测试推送异常: {type(e).__name__}: {str(e)[:200]}"
+        })
 
 
 @router.get("/setup")
@@ -531,7 +662,19 @@ async def dashboard_admin_center(request: Request, user: dict = Depends(require_
     role = user.get("role", "")
     if role not in ("super_admin", "admin"):
         raise HTTPException(status_code=403, detail="权限不足")
-    return _render_admin(request, "admin_center", user, "admin_center.html")
+
+    # Compute stats
+    stats = {
+        "total_tenants": db.count_total_tenants(),
+        "total_users": db.count_total_users(),
+        "total_zoom_accounts": db.count_total_zoom_accounts(),
+        "total_channels": db.count_total_channels(),
+        "today_alerts": db.count_today_alerts(),
+        "today_push_count": db.count_today_push_count(),
+    }
+
+    return _render_admin(request, "admin_center", user, "admin_center.html",
+                         stats=stats)
 
 
 # ── Admin: Tenants ────────────────────────────────────────────────────────────
@@ -711,13 +854,16 @@ async def dashboard_users(request: Request, user: dict = Depends(require_user)):
 
     all_tenants = db.get_all_tenants() if actor_role in ("super_admin", "admin") else []
 
+    # Build tenant display name map
+    tenants_map = {}
+    for t in all_tenants:
+        tenants_map[t["id"]] = t.get("display_name") or t["id"]
+
     # Get users filtered by role
     users_raw = db.get_users(viewer_role=actor_role, tenant_id=tenant_id)
     users = []
     for u in users_raw:
         ud = _user_dict(u)
-        ud["telegram_chat_id"] = u.get("telegram_chat_id", "")
-        ud["telegram_2fa_enabled"] = u.get("telegram_2fa_enabled", 0)
         ud["can_manage"] = _user_can_manage(actor_role, u)
         users.append(ud)
 
@@ -727,7 +873,8 @@ async def dashboard_users(request: Request, user: dict = Depends(require_user)):
                          users=users,
                          can_create=can_create,
                          createable_roles=_allowed_create_roles(actor_role),
-                         all_tenants=all_tenants)
+                         all_tenants=all_tenants,
+                         tenants_map=tenants_map)
 
 
 @router.post("/users/create")
@@ -814,26 +961,145 @@ async def dashboard_users_role(request: Request, user_id: int,
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
+@router.post("/users/{user_id}/update")
+async def dashboard_users_update(request: Request, user_id: int,
+                                 user: dict = Depends(require_user)):
+    """Update user fields — role-gated."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target or not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权编辑此用户")
+
+    form = await request.form()
+    kwargs = {}
+    for key in ("username", "display_name", "role", "tenant_id", "telegram_chat_id"):
+        val = form.get(key)
+        if val is not None:
+            kwargs[key] = val.strip() if isinstance(val, str) else val
+
+    # Role re-validation
+    if "role" in kwargs:
+        allowed = {r["value"] for r in _allowed_create_roles(actor_role)}
+        if kwargs["role"] not in allowed:
+            # super_admin can still set any role, allow
+            if actor_role != "super_admin":
+                raise HTTPException(status_code=403, detail="无权设置此角色")
+
+        # Protect super_admin demotion
+        if target.get("role") == "super_admin" and kwargs["role"] != "super_admin":
+            if user["id"] == user_id:
+                raise HTTPException(status_code=403, detail="超级管理员不能降级自己")
+            remaining = db.get_users(viewer_role="super_admin")
+            if len(remaining) <= 1:
+                raise HTTPException(status_code=400, detail="系统必须至少保留一个超级管理员")
+
+    db.update_user_full(user_id, **kwargs)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+@router.post("/users/{user_id}/reset-password")
+async def dashboard_users_reset_password(request: Request, user_id: int,
+                                         new_password: str = Form(...),
+                                         user: dict = Depends(require_user)):
+    """Reset user password — role-gated."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target or not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权重置此用户密码")
+    db.reset_user_password(user_id, new_password)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+@router.post("/users/{user_id}/tenant")
+async def dashboard_users_tenant(request: Request, user_id: int,
+                                 tenant_id: str = Form(...),
+                                 user: dict = Depends(require_user)):
+    """Change user's tenant — role-gated (super_admin/admin only)."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target or not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权修改此用户租户")
+    db.update_user_full(user_id, tenant_id=tenant_id)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
 # ── Tenants / Audit / Settings (guarded routes) ────────────────────────────
 
 @router.get("/tenants", response_class=HTMLResponse)
 async def dashboard_tenants(request: Request, user: dict = Depends(require_user)):
-    """Tenant management — super_admin only."""
+    """Tenant management — super_admin only. Enhanced with stats."""
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
-    all_tenants = db.get_all_tenants()
-    tenants = [_tenant_dict(t) for t in all_tenants]
+    all_tenants = db.get_all_tenants_with_inactive()
+    tenants = []
+    for t in all_tenants:
+        td = _tenant_dict(t)
+        # Attach aggregate counts
+        td["user_count"] = db.count_users_by_tenant(t["id"])
+        td["zoom_account_count"] = db.count_zoom_accounts_by_tenant(t["id"])
+        td["channel_count"] = db.count_telegram_channels_by_tenant(t["id"])
+        td["member_count"] = db.count_members_by_tenant(t["id"])
+        tenants.append(td)
     return _render_admin(request, "admin_center", user, "admin_tenants.html",
                          tenants=tenants)
 
 
-@router.get("/audit", response_class=HTMLResponse)
-async def dashboard_audit(request: Request, user: dict = Depends(require_user)):
-    """Audit log — super_admin only (placeholder)."""
+@router.get("/tenants/{tenant_id}", response_class=HTMLResponse)
+async def dashboard_tenant_detail(request: Request, tenant_id: str,
+                                  user: dict = Depends(require_user)):
+    """Tenant detail page — super_admin only."""
     if user.get("role") != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
+    t = db.get_tenant_by_id(tenant_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="租户不存在")
+    tenant = _tenant_dict(t)
+
+    # Aggregate data
+    user_count = db.count_users_by_tenant(tenant_id)
+    zoom_account_count = db.count_zoom_accounts_by_tenant(tenant_id)
+    channel_count = db.count_telegram_channels_by_tenant(tenant_id)
+    member_count = db.count_members_by_tenant(tenant_id)
+    alert_rule_count = db.count_alert_rules_by_tenant(tenant_id)
+    enabled_alert_count = db.count_enabled_alerts_by_tenant(tenant_id)
+    group_count = db.count_groups_by_tenant(tenant_id)
+    zoom_accounts = db.get_tenant_zoom_accounts(tenant_id)
+    bot_status = db.get_tenant_bot_status(tenant_id)
+
+    return _render_admin(request, "admin_center", user, "tenant_detail.html",
+                         tenant=tenant,
+                         user_count=user_count,
+                         zoom_account_count=zoom_account_count,
+                         channel_count=channel_count,
+                         member_count=member_count,
+                         alert_rule_count=alert_rule_count,
+                         enabled_alert_count=enabled_alert_count,
+                         group_count=group_count,
+                         zoom_accounts=zoom_accounts,
+                         bot_status=bot_status)
+
+
+@router.post("/tenants/{tenant_id}/toggle")
+async def dashboard_tenants_toggle(request: Request, tenant_id: str,
+                                   user: dict = Depends(require_role("super_admin"))):
+    """Toggle tenant active/inactive."""
+    db.toggle_tenant(tenant_id)
+    # Redirect back to detail page if that's where we came from
+    referer = request.headers.get("referer", "")
+    if f"/tenants/{tenant_id}" in referer:
+        return RedirectResponse(url=f"/dashboard/tenants/{tenant_id}", status_code=303)
+    return RedirectResponse(url="/dashboard/tenants", status_code=303)
+
+
+@router.get("/audit", response_class=HTMLResponse)
+async def dashboard_audit(request: Request, user: dict = Depends(require_user)):
+    """Audit log — super_admin only."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="权限不足")
+    security_logs = db.get_security_audit_logs(limit=50)
+    operation_logs = db.get_operation_audit_logs(limit=50)
     return _render_admin(request, "admin_center", user, "audit_log.html",
-                         events=[])
+                         security_logs=security_logs, operation_logs=operation_logs)
 
 
 # ── Admin: Zoom Accounts ─────────────────────────────────────────────────────

@@ -21,6 +21,18 @@ from config import settings
 
 MYT = timezone(timedelta(hours=8))
 
+ROLES = ["super_admin", "admin", "tenant_admin", "user"]
+ROLE_HIERARCHY = {
+    "super_admin": 4,
+    "admin": 3,
+    "tenant_admin": 2,
+    "user": 1,
+}
+
+def role_ge(user_role: str, required_role: str) -> bool:
+    """Check if user_role >= required_role in hierarchy"""
+    return ROLE_HIERARCHY.get(user_role, 0) >= ROLE_HIERARCHY.get(required_role, 0)
+
 def to_myt_str(dt_str: str) -> str:
     """将 UTC ISO/Datetime 字符串转 MYT MM-DD HH:mm:ss"""
     if not dt_str:
@@ -282,19 +294,19 @@ def init_db(readonly: bool = False):
         pass
 
     # migrate: move member_group_members data to member_display.group_id
-    # ⚠️ 校验：只同步同租户数据，md.tenant_id == mg.tenant_id 才写入
+    # ⚠️ 只填空（group_id IS NULL），不覆盖已有分组，防止 migration 双写回滚
     try:
         rows = conn.execute(
             "SELECT mgm.group_id, mgm.member_name, md.raw_name, md.tenant_id "
             "FROM member_group_members mgm "
             "JOIN member_display md ON md.raw_name = mgm.member_name "
             "JOIN member_groups mg ON mg.id = mgm.group_id "
-            "WHERE md.tenant_id == mg.tenant_id"
+            "WHERE md.tenant_id == mg.tenant_id AND md.group_id IS NULL"
         ).fetchall()
         for gid, mname, raw_name, md_tenant in rows:
             conn.execute(
-                "UPDATE member_display SET group_id = ? WHERE raw_name = ? AND (group_id IS NULL OR group_id != ?)",
-                (gid, raw_name, gid),
+                "UPDATE member_display SET group_id = ? WHERE raw_name = ? AND group_id IS NULL",
+                (gid, raw_name),
             )
         # For members not yet in member_display, create placeholder entries
         rows2 = conn.execute(
@@ -349,6 +361,46 @@ def init_db(readonly: bool = False):
     # multi-tenant migrations
     if not readonly:
         run_mt_migrations()
+
+    # migrate: add Telegram 2FA columns to users
+    for col_sql in [
+        "ALTER TABLE users ADD COLUMN telegram_chat_id TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN telegram_2fa_enabled INTEGER DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN telegram_2fa_verified_at TEXT",
+        "ALTER TABLE users ADD COLUMN twofa_secret TEXT DEFAULT ''",
+        "ALTER TABLE users ADD COLUMN twofa_backup_codes TEXT DEFAULT ''",
+    ]:
+        try:
+            conn.execute(col_sql)
+        except Exception:
+            pass
+
+    # create login_attempts table (for rate limiting)
+    conn.execute("CREATE TABLE IF NOT EXISTS login_attempts ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  ip TEXT NOT NULL,"
+        "  username TEXT NOT NULL DEFAULT '',"
+        "  failed_count INTEGER NOT NULL DEFAULT 1,"
+        "  locked_until TEXT,"
+        "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip ON login_attempts(ip)")
+
+    # create security_audit_logs table
+    conn.execute("CREATE TABLE IF NOT EXISTS security_audit_logs ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  user_id INTEGER,"
+        "  username TEXT DEFAULT '',"
+        "  tenant_id TEXT DEFAULT '',"
+        "  action TEXT NOT NULL,"
+        "  ip TEXT DEFAULT '',"
+        "  user_agent TEXT DEFAULT '',"
+        "  result TEXT DEFAULT 'success',"
+        "  details TEXT DEFAULT '',"
+        "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_action ON security_audit_logs(action)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_created ON security_audit_logs(created_at)")
 
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
@@ -546,6 +598,28 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         ).fetchall()
     raw = [dict(r) for r in rows]
 
+    # ── 批量加载成员→分组映射（一次 JOIN，避免 N+1）──
+    _group_map_cache = {}
+    if tenant_id:
+        conn = _get_conn()
+        grp_rows = conn.execute(
+            "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+            "FROM member_display md "
+            "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+            "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
+            (tenant_id,),
+        ).fetchall()
+        for gr in grp_rows:
+            grd = dict(gr)
+            for key in (grd.get("raw_name", "").strip().lower().replace(" ", ""),
+                        grd.get("display_name", "").strip().lower().replace(" ", "")):
+                if key:
+                    _group_map_cache[key] = grd.get("group_name", "")
+
+    def _batch_group_lookup(name: str) -> str:
+        key = name.strip().lower().replace(" ", "")
+        return _group_map_cache.get(key, "")
+
     # ── 按 resolve_display_name 分组 ──
     members = OrderedDict()
     for e in raw:
@@ -555,7 +629,9 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         if display_name not in members:
             members[display_name] = {
                 "standard_name": display_name,
-                "group_name": get_member_group(display_name, tenant_id) or "",
+                "raw_name": resolved.get("raw_name", display_name),
+                "group_id": None,
+                "group_name": _batch_group_lookup(display_name),
                 "status": "offline",
                 "first_join": None,
                 "today_total_seconds": 0,
@@ -1177,6 +1253,52 @@ def log_audit(action: str, entity_type: str = "telegram_alert_rule",
     conn.commit()
 
 
+def get_security_audit_logs(limit: int = 50) -> list[dict]:
+    """获取最近的登录审计记录"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM security_audit_logs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["created_at_display"] = to_myt_str(d.get("created_at", ""))
+        result.append(d)
+    return result
+
+
+def get_operation_audit_logs(limit: int = 50) -> list[dict]:
+    """获取最近的操作审计记录"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["created_at_display"] = to_myt_str(d.get("created_at", ""))
+        result.append(d)
+    return result
+
+
+def write_security_audit_log(username: str, action: str, ip: str = "",
+                              user_agent: str = "", result: str = "success",
+                              details: str = "", user_id: int = None,
+                              tenant_id: str = ""):
+    """写入安全审计日志（登录相关）"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO security_audit_logs (user_id, username, tenant_id, action, ip, "
+        "user_agent, result, details, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, tenant_id, action, ip, user_agent, result, details, now),
+    )
+    conn.commit()
+
+
 def get_rule_push_target(event_type: str) -> tuple[str, str]:
     """根据告警规则 event_type 查询推送目标和 Bot Token
     
@@ -1478,6 +1600,11 @@ def add_member_to_group(group_id: int, member_name: str, tenant_id: str | None =
                     (member_name.strip(), member_name.strip(), match_key, group_id, now, now),
                 )
         # 旧方式：同时写入 member_group_members 保持兼容
+        # 先删旧记录，防止旧表多记录导致迁移再读时混淆
+        conn.execute(
+            "DELETE FROM member_group_members WHERE member_name = ? AND group_id != ?",
+            (member_name.strip(), group_id),
+        )
         conn.execute(
             "INSERT OR IGNORE INTO member_group_members (group_id, member_name, created_at) VALUES (?, ?, ?)",
             (group_id, member_name.strip(), now),
@@ -1706,7 +1833,7 @@ def run_mt_migrations(readonly: bool = False):
 # ── Auth Functions ──────────────────────────────────────────────────────
 
 def create_user(username: str, password: str, display_name: str = "",
-                role: str = "super_admin", tenant_id: str = "default") -> int:
+                role: str = "user", tenant_id: str = "default") -> int:
     """Create user. Returns user id. Raises on duplicate username."""
     conn = _get_conn()
     from datetime import datetime, timezone
@@ -1735,6 +1862,30 @@ def get_user_by_id(user_id: int) -> dict | None:
         "SELECT * FROM users WHERE id = ?", (user_id,)
     ).fetchone()
     return dict(row) if row else None
+
+
+def get_users(user_role: str = None, tenant_id: str = None, viewer_role: str = None) -> list[dict]:
+    """Get users with role-based filtering.
+    super_admin: all users
+    admin: all except super_admin
+    tenant_admin: users in own tenant with role user
+    user: no access (empty list)
+    """
+    conn = _get_conn()
+    if viewer_role == "super_admin":
+        rows = conn.execute("SELECT * FROM users ORDER BY id").fetchall()
+    elif viewer_role == "admin":
+        rows = conn.execute(
+            "SELECT * FROM users WHERE role != 'super_admin' ORDER BY id"
+        ).fetchall()
+    elif viewer_role == "tenant_admin" and tenant_id:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE tenant_id = ? AND role = 'user' ORDER BY id",
+            (tenant_id,),
+        ).fetchall()
+    else:
+        return []
+    return [dict(r) for r in rows]
 
 
 def verify_user_password(username: str, password: str) -> dict | None:
@@ -1825,7 +1976,7 @@ def create_tenant(name: str, display_name: str = "", plan: str = "pro") -> str:
 def get_all_tenants() -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT * FROM tenants ORDER BY created_at DESC"
+        "SELECT * FROM tenants WHERE is_active = 1 ORDER BY created_at DESC"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -1923,6 +2074,162 @@ def update_tenant_bot_config(tenant_id: str, token: str, username: str = "",
     return True
 
 
+# ── Tenant Detail / Admin Stats ──────────────────────────────────────────
+
+def get_tenant_by_id(tenant_id: str) -> dict | None:
+    """获取单个租户完整信息。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM tenants WHERE id = ?", (tenant_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_all_tenants_with_inactive() -> list[dict]:
+    """获取所有租户（含停用），用于管理列表。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM tenants ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_users_by_tenant(tenant_id: str) -> int:
+    """用户数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM users WHERE tenant_id = ? AND is_active = 1",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_zoom_accounts_by_tenant(tenant_id: str) -> int:
+    """Zoom 账号数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM zoom_accounts WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_telegram_channels_by_tenant(tenant_id: str) -> int:
+    """频道数（从 tenant_channels 或 telegram_channels 表统计）。"""
+    conn = _get_conn()
+    # Try tenant_channels first (newer), fallback to telegram_channels
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM tenant_channels WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    if row and row["c"] > 0:
+        return row["c"]
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM telegram_channels WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_members_by_tenant(tenant_id: str) -> int:
+    """分组成员数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM member_group_members WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_alert_rules_by_tenant(tenant_id: str) -> int:
+    """告警规则数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM telegram_alert_rules WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_enabled_alerts_by_tenant(tenant_id: str) -> int:
+    """启用的告警规则数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM telegram_alert_rules WHERE tenant_id = ? AND enabled = 1",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_groups_by_tenant(tenant_id: str) -> int:
+    """分组数。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM member_groups WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def get_tenant_zoom_accounts(tenant_id: str) -> list[dict]:
+    """带状态的 Zoom 账号列表。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM zoom_accounts WHERE tenant_id = ? ORDER BY created_at DESC",
+        (tenant_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_tenant(tenant_id: str, **kwargs) -> bool:
+    """更新租户信息。"""
+    allowed = {"display_name", "name", "plan", "is_active", "telegram_bot_token",
+               "telegram_bot_username", "zoom_plan", "live_mode", "sharing_mode",
+               "report_mode", "metrics_available", "reports_available"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    clauses = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [now, tenant_id]
+    conn = _get_conn()
+    conn.execute(
+        f"UPDATE tenants SET {clauses}, updated_at = ? WHERE id = ?",
+        values,
+    )
+    conn.commit()
+    return True
+
+
+def get_tenant_channels_count(tenant_id: str) -> int:
+    """获取租户的频道数（按 tenant_channels 统计）。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM tenant_channels WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def get_tenant_bot_status(tenant_id: str) -> dict:
+    """获取租户 bot 状态。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT telegram_bot_token, telegram_bot_username, telegram_bot_verified_at "
+        "FROM tenants WHERE id = ?", (tenant_id,)
+    ).fetchone()
+    if not row:
+        return {"has_bot": False, "username": "", "verified": False}
+    has_bot = bool(row[0])
+    return {
+        "has_bot": has_bot,
+        "username": row[1] or "",
+        "verified": bool(row[2]),
+        "verified_at": row[2] or "",
+    }
+
+
 def get_tenant_channels_periodic_report() -> list[dict]:
     """Get all enabled tenant_channels (is_enabled=1, bot_token non-empty) for periodic report."""
     conn = _get_conn()
@@ -1980,6 +2287,51 @@ def update_user(target_id: int, display_name: str = None, role: str = None,
     conn.execute(
         f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
         vals,
+    )
+    conn.commit()
+    return True
+
+
+def update_user_full(target_id: int, **kwargs) -> bool:
+    """Update any fields on users table. Accept username, display_name, role,
+    tenant_id, is_active, telegram_chat_id, etc. Safely filters to valid columns."""
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+
+    valid_cols = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+    invalid = [k for k in kwargs if k not in valid_cols]
+    if invalid:
+        raise ValueError(f"Invalid columns: {invalid}")
+
+    fields = ["updated_at = ?"]
+    vals = [now]
+    for key, val in kwargs.items():
+        if key in ("id", "password_hash", "updated_at", "created_at"):
+            continue  # protect immutable/auto fields
+        if val is not None:
+            fields.append(f"{key} = ?")
+            vals.append(val)
+    if len(fields) == 1:
+        return False  # nothing to update
+    vals.append(target_id)
+    conn.execute(
+        f"UPDATE users SET {', '.join(fields)} WHERE id = ?",
+        vals,
+    )
+    conn.commit()
+    return True
+
+
+def reset_user_password(target_id: int, new_password: str) -> bool:
+    """Reset user password with proper hashing."""
+    conn = _get_conn()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    pw_hash = _hash_pw(new_password)
+    conn.execute(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (pw_hash, now, target_id),
     )
     conn.commit()
     return True
@@ -2316,8 +2668,10 @@ def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tup
 def get_sharing_records(tenant_id: str, limit: int = 50,
                         start_time: str | None = None,
                         end_time: str | None = None,
-                        search: str | None = None) -> list[dict]:
-    """获取共享屏幕历史记录
+                        search: str | None = None,
+                        group_id: str | None = None) -> tuple:
+    """
+获取共享...[truncated]
     start_time/end_time: UTC ISO 字符串，按 start_time 过滤（MYT 时区的起止由前端计算传入）
     search: 按 user_name 模糊搜索
     """
@@ -2330,19 +2684,22 @@ def get_sharing_records(tenant_id: str, limit: int = 50,
     stale_threshold_utc = (now_myt - timedelta(hours=6)).astimezone(timezone.utc)
 
     # 构建 WHERE 条件
-    where_clauses = ["tenant_id = ?"]
+    where_clauses = ["sl.tenant_id = ?"]
     where_params = [tenant_id]
     if start_time:
-        where_clauses.append("start_time >= ?")
+        where_clauses.append("sl.start_time >= ?")
         where_params.append(start_time)
     if end_time:
-        where_clauses.append("start_time < ?")
+        where_clauses.append("sl.start_time < ?")
         where_params.append(end_time)
     if search:
-        where_clauses.append("user_name LIKE ?")
+        where_clauses.append("sl.user_name LIKE ?")
         where_params.append(f"%{search}%")
+    if group_id:
+        where_clauses.append("md.group_id = ?")
+        where_params.append(group_id)
 
-    sql = f"SELECT * FROM sharing_live WHERE {' AND '.join(where_clauses)} ORDER BY start_time DESC LIMIT ?"
+    sql = f"SELECT sl.*, COALESCE(mg.name, '') AS group_name, COALESCE(md.group_id, '') AS group_id FROM sharing_live sl LEFT JOIN member_display md ON (md.raw_name=sl.user_name OR md.display_name=sl.user_name) AND md.tenant_id=sl.tenant_id LEFT JOIN member_groups mg ON mg.id=md.group_id AND mg.tenant_id=md.tenant_id WHERE {' AND '.join(where_clauses)} ORDER BY sl.start_time DESC LIMIT ?"
     where_params_str = [str(p) for p in where_params] + [str(limit)]
     rows = conn.execute(sql, where_params_str).fetchall()
     
@@ -2519,3 +2876,249 @@ def get_participants_by_meeting(meeting_id: str) -> list[dict]:
         ORDER BY name
     """, (meeting_id,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ═══════════════════════════════════════════
+# Security - Login Attempts / Rate Limiting
+# ═══════════════════════════════════════════
+
+def check_login_attempts(ip: str) -> dict:
+    """Check if IP is locked. Returns {'locked': bool, 'remaining': int, 'locked_until': str or None}"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT failed_count, locked_until FROM login_attempts WHERE ip = ? ORDER BY id DESC LIMIT 1",
+        (ip,)
+    ).fetchone()
+    if not row:
+        return {"locked": False, "remaining": 5, "locked_until": None}
+    locked_until = row["locked_until"]
+    if locked_until:
+        from datetime import datetime, timezone
+        try:
+            until = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < until:
+                return {"locked": True, "remaining": 0, "locked_until": locked_until}
+        except:
+            pass
+    return {"locked": False, "remaining": max(0, 5 - row["failed_count"]), "locked_until": None}
+
+def record_login_attempt(ip: str, username: str, success: bool) -> None:
+    """Record login attempt. On success, clear the record. On failure, increment."""
+    conn = _get_conn()
+    if success:
+        conn.execute("DELETE FROM login_attempts WHERE ip = ?", (ip,))
+        conn.commit()
+        return
+    from datetime import datetime, timezone, timedelta
+    row = conn.execute(
+        "SELECT id, failed_count FROM login_attempts WHERE ip = ? ORDER BY id DESC LIMIT 1",
+        (ip,)
+    ).fetchone()
+    now = datetime.now(timezone.utc)
+    if row:
+        new_count = row["failed_count"] + 1
+        if new_count >= 5:
+            locked_until = (now + timedelta(minutes=15)).isoformat()
+            conn.execute(
+                "UPDATE login_attempts SET failed_count = ?, locked_until = ?, created_at = ? WHERE id = ?",
+                (new_count, locked_until, now.isoformat(), row["id"])
+            )
+        else:
+            conn.execute(
+                "UPDATE login_attempts SET failed_count = ?, created_at = ? WHERE id = ?",
+                (new_count, now.isoformat(), row["id"])
+            )
+    else:
+        conn.execute(
+            "INSERT INTO login_attempts (ip, username, failed_count) VALUES (?, ?, 1)",
+            (ip, username)
+        )
+    conn.commit()
+
+
+# ═══════════════════════════════════════════
+# Security - Audit Logs
+# ═══════════════════════════════════════════
+
+def log_security_event(
+    action: str,
+    user_id: int = None,
+    username: str = "",
+    tenant_id: str = "",
+    ip: str = "",
+    user_agent: str = "",
+    result: str = "success",
+    details: str = "",
+) -> int:
+    """Record a security audit event."""
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO security_audit_logs (user_id, username, tenant_id, action, ip, user_agent, result, details) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, tenant_id, action, ip, user_agent, result, details),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_last_login_ip(user_id: int) -> str | None:
+    """返回该用户上一次 login_success 的 IP（非最新一条），若不存在返回 None。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT ip FROM security_audit_logs "
+        "WHERE user_id = ? AND action = 'login_success' AND result = 'success' "
+        "ORDER BY id DESC LIMIT 1 OFFSET 1",
+        (user_id,)
+    ).fetchone()
+    if row and row["ip"]:
+        return row["ip"]
+    return None
+
+
+# ═══════════════════════════════════════════
+# Account Management
+# ═══════════════════════════════════════════
+
+# get_user_by_id and get_user_by_username already exist above
+# import json used below — ensure it's available (db.py already has it at top for webhook)
+
+def set_user_telegram_chat_id(user_id: int, chat_id: str) -> None:
+    """Bind Telegram chat_id to user."""
+    conn = _get_conn()
+    conn.execute("UPDATE users SET telegram_chat_id = ? WHERE id = ?", (chat_id, user_id))
+    conn.commit()
+
+def enable_telegram_2fa(user_id: int) -> None:
+    """Enable Telegram 2FA for user."""
+    from datetime import datetime, timezone
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET telegram_2fa_enabled = 1, telegram_2fa_verified_at = ? WHERE id = ?",
+        (datetime.now(timezone.utc).isoformat(), user_id)
+    )
+    conn.commit()
+
+def disable_telegram_2fa(user_id: int) -> None:
+    """Disable Telegram 2FA for user."""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET telegram_2fa_enabled = 0, telegram_chat_id = '' WHERE id = ?",
+        (user_id,)
+    )
+    conn.commit()
+
+def is_2fa_enabled(user_id: int) -> bool:
+    """Check if Telegram 2FA is enabled for user."""
+    conn = _get_conn()
+    row = conn.execute("SELECT telegram_2fa_enabled FROM users WHERE id = ?", (user_id,)).fetchone()
+    return bool(row and row["telegram_2fa_enabled"])
+
+
+# ═══════════════════════════════════════════
+# Security - Backup Codes
+# ═══════════════════════════════════════════
+
+import secrets
+
+def generate_backup_codes(count: int = 8) -> list[str]:
+    """Generate N backup codes in XXXX-XXXX format. Returns plaintext list."""
+    codes = []
+    for _ in range(count):
+        part1 = secrets.randbelow(10000)
+        part2 = secrets.randbelow(10000)
+        codes.append(f"{part1:04d}-{part2:04d}")
+    return codes
+
+def hash_backup_codes(codes: list[str]) -> str:
+    """Hash backup codes for storage. Returns JSON list of SHA256 hex strings."""
+    import hashlib
+    hashed = [hashlib.sha256(c.encode()).hexdigest() for c in codes]
+    return json.dumps(hashed)
+
+def verify_backup_code(user_id: int, code: str) -> bool:
+    """Verify and consume a backup code. Returns True if valid."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT twofa_backup_codes FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    if not row or not row["twofa_backup_codes"]:
+        return False
+    import hashlib
+    stored = json.loads(row["twofa_backup_codes"])
+    code_hash = hashlib.sha256(code.encode()).hexdigest()
+    for i, h in enumerate(stored):
+        if h == code_hash:
+            stored.pop(i)
+            conn.execute(
+                "UPDATE users SET twofa_backup_codes = ? WHERE id = ?",
+                (json.dumps(stored), user_id)
+            )
+            conn.commit()
+            return True
+    return False
+
+def save_backup_codes(user_id: int, codes: list[str]) -> None:
+    """Save hashed backup codes to user record."""
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE users SET twofa_backup_codes = ? WHERE id = ?",
+        (hash_backup_codes(codes), user_id)
+    )
+    conn.commit()
+
+
+# ── System Settings helpers ────────────────────────────────────────────────
+
+
+def get_all_settings() -> dict[str, str]:
+    """Get all settings as a flat dict."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT key, value FROM settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+# ── Admin Center Stats ────────────────────────────────────────────────────
+
+
+def count_total_tenants() -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) AS c FROM tenants WHERE is_active = 1").fetchone()
+    return row["c"] if row else 0
+
+
+def count_total_users() -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) AS c FROM users WHERE is_active = 1").fetchone()
+    return row["c"] if row else 0
+
+
+def count_total_zoom_accounts() -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) AS c FROM zoom_accounts WHERE is_active = 1").fetchone()
+    return row["c"] if row else 0
+
+
+def count_total_channels() -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) AS c FROM telegram_channels WHERE enabled = 1").fetchone()
+    return row["c"] if row else 0
+
+
+def count_today_alerts() -> int:
+    """Count alerts created today (UTC)."""
+    conn = _get_conn()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM alerts WHERE created_at >= ?", (today,)
+    ).fetchone()
+    return row["c"] if row else 0
+
+
+def count_today_push_count() -> int:
+    """Count alert_sent entries from today (UTC)."""
+    conn = _get_conn()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM alert_sent WHERE sent_at >= ?", (today,)
+    ).fetchone()
+    return row["c"] if row else 0
