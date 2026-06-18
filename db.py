@@ -647,10 +647,21 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         m = members[display_name]
         action, at = e["action"], e["action_time"]
 
+        # ── 跳过 breakout 事件 ──
+        if action not in ("enter", "joined", "leave", "left"):
+            continue
+
+        # ── 解析 action_time 为 datetime（统一格式） ──
+        try:
+            at_dt = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+        except:
+            at_dt = datetime.fromisoformat(str(at))
+
         if action in ("enter", "joined"):
             m["join_count"] += 1
-            if m["first_join"] is None or at < m["first_join"]:
-                m["first_join"] = at
+            if at_dt >= today_start_utc:
+                if m["first_join"] is None or at < m["first_join"]:
+                    m["first_join"] = at
             m["last_action"] = "enter"
         elif action in ("leave", "left"):
             m["leave_count"] += 1
@@ -658,7 +669,15 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
 
         # ── 更新 email：用今天数据里最新一条（按 action_time） ──
         m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": e.get("email", "")})
-        m["last_activity"] = at
+
+        # ── last_activity 只取今天 UTC 00:00 之后的事件 ──
+        if at_dt >= today_start_utc:
+            m["last_activity"] = at
+
+    # ── 保证 last_activity >= first_join ──
+    for m in members.values():
+        if m["first_join"] is not None and (m["last_activity"] is None or m["last_activity"] < m["first_join"]):
+            m["last_activity"] = m["first_join"]
 
     # ── 计算时长 & 状态 ──
     for m in members.values():
@@ -1249,6 +1268,20 @@ def log_audit(action: str, entity_type: str = "telegram_alert_rule",
         "INSERT INTO audit_logs (action, entity_type, entity_id, details, created_at) "
         "VALUES (?, ?, ?, ?, ?)",
         (action, entity_type, entity_id, details, now),
+    )
+    conn.commit()
+
+
+def audit_log_action(tenant_id: str = "default", action: str = "",
+                     entity_type: str = "user", entity_id: int = None,
+                     details: str = ""):
+    """Write audit log entry with tenant context."""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO audit_logs (tenant_id, action, entity_type, entity_id, details, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (tenant_id, action, entity_type, entity_id, details, now),
     )
     conn.commit()
 
@@ -1889,11 +1922,10 @@ def get_users(user_role: str = None, tenant_id: str = None, viewer_role: str = N
 
 
 def verify_user_password(username: str, password: str) -> dict | None:
-    """Verify user credentials. Returns user dict on success, None on failure."""
+    """Verify user credentials. Returns user dict on success, None on failure.
+    NOTE: inactive users are still returned — caller must check is_active."""
     user = get_user_by_username(username)
     if not user:
-        return None
-    if not user["is_active"]:
         return None
     if not _check_pw(password, user["password_hash"]):
         return None

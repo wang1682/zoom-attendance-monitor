@@ -2,7 +2,7 @@
 {% block title %}总览 - Zoom Monitor{% endblock %}
 {% block content %}
 
-<!-- ═══════ 接入状态 + 租户摘要  ═══════ -->
+<!-- ═══════ 接入状态 + 租户摘要 (fast — pre-rendered) ═══════ -->
 {% if score is defined and score is not none %}
 <div class="panel mb-p" style="cursor:pointer" onclick="window.location='/dashboard/settings'">
   <div class="panel-header"><h2>系统接入状态</h2></div>
@@ -11,7 +11,7 @@
       <div class="metric" style="flex:none;min-width:100px;padding:8px 14px">
         <div class="metric-label">接入评分</div>
         <div class="flex" style="align-items:baseline;gap:4px">
-          <span class="metric-value {% if score >= 80 %}success{% elif score >= 50 %}warning{% else %}danger{% endif %}">{{ score }}</span>
+          <span class="metric-value {% if score >= 80 %}success{% elif score >= 50 %}warning{% else %}danger{% endif %}" id="health-score">{{ score }}</span>
           <span style="font-size:11px;color:var(--text-muted)">/ 100</span>
         </div>
       </div>
@@ -28,259 +28,195 @@
 </div>
 {% endif %}
 
-<!-- ═══════ KPI Metric Row ═══════ -->
-<div class="stats-row">
+<!-- ═══════ KPI Metric Row (skeleton → JS fills) ═══════ -->
+<div class="stats-row" id="kpi-row">
   <div class="metric">
     <div class="metric-label">今日参与者</div>
-    <div class="metric-value" id="kpi-today-participants">{{ kpi.today_participants if kpi else 0 }}</div>
+    <div class="metric-value" id="kpi-today-participants"><span class="text-muted">—</span></div>
   </div>
   <div class="metric">
     <div class="metric-label">当前在线</div>
-    <div class="metric-value" id="kpi-online-now">{{ kpi.current_online if kpi else 0 }}</div>
+    <div class="metric-value" id="kpi-online-now"><span class="text-muted">—</span></div>
     <div style="font-size:9px;color:var(--tm);margin-top:2px">仅标准 Zoom 会议</div>
   </div>
   <div class="metric">
     <div class="metric-label">今日告警 <span class="badge badge-warning" style="font-size:9px;vertical-align:middle">需关注</span></div>
-    <div class="metric-value warning" id="kpi-today-alerts">{{ kpi.today_alerts if kpi else 0 }}</div>
+    <div class="metric-value warning" id="kpi-today-alerts"><span class="text-muted">—</span></div>
   </div>
   <div class="metric">
     <div class="metric-label">今日事件</div>
-    <div class="metric-value small" id="kpi-today-events">{{ kpi.today_events if kpi else 0 }}</div>
+    <div class="metric-value small" id="kpi-today-events"><span class="text-muted">—</span></div>
   </div>
 </div>
 
-<!-- ═══════ 最近活跃成员 ═══════ -->
-<div class="panel mb-p">
-  <div class="panel-header">
-    <h2>最近活跃成员</h2>
-    <a href="/dashboard/participants" class="btn btn-sm">全部 →</a>
-  </div>
-  <div class="panel-body" id="recent-participants-list">
-    <span class="text-muted text-sm">等待数据刷新</span>
-  </div>
-</div>
-
-<!-- ═══════ 第二排：共享屏幕 + 活跃会议 ═══════ -->
+<!-- ═══════ 活跃会议 (skeleton → JS fills) ═══════ -->
 <div class="cockpit-grid halves">
-  <!-- 当前共享屏幕 -->
   <div class="panel">
     <div class="panel-header">
       <h2>当前共享屏幕</h2>
       <span id="capability-badge" style="font-size:11px;color:var(--text-muted);font-family:var(--mono)">🔍 检测中</span>
     </div>
     <div class="panel-body" id="screen-sharing-list">
-      <span class="text-muted text-sm">暂无共享</span>
+      <span class="text-muted text-sm">加载中…</span>
     </div>
   </div>
-
-  <!-- 活跃会议 -->
   <div class="panel">
     <div class="panel-header">
       <h2>活跃会议</h2>
       <a href="/dashboard/meetings?tab=live" class="btn btn-sm">查看 →</a>
     </div>
     <div class="panel-body compact" id="active-meetings-table">
-      {% if active_meetings and active_meetings|length > 0 %}
-      <table class="data-table">
-        <thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead>
-        <tbody>
-        {% for m in active_meetings %}
-        <tr>
-          <td class="td-name">{{ m.topic }}</td>
-          <td class="td-num">{{ m.participant_count }}</td>
-          <td class="td-mono">{{ fmt_myt(m.start_time) }}</td>
-          <td class="td-mono">{{ m.id }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <span class="text-muted text-sm">暂无活跃会议</span>
-      {% endif %}
+      <span class="text-muted text-sm">加载中…</span>
     </div>
   </div>
 </div>
 
-<!-- ═══════ 第三排：最近告警 + 最近事件 ═══════ -->
+<!-- ═══════ 最近告警 + 最近事件 (skeleton → JS fills) ═══════ -->
 <div class="cockpit-grid halves">
-  <!-- 最近告警 -->
   <div class="panel">
     <div class="panel-header">
       <h2>最近告警</h2>
       <a href="/dashboard/alerts" class="btn btn-sm">全部 →</a>
     </div>
     <div class="panel-body compact" id="recent-alerts-table">
-      {% if recent_alerts and recent_alerts|length > 0 %}
-      <table class="data-table">
-        <thead><tr><th>类型</th><th>信息</th><th>推送</th><th>时间</th></tr></thead>
-        <tbody>
-        {% for a in recent_alerts %}
-        <tr>
-          <td><span class="badge badge-{% if a.severity == 'critical' or a.severity == 'error' %}danger{% elif a.severity == 'warning' %}warning{% else %}cyan{% endif %}">{{ a.rule_name or a.alert_type }}</span></td>
-          <td class="td-name truncate" style="max-width:220px">{{ a.message }}</td>
-          <td>{% if a.pushed %}<span class="text-success">●</span>{% else %}<span class="text-muted">○</span>{% endif %}</td>
-          <td class="td-mono">{{ fmt_myt(a.created_at) }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <span class="text-muted text-sm">暂无告警</span>
-      {% endif %}
+      <span class="text-muted text-sm">加载中…</span>
     </div>
   </div>
-
-  <!-- 最近事件摘要 -->
   <div class="panel">
     <div class="panel-header">
       <h2>最近事件</h2>
       <a href="/dashboard/meetings?tab=history" class="btn btn-sm">全部 →</a>
     </div>
     <div class="panel-body compact" id="dashboard-events-list">
-      <span class="text-muted text-sm">暂无 Webhook 事件</span>
+      <span class="text-muted text-sm">加载中…</span>
     </div>
   </div>
 </div>
 
-<!-- ═══════ 下一步建议 — 仅新租户 ═══════ -->
-{% if next_steps and next_steps|length > 0 and score is defined and score < 80 %}
-<div class="panel">
-  <div class="panel-header"><h2>下一步操作</h2></div>
-  <div class="panel-body">
-    <ul style="margin:0;padding-left:16px">
-    {% for step in next_steps %}
-    <li style="margin-bottom:4px;color:var(--accent);font-size:12px;font-family:var(--mono)">▶ {{ step }}</li>
-    {% endfor %}
-    </ul>
-  </div>
-</div>
-{% endif %}
-
 <script>
-function showToast(msg, type) {
-  var t = document.getElementById('toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'toast';
-    t.style.cssText = 'position:fixed;top:20px;right:20px;padding:10px 20px;border:1px solid ' + (type === 'error' ? 'var(--danger)' : 'var(--success)') + ';background:var(--panel);color:var(--text);font-size:12px;z-index:100;font-family:var(--mono);border-radius:3px';
-    document.body.appendChild(t);
-  }
-  t.textContent = type === 'error' ? '✖ ' : '✔ ';
-  t.textContent += msg;
-  t.style.display = 'block';
-  t.style.borderColor = type === 'error' ? 'var(--danger)' : 'var(--success)';
-  setTimeout(function(){ t.style.display = 'none'; }, 3000);
-}
-
-async function refreshDashboard() {
+(async function(){
+  const BASE = '/dashboard/data';
   try {
-    var resp = await fetch('/dashboard/data');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    var data = await resp.json();
+    const res = await fetch(BASE);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    const kpi = d.kpi || {};
 
-    document.getElementById('kpi-today-participants').textContent = data.kpi.today_participants || 0;
-    document.getElementById('kpi-online-now').textContent = data.kpi.online_now || 0;
-    document.getElementById('kpi-today-alerts').textContent = data.kpi.today_alerts || 0;
-    if (document.getElementById('kpi-today-events'))
-      document.getElementById('kpi-today-events').textContent = data.kpi.today_events || 0;
+    document.getElementById('kpi-today-participants').textContent = kpi.today_participants ?? 0;
+    document.getElementById('kpi-online-now').textContent = kpi.online_now ?? 0;
+    document.getElementById('kpi-today-alerts').textContent = kpi.today_alerts ?? 0;
+    document.getElementById('kpi-today-events').textContent = kpi.today_events ?? 0;
 
-    var mhtml = '';
-    if (data.active_meetings && data.active_meetings.length > 0) {
-      mhtml = '<table class="data-table"><thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead><tbody>';
-      data.active_meetings.forEach(function(m) {
-        mhtml += '<tr><td class="td-name">' + (m.topic || '-') + '</td><td class="td-num">' + (m.participant_count || 0) + '</td><td class="td-mono">' + (m.start_time && m.start_time !== '—' ? m.start_time : '-') + '</td><td class="td-mono">' + (m.id || '-') + '</td></tr>';
-      });
-      mhtml += '</tbody></table>';
+    // ── 活跃会议 ──
+    const meetings = d.active_meetings || [];
+    const mt = document.getElementById('active-meetings-table');
+    if (meetings.length) {
+      let h = '<table class="data-table"><thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead><tbody>';
+      for (const m of meetings) {
+        const st = m.start_time || '';
+        h += '<tr><td class="td-name">' + esc(m.topic) + '</td><td class="td-num">' + (m.participant_count ?? 0) + '</td><td class="td-mono">' + esc(st) + '</td><td class="td-mono">' + esc(m.id) + '</td></tr>';
+      }
+      h += '</tbody></table>';
+      mt.innerHTML = h;
     } else {
-      mhtml = '<span class="text-muted text-sm">暂无活跃会议</span>';
-    }
-    document.getElementById('active-meetings-table').innerHTML = mhtml;
-
-    // 最近活跃成员
-    var plist = document.getElementById('recent-participants-list');
-    if (plist && data.participants && data.participants.length > 0) {
-      var phtml = '<div class="flex" style="gap:6px;flex-wrap:wrap">';
-      data.participants.slice(0, 12).forEach(function(p) {
-        var name = p.name || p.user_name || '?';
-        var online = p.in_meeting || p.is_online ? '●' : '○';
-        var color = p.in_meeting ? 'var(--success)' : 'var(--text-muted)';
-        phtml += '<span class="badge" style="color:' + color + ';font-size:12px">' + online + ' ' + name + '</span>';
-      });
-      phtml += '</div>';
-      plist.innerHTML = phtml;
-    } else if (plist) {
-      plist.innerHTML = '<span class="text-muted text-sm">暂无活跃成员记录</span>';
+      mt.innerHTML = '<span class="text-muted text-sm">暂无活跃会议</span>';
     }
 
-    // 当前共享屏幕
+    // ── 当前共享屏幕 ──
+    // 从 /api/v3/sharing-live 获取（独立接口）
+    fetchSharing();
+
+    // ── 最近事件 ──
+    const events = d.recent_events || [];
+    const el = document.getElementById('dashboard-events-list');
+    if (events.length) {
+      let h = '<table class="data-table"><thead><tr><th>类型</th><th>详情</th><th>时间</th></tr></thead><tbody>';
+      for (const e of events) {
+        h += '<tr><td><span class="badge badge-cyan">' + esc(e.event_type || e.event || '') + '</span></td><td class="td-name truncate" style="max-width:260px">' + esc(e.payload || e.description || '') + '</td><td class="td-mono">' + fmt_myt(e.created_at) + '</td></tr>';
+      }
+      h += '</tbody></table>';
+      el.innerHTML = h;
+    } else {
+      el.innerHTML = '<span class="text-muted text-sm">暂无 Webhook 事件</span>';
+    }
+
+    // ── 最近告警 ──
+    // 从 dashboard 返回里可能没有 alerts，从独立接口拉
+    fetchAlerts();
+  } catch(e) {
+    console.warn('Dashboard data load failed:', e);
+  }
+
+  async function fetchSharing() {
     try {
-      var sresp = await fetch('/api/v3/sharing-live');
-      if (sresp.ok) {
-        var sdata = await sresp.json();
-        var slist = document.getElementById('screen-sharing-list');
-        if (slist) {
-          // ── 能力模式提示 ──
-          var capEl = document.getElementById('capability-badge');
-          if (capEl && sdata.capability) {
-            var cap = sdata.capability;
-            var modeLabel = '🔍';
-            var modeText = '';
-            if (cap.zoom_plan === 'pro') {
-              modeText = 'Pro Webhook 模式';
-              capEl.style.color = 'var(--warning)';
-              capEl.title = 'Zoom Pro 不支持实时 Metrics API，已切换为 Webhook 模式';
-            } else if (cap.metrics_available) {
-              modeText = 'Business 实时模式';
-              capEl.style.color = 'var(--success)';
-              capEl.title = 'Zoom Business/Enterprise 实时 Metrics API 已启用';
-            } else {
-              modeText = '权限不足';
-              capEl.style.color = 'var(--danger)';
-              capEl.title = '当前 Zoom 账号权限不足，无法获取实时数据';
-            }
-            capEl.innerHTML = modeLabel + ' ' + modeText;
-          }
-          if (sdata.active && sdata.active.length > 0) {
-            var shtml = '<div class="flex" style="gap:6px;flex-direction:column">';
-            sdata.active.forEach(function(s) {
-              shtml += '<div class="sharing-item" style="font-size:13px;padding:4px 0"><strong>' + s.name + '</strong> ' + s.content + ' · 已持续 ' + s.duration_display + '</div>';
-            });
-            shtml += '</div>';
-            slist.innerHTML = shtml;
-          } else {
-            slist.innerHTML = '<span class="text-muted text-sm">暂无共享</span>';
-          }
+      const r = await fetch('/api/v3/sharing-live');
+      if (!r.ok) return;
+      const sharing = await r.json();
+      const list = document.getElementById('screen-sharing-list');
+      const badge = document.getElementById('capability-badge');
+      const rows = sharing.records || sharing || [];
+      if (rows.length) {
+        badge.textContent = '✓ 检测中';
+        let h = '<table class="data-table"><thead><tr><th>用户</th><th>会议</th><th>已共享</th></tr></thead><tbody>';
+        for (const s of rows) {
+          h += '<tr><td class="td-name">' + esc(s.user_name || s.name || '') + '</td><td class="td-name">' + esc(s.meeting_topic || s.meeting_id || '') + '</td><td class="td-mono">' + esc(s.duration || s.start_time || '') + '</td></tr>';
         }
+        h += '</tbody></table>';
+        list.innerHTML = h;
+      } else {
+        badge.textContent = '🔍';
+        list.innerHTML = '<span class="text-muted text-sm">暂无共享</span>';
       }
     } catch(e) {
-      console.error('Sharing refresh failed:', e);
+      console.warn('Sharing fetch failed:', e);
     }
-
-    // 最近事件
-    var eventsEl = document.getElementById('dashboard-events-list');
-    if (eventsEl) {
-      if (data.recent_events && data.recent_events.length > 0) {
-        var ehtml = '<table class="data-table" style="font-size:12px"><tbody>';
-        data.recent_events.slice(0, 5).forEach(function(ev) {
-          var et = ev.event_type || '';
-          var icon = et.includes('joined') || et.includes('admitted') ? '+' : '−';
-          var label = (et.includes('joined') || et.includes('admitted')) ? '进入' : '离开';
-          var name = ev.user_name || '?';
-          var t = ev.event_time || ev.created_at || '';
-          ehtml += '<tr><td style="width:20px;font-weight:bold;color:' + (icon === '+' ? 'var(--success)' : 'var(--danger)') + '">' + icon + '</td><td class="td-name" style="font-size:11px;color:var(--text-muted)">' + label + '</td><td class="td-name">' + name + '</td><td class="td-mono text-muted" style="text-align:right">' + t + '</td></tr>';
-        });
-        ehtml += '</tbody></table>';
-        eventsEl.innerHTML = ehtml;
-      } else {
-        eventsEl.innerHTML = '<span class=\"text-muted text-sm\">暂无 Webhook 事件</span>';
-      }
-    }
-  } catch(e) {
-    console.error('Dashboard refresh failed:', e);
-    showToast('数据刷新失败', 'error');
   }
-}
-setInterval(refreshDashboard, 15000);
-</script>
 
+  async function fetchAlerts() {
+    try {
+      const r = await fetch('/api/alerts?limit=5');
+      if (!r.ok) return;
+      const data = await r.json();
+      const alerts = data.alerts || data || [];
+      const el = document.getElementById('recent-alerts-table');
+      if (alerts.length) {
+        let h = '<table class="data-table"><thead><tr><th>类型</th><th>信息</th><th>推送</th><th>时间</th></tr></thead><tbody>';
+        for (const a of alerts) {
+          const sev = a.severity || '';
+          const badgeCls = sev === 'critical' || sev === 'error' ? 'danger' : sev === 'warning' ? 'warning' : 'cyan';
+          h += '<tr><td><span class="badge badge-' + badgeCls + '">' + esc(a.rule_name || a.alert_type || '') + '</span></td>';
+          h += '<td class="td-name truncate" style="max-width:220px">' + esc(a.message || '') + '</td>';
+          h += '<td>' + (a.pushed ? '<span class="text-success">●</span>' : '<span class="text-muted">○</span>') + '</td>';
+          h += '<td class="td-mono">' + fmt_myt(a.created_at) + '</td></tr>';
+        }
+        h += '</tbody></table>';
+        el.innerHTML = h;
+      }
+    } catch(e) {
+      console.warn('Alerts fetch failed:', e);
+    }
+  }
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── MYT 时间格式化：ISO → MM-DD HH:mm:ss（Intl.DateTimeFormat，DST 安全）──
+  function fmt_myt(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kuala_Lumpur',
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    }).formatToParts(d);
+    const m = {};
+    parts.forEach(p => m[p.type] = p.value);
+    return m.month + '-' + m.day + ' ' + m.hour + ':' + m.minute + ':' + m.second;
+  }
+})();
+</script>
 {% endblock %}

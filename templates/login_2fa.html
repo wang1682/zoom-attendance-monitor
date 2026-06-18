@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>验证 — Zoom Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe', 300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81' },
+                        surface: { 50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 800: '#1e293b', 850: '#172033', 900: '#0f172a', 950: '#020617' },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .card { @apply bg-white dark:bg-surface-800 rounded-xl shadow-sm border border-gray-100 dark:border-surface-700; }
+        .code-input { letter-spacing: 0.5em; font-size: 1.5rem; font-weight: 700; text-align: center; font-family: 'SF Mono', 'Fira Code', monospace; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-white dark:from-surface-900 dark:to-surface-950 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-sm">
+        <div class="text-center mb-8">
+            <div class="w-14 h-14 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center text-white font-bold text-xl mx-auto mb-4">ZM</div>
+            <h1 class="text-xl font-bold text-gray-900 dark:text-white">两步验证</h1>
+            <p class="text-sm text-gray-400 dark:text-gray-500 mt-1">请输入 Telegram 收到的验证码</p>
+        </div>
+
+        <div class="card p-6">
+            {% if error %}
+            <div class="mb-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            {% if backup == "1" and uid %}
+            {# ── 备用码模式 ── #}
+            <form method="POST" action="/login/2fa">
+                <input type="hidden" name="uid" value="{{ uid }}">
+                <input type="hidden" name="token" value="">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">备用码</label>
+                    <input type="text" name="backup_code" required autocomplete="off"
+                           pattern="[0-9]{4}-[0-9]{4}"
+                           placeholder="XXXX-XXXX"
+                           class="w-full px-3 py-2.5 text-sm bg-gray-50 dark:bg-surface-900 border border-gray-200 dark:border-surface-700 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none transition-colors text-center mono">
+                </div>
+                <button type="submit"
+                        class="w-full py-2.5 text-sm font-medium text-white bg-gradient-to-r from-amber-500 to-amber-700 rounded-lg hover:from-amber-600 hover:to-amber-800 transition-all shadow-sm">
+                    验证备用码
+                </button>
+                <p class="text-center mt-3">
+                    <a href="/login" class="text-xs text-primary-400 hover:text-primary-300">← 返回登录</a>
+                </p>
+            </form>
+            {% else %}
+            {# ── 正常验证码模式 ── #}
+            <form id="codeForm" method="POST" action="/login/2fa">
+                <input type="hidden" name="token" value="{{ token }}">
+                <input type="hidden" name="uid" value="">
+                <input type="hidden" name="backup_code" value="">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">验证码</label>
+                    <input type="text" name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required autocomplete="one-time-code"
+                           class="code-input w-full px-3 py-3 bg-gray-50 dark:bg-surface-900 border border-gray-200 dark:border-surface-700 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none transition-colors"
+                           placeholder="000000">
+                </div>
+                <button type="submit"
+                        class="w-full py-2.5 text-sm font-medium text-white bg-gradient-to-r from-primary-500 to-primary-700 rounded-lg hover:from-primary-600 hover:to-primary-800 transition-all shadow-sm">
+                    验证
+                </button>
+                <p class="text-center mt-3">
+                    <a href="/login" class="text-xs text-primary-400 hover:text-primary-300">← 返回登录</a>
+                </p>
+            </form>
+
+            <div class="mt-4 pt-4 border-t border-gray-100 dark:border-surface-700">
+                <details class="text-xs text-gray-400 dark:text-gray-500">
+                    <summary class="cursor-pointer hover:text-gray-600 dark:hover:text-gray-300">无法收到验证码？</summary>
+                    <p class="mt-2">如果 Telegram Bot 没有响应，可以使用备用码登录。</p>
+                    <p class="mt-1">备用码仅可在未收到验证码时使用，每个备用码只能用一次。</p>
+                </details>
+            </div>
+            {% endif %}
+
+            <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-4" id="timer">验证码有效期 5 分钟</p>
+        </div>
+
+        <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">v0.2.0 · Zoom Monitor Dashboard</p>
+    </div>
+
+<script>
+// Auto-focus and auto-submit on 6 digits
+(function() {
+    var codeInput = document.querySelector('input[name="code"]');
+    if (!codeInput) return;
+    codeInput.focus();
+    codeInput.addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9]/g, '').slice(0, 6);
+        if (this.value.length === 6) {
+            document.querySelector('#codeForm button[type=submit]').focus();
+        }
+    });
+})();
+
+// Countdown timer
+(function() {
+    var el = document.getElementById('timer');
+    if (!el) return;
+    var remaining = 300;
+    setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+            el.textContent = '⏰ 验证码已过期，请重新登录';
+            el.style.color = '#ef4444';
+        } else {
+            el.textContent = '验证码有效期 ' + Math.floor(remaining / 60) + ' 分 ' + (remaining % 60) + ' 秒';
+        }
+    }, 1000);
+})();
+</script>
+</body>
+</html>

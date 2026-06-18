@@ -1,0 +1,72 @@
+{% extends "admin_base.html" %}
+{% block content %}
+<style>
+.overview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.tenant-card { background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; }
+.tenant-card h3 { margin: 0 0 4px 0; font-size: 1.1rem; color: #e2e8f0; }
+.tenant-card .tenant-id { color: #64748b; font-size: 0.75rem; margin-bottom: 12px; }
+.stat-row { display: flex; gap: 12px; margin-bottom: 12px; }
+.stat-box { flex: 1; background: #0f172a; border-radius: 8px; padding: 10px; text-align: center; }
+.stat-box .num { font-size: 1.4rem; font-weight: 700; color: #818cf8; }
+.stat-box .label { font-size: 0.7rem; color: #64748b; margin-top: 2px; }
+.account-list { font-size: 0.8rem; }
+.account-item { display: flex; justify-content: space-between; padding: 6px 8px; border-radius: 6px; background: #0f172a; margin-bottom: 4px; }
+.account-item .label { color: #94a3b8; }
+.account-item .online { color: #34d399; font-weight: 600; }
+.account-item .offline { color: #f87171; font-weight: 600; }
+.badge-ok { display: inline-block; background: #065f46; color: #6ee7b7; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+.badge-warn { display: inline-block; background: #78350f; color: #fbbf24; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+.loading { text-align: center; padding: 40px; color: #64748b; font-size: 0.9rem; }
+</style>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+    <h1 style="margin:0; font-size:1.3rem;">多租户总览</h1>
+    <span id="last-update" style="color:#64748b; font-size:0.75rem;"></span>
+</div>
+
+<div id="overview-content" class="loading">⏳ 加载中...</div>
+
+<script>
+async function loadOverview() {
+    const el = document.getElementById('overview-content');
+    el.className = 'loading';
+    el.innerHTML = '⏳ 加载中...';
+    try {
+        const resp = await fetch('/api/v3/overview');
+        const data = await resp.json();
+        if (!data.ok) { el.innerHTML = '❌ ' + (data.error || '加载失败'); return; }
+        const now = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Kuala_Lumpur' });
+        document.getElementById('last-update').textContent = '更新于 ' + now;
+        
+        let html = '<div class="overview-grid">';
+        for (const t of data.tenants) {
+            const planBadge = t.metrics_available ? '<span class="badge-ok">Metrics ✅</span>' : '<span class="badge-warn">Metrics ❌</span>';
+            html += '<div class="tenant-card">';
+            html += '<h3>' + t.display_name + '</h3>';
+            html += '<div class="tenant-id">' + t.tenant_id + ' · ' + planBadge + '</div>';
+            html += '<div class="stat-row">';
+            html += '<div class="stat-box"><div class="num">' + t.online + '</div><div class="label">在线</div></div>';
+            html += '<div class="stat-box"><div class="num">' + t.members + '</div><div class="label">成员</div></div>';
+            html += '<div class="stat-box"><div class="num">' + t.accounts + '</div><div class="label">账号</div></div>';
+            html += '</div>';
+            html += '<div class="account-list">';
+            for (const a of t.account_info) {
+                const onlineClass = a.online > 0 ? 'online' : 'offline';
+                html += '<div class="account-item">';
+                html += '<span class="label">' + a.label + '</span>';
+                html += '<span class="' + onlineClass + '">' + a.online + ' 在线</span>';
+                if (a.error) html += '<span style="color:#f87171;font-size:0.7rem;margin-left:4px;">⚠️</span>';
+                html += '</div>';
+            }
+            html += '</div></div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+        el.className = '';
+    } catch(e) {
+        el.innerHTML = '❌ 加载失败: ' + e.message;
+    }
+}
+loadOverview();
+</script>
+{% endblock %}

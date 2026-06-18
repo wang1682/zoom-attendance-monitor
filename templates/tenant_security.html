@@ -1,7 +1,6 @@
 {% extends "tenant_base.html" %}
 {% block content %}
 
-{# ── 安全设置 · 两步验证（对所有人可见，置顶） ── #}
 <div class="page-header">
   <h1>安全中心</h1>
   <p class="page-subtitle">Telegram 两步验证设置</p>
@@ -71,118 +70,20 @@
   </div>
 </div>
 
-{# ── Zoom 账号配置（仅 Admin / Super Admin 可见） ── #}
-{% if not hide_settings %}
-<div class="page-header" style="margin-top:24px">
-  <h1>Zoom 账号配置</h1>
-</div>
-
+{# ── 预留扩展区块 ── #}
 <div class="panel mb-3">
-  <div class="panel-header"><h2>管理 Zoom 接入账号</h2></div>
+  <div class="panel-header"><h2>高级安全（即将推出）</h2></div>
   <div class="panel-body">
-    <p class="text-sm text-muted" style="margin:0 0 12px">
-      在 <a href="https://marketplace.zoom.us/" target="_blank" style="color:var(--accent)">Zoom Marketplace</a> 中创建 Server-to-Server App，将生成的凭据填入下方。
-    </p>
-    <button class="btn btn-sm btn-primary" onclick="showCreateForm()">+ 新建账号</button>
-  </div>
-</div>
-
-<div id="create-form" class="panel mb-3" style="display:none">
-  <div class="panel-header"><h2>新建 Zoom 账号</h2></div>
-  <div class="panel-body">
-    <form method="post" action="/dashboard/tenant/zoom/create">
-      <div class="form-group" style="margin-bottom:8px"><label>标签（可选）</label><input name="label" placeholder="例：Production / Test" value="" style="width:100%"></div>
-      <div class="flex gap-2" style="flex-wrap:wrap">
-        <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px"><label>Account ID *</label><input name="account_id" required placeholder="Zoom App Account ID" style="width:100%"></div>
-        <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px"><label>Client ID *</label><input name="client_id" required placeholder="Zoom App Client ID" style="width:100%"></div>
-        <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px"><label>Client Secret *</label><input name="client_secret" required placeholder="Zoom App Client Secret" style="width:100%"></div>
-      </div>
-      <div class="flex gap-2" style="margin-top:4px">
-        <button type="submit" class="btn btn-sm btn-primary">创建</button>
-        <button type="button" class="btn btn-sm" onclick="showCreateForm()">取消</button>
-      </div>
-    </form>
-    <div id="test-result-create" class="test-result" style="display:none;margin-top:8px"></div>
-  </div>
-</div>
-
-{% if accounts %}
-{% for acct in accounts %}
-<div class="panel mb-3">
-  <div class="panel-header flex items-center justify-between">
-    <div class="flex items-center gap-2">
-      <h2 style="margin:0;font-size:1rem">{{ acct.label or '未命名' }}</h2>
-      {% if acct.id == current_zoom_id %}<span class="badge badge-primary ml-2">当前账号</span>{% endif %}
+    <div class="flex gap-4" style="flex-wrap:wrap;color:var(--text-muted);font-size:11px">
+      <span>🔐 登录历史</span>
+      <span>🌐 IP 白名单</span>
+      <span>🔑 API Key</span>
+      <span>📋 审计日志</span>
     </div>
-    <button class="btn btn-sm btn-danger" onclick="deleteAccount({{ acct.id }})">删除</button>
-  </div>
-  <div class="panel-body" style="padding:12px 16px">
-    <div class="text-xs" style="line-height:2">
-      <span class="text-muted">Account ID:</span> <code>{{ acct.account_id }}</code><br>
-      <span class="text-muted">Client ID:</span> <code>{{ acct.client_id_display }}</code><br>
-      <span class="text-muted">状态:</span>
-      <span class="badge {{ 'badge-success' if acct.is_active else 'badge-muted' }}">
-        {{ '运行中' if acct.is_active else '已禁用' }}
-      </span>
-      {% if acct.error %}<br><span class="text-danger">{{ acct.error }}</span>{% endif %}
-    </div>
-
-    <div class="flex gap-2" style="margin-top:8px">
-      {% if acct.id != current_zoom_id %}
-      <form method="post" action="/dashboard/tenant/zoom/{{ acct.id }}/set-active" style="display:inline">
-        <button class="btn btn-sm btn-primary">设为当前账号</button>
-      </form>
-      {% endif %}
-      <button class="btn btn-sm" onclick="testExisting({{ acct.id }})">测试连接</button>
-    </div>
-    <div id="test-result-{{ acct.id }}" class="test-result" style="display:none;margin-top:8px"></div>
   </div>
 </div>
-{% endfor %}
-{% else %}
-<div class="zone-card" style="text-align:center;padding:2rem">
-  <div style="font-size:2rem;margin-bottom:8px;color:var(--text-muted)">🔗</div>
-  <h4 style="color:var(--text)">暂无 Zoom 账号</h4>
-  <p class="text-sm text-muted" style="margin-bottom:12px">填写上方表单自主接入 Zoom S2S OAuth，开始同步会议数据。</p>
-</div>
-{% endif %}
-{% endif %}
-
-<style>
-.test-result.success{display:block !important;background:rgba(0,230,118,.1);color:var(--success);border:1px solid rgba(0,230,118,.2)}
-.test-result.fail{display:block !important;background:rgba(255,77,79,.1);color:var(--danger);border:1px solid rgba(255,77,79,.2)}
-.test-result.pending{display:block !important;background:rgba(255,214,0,.08);color:var(--warning);border:1px solid rgba(255,214,0,.15)}
-</style>
 
 <script>
-function showCreateForm(){var f=document.getElementById('create-form');f.style.display=f.style.display==='none'?'block':'none';f.scrollIntoView({behavior:'smooth',block:'start'})}
-
-{% if not hide_settings %}
-function editToggle(id){var f=document.getElementById('edit-form-'+id);f.style.display=f.style.display==='none'?'block':'none'}
-function doTest(el,html,cls){el.className='test-result '+cls;el.innerHTML=html;el.style.display='block';el.scrollIntoView({behavior:'smooth',block:'nearest'})}
-function testConn(form){
-  var el=document.getElementById('test-result-create');
-  doTest(el,'⏳ 测试中...','pending');
-  var data=new URLSearchParams(new FormData(form));
-  fetch('/dashboard/tenant/zoom/test',{method:'POST',body:data})
-    .then(function(r){return r.json()})
-    .then(function(j){doTest(el,j.html||(j.success?'✔ '+j.message:'✖ '+j.message),j.success?'success':'fail')})
-    .catch(function(e){doTest(el,'✖ 请求失败: '+e.message,'fail')});
-}
-function deleteAccount(id){
-  if(!confirm('确定删除此 Zoom 账号？不可恢复。')) return;
-  fetch('/dashboard/tenant/zoom/'+id+'/delete',{method:'POST'}).then(function(){window.location.reload()}).catch(function(e){alert('删除失败: '+e.message)});
-}
-function testExisting(acctId){
-  var el=document.getElementById('test-result-'+acctId);
-  doTest(el,'⏳ 测试中...','pending');
-  fetch('/dashboard/tenant/zoom/'+acctId+'/test',{method:'POST'})
-    .then(function(r){return r.json()})
-    .then(function(j){doTest(el,j.html||(j.success?'✔ '+j.message:'✖ '+j.message),j.success?'success':'fail')})
-    .catch(function(e){doTest(el,'✖ 请求失败: '+e.message,'fail')});
-}
-{% endif %}
-
 // ── Telegram 2FA ──
 function startBind() {
   document.getElementById('bindInput').style.display = 'block';

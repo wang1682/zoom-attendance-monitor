@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "tenant_base.html" %}
 {% block title %}{{ page_title|default("成员中心") }} - Zoom Monitor{% endblock %}
 {% block head_extra %}
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -44,6 +44,17 @@
     <div>
       <h1 class="page-title">{{ page_title|default("成员中心") }} <span class="highlight">{{ date }}</span></h1>
       <p class="page-subtitle">实时考勤聚合 · 在线率 / 累计时长</p>
+      {% if data_source == 'metrics' %}
+      <div class="data-source-badge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:rgba(34,197,94,.1);color:#22c55e;font-size:11px;font-weight:500;margin-top:4px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block"></span>
+        实时数据：Zoom Metrics API
+      </div>
+      {% else %}
+      <div class="data-source-badge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:rgba(234,179,8,.1);color:#eab308;font-size:11px;font-weight:500;margin-top:4px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#eab308;display:inline-block"></span>
+        准实时数据：Webhook 推断
+      </div>
+      {% endif %}
     </div>
     <div class="flex" style="gap:12px;align-items:center;flex-shrink:0">
       <span class="text-sm"><span class="status-dot online" style="vertical-align:middle;margin-right:4px"></span>在线 <strong class="text-accent">{{ online_count }}</strong></span>
@@ -140,7 +151,7 @@
         <td><span class="td-mono text-muted" style="font-size:11px">{{ m.email if m.email else '—' }}</span></td>
         <td>
           <div style="display:flex;gap:4px;white-space:nowrap">
-            <button class="btn-icon" onclick="openEditMember('{{ m.standard_name|e }}')" title="编辑别名" style="font-weight:600;color:#3b82f6">编辑</button>
+            <button class="btn-icon" onclick="openEditMember('{{ m.raw_name|e }}', '{{ m.standard_name|e }}', '{{ m.group_id|e }}')" title="编辑别名" style="font-weight:600;color:#3b82f6">编辑</button>
             <button class="btn-icon" onclick="deleteMember('{{ m.standard_name|e }}')" title="删除成员" style="font-weight:600;color:#ef4444">删除</button>
           </div>
         </td>
@@ -417,16 +428,20 @@ console.log('Anthea data:', memberDisplays['Anthea']);
 const allGroups = {{ groups|safe }};
 console.log('allGroups:', allGroups);
 let editMemberName = '';
+let editMemberDisplayName = '';
 
-function openEditMember(name) {
-  editMemberName = name;
-  const data = memberDisplays[name] || {};
-  document.getElementById('editMemberName').textContent = name;
-  document.getElementById('editDisplayName').value = data.display_name || name;
-  document.getElementById('editNote').value = data.note || '';
-  document.getElementById('editCountEnabled').checked = data.count_enabled !== false;
-  document.getElementById('editGroupSelect').value = data.group_id || '';
-  // 别名列表
+function openEditMember(rawName, displayName, groupId) {
+  editMemberName = rawName;
+  editMemberDisplayName = displayName;
+  document.getElementById('editMemberName').textContent = displayName;
+  document.getElementById('editDisplayName').value = displayName;
+  document.getElementById('editNote').value = '';
+  document.getElementById('editCountEnabled').checked = true;
+  document.getElementById('editGroupSelect').value = groupId || '';
+  // 别名从 memberDisplays 反查（根据 rawName）
+  const data = memberDisplays[rawName] || {};
+  if (data.note) document.getElementById('editNote').value = data.note;
+  if (data.count_enabled !== undefined) document.getElementById('editCountEnabled').checked = data.count_enabled !== false;
   const aliases = data.aliases || [];
   document.getElementById('editAliasesList').value = aliases.join(', ');
   document.getElementById('editMemberModal').classList.add('active');
@@ -446,15 +461,17 @@ async function saveEditMember() {
   try {
     const r = await fetch('/dashboard/members/update-display', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({raw_name: name, display_name: displayName, note, count_enabled: countEnabled, aliases})
+      body: JSON.stringify({
+        raw_name: name,
+        display_name: displayName,
+        note,
+        count_enabled: countEnabled,
+        aliases,
+        group_id: newGroupId || null
+      })
     });
     const d = await r.json();
     if (d.ok) {
-      // 同步更新分组
-      await fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({group_id: newGroupId || null})
-      });
       document.getElementById('editMemberModal').classList.remove('active');
       location.reload();
     } else {

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "tenant_base.html" %}
 {% block title %}会议中心 - Zoom Monitor{% endblock %}
 {% block content %}
 
@@ -115,6 +115,24 @@
     当前范围：<strong>{{ sharing_range_label }}</strong>
     {% if sharing_records|length > 0 %} · 共 {{ sharing_total }} 条记录{% endif %}
   </div>
+  <!-- 分组筛选按钮 -->
+  <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+    <span class="text-sm text-muted" style="margin-right:4px">分组：</span>
+    {% for g in sharing_groups %}
+    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}&search={{ sharing_search }}&group_id={{ g.group_id }}"
+       class="btn btn-sm {% if sharing_group_id == g.group_id %}btn-primary{% else %}btn-outline{% endif %}"
+       style="padding:2px 10px;font-size:12px">
+      {{ g.group_name }}({{ g.count }})
+    </a>
+    {% endfor %}
+    {% if sharing_group_id %}
+    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}&search={{ sharing_search }}"
+       class="text-sm text-muted" style="padding:4px 8px">清除筛选</a>
+    {% endif %}
+    {% if sharing_records|length == 0 and sharing_group_id %}
+    <span class="text-sm" style="color:var(--warning);margin-left:4px">该分组当前无共享</span>
+    {% endif %}
+  </div>
   <!-- 搜索框 -->
   <div class="flex" style="gap:6px;align-items:center;margin-bottom:10px">
     <input type="text" id="sharing-search" placeholder="搜索成员姓名..."
@@ -132,6 +150,7 @@
           <thead>
             <tr>
               <th>用户</th>
+              <th>分组</th>
               <th>内容</th>
               <th>状态</th>
               <th>时长</th>
@@ -143,7 +162,8 @@
           {% for s in sharing_records %}
           <tr>
             <td class="td-name">{{ s.user_name }}</td>
-            <td class="truncate" style="max-width:180px;font-size:11px;color:var(--text-secondary)">{{ s.content }}</td>
+            <td class="td-mono" style="font-size:11px;color:var(--text-secondary)">{{ s.group_name or '—' }}</td>
+            <td class="truncate" style="max-width:160px;font-size:11px;color:var(--text-secondary)">{{ s.content }}</td>
             <td>
               {% if s.is_active %}
               <span class="badge badge-success">共享中</span>
@@ -171,9 +191,6 @@
 
 {% endif %}
 
-{% endblock %}
-
-{% block scripts %}
 <style>
 .modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
 .modal-overlay.open{display:flex}
@@ -212,24 +229,24 @@ function applySearch() {
 }
 function showParticipants(meetingId, userName) {
   document.getElementById('participant-modal-title').textContent = meetingId + ' - ' + userName + ' 的参会者';
-  document.getElementById('participant-list').innerHTML = '<div class="text-sm text-muted">加载中...</div>';
+  document.getElementById('participant-list').innerHTML = '<div class=\"text-sm text-muted\">加载中...</div>';
   document.getElementById('participant-modal').classList.add('open');
   fetch('/dashboard/api/meeting-participants?meeting_id=' + encodeURIComponent(meetingId))
     .then(function(r){return r.json()})
     .then(function(data){
       var list = document.getElementById('participant-list');
       if (!data.ok || !data.participants || data.participants.length === 0) {
-        list.innerHTML = '<div class="text-sm text-muted">无参会者记录</div>';
+        list.innerHTML = '<div class=\"text-sm text-muted\">无参会者记录</div>';
         return;
       }
       var html = '';
       for (var i=0; i<data.participants.length; i++) {
         var p = data.participants[i];
-        html += '<div class="participant-item">' + p.name + (p.email ? ' <span class="text-muted" style="font-size:11px">(' + p.email + ')</span>' : '') + '</div>';
+        html += '<div class=\"participant-item\">' + p.name + (p.email ? ' <span class=\"text-muted\" style=\"font-size:11px\">(' + p.email + ')</span>' : '') + '</div>';
       }
       list.innerHTML = html;
     })
-    .catch(function(){document.getElementById('participant-list').innerHTML = '<div class="text-sm text-muted">加载失败</div>';});
+    .catch(function(){document.getElementById('participant-list').innerHTML = '<div class=\"text-sm text-muted\">加载失败</div>';});
 }
 function closeParticipants() {
   document.getElementById('participant-modal').classList.remove('open');
@@ -240,4 +257,5 @@ document.addEventListener('DOMContentLoaded', function(){
   if (inp) inp.addEventListener('keydown', function(e){if(e.key==='Enter')applySearch();});
 });
 </script>
+
 {% endblock %}

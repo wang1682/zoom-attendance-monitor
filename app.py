@@ -11,15 +11,70 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import re
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from config import settings
 import db
+import telegram_push
 
 MYT = timezone(timedelta(hours=8))
+perf_logger = logging.getLogger("perf")
+
+PERF_WARN_MS = 1000
+
+
+# ── 统一获取客户端真实 IP ──
+
+def get_client_ip(request) -> str:
+    """按优先级获取客户端真实 IP：CF-Connecting-IP > X-Forwarded-For > X-Real-IP > request.client.host"""
+    cf = request.headers.get("cf-connecting-ip")
+    if cf:
+        return cf.strip()
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("x-real-ip")
+    if xri:
+        return xri.strip()
+    return request.client.host if request.client else "unknown"
+
+# ── Zoom live data cache ──
+_zoom_live_cache: dict = {}
+_zoom_live_cache_time: dict = {}
+ZOOM_LIVE_CACHE_TTL = 30  # seconds
+ZOOM_LIVE_FALLBACK_TTL = 90  # use stale cache up to 90s if Zoom API fails
+
+def _get_cached_zoom_live(tid: str) -> dict | None:
+    cached = _zoom_live_cache.get(tid)
+    cached_at = _zoom_live_cache_time.get(tid, 0)
+    now = time.monotonic()
+    if cached is None:
+        return None
+    if now - cached_at < ZOOM_LIVE_CACHE_TTL:
+        return cached
+    # expired but usable as fallback
+    if now - cached_at < ZOOM_LIVE_FALLBACK_TTL:
+        return cached
+    return None
+
+def _set_cached_zoom_live(tid: str, data: dict) -> None:
+    _zoom_live_cache[tid] = data
+    _zoom_live_cache_time[tid] = time.monotonic()
+
+
+def _t_ms() -> float:
+    return time.monotonic() * 1000
+
+def _log_perf(label: str, ms: float) -> None:
+    if ms >= PERF_WARN_MS:
+        perf_logger.warning("[PERF] %s took %.0fms", label, ms)
+    else:
+        perf_logger.info("[PERF] %s %.0fms", label, ms)
 
 def to_myt(dt_str):
     """将 UTC 时间字符串转为北京时间显示"""
@@ -176,11 +231,19 @@ def build_app() -> "FastAPI":
         return _app
 
     from fastapi import FastAPI, Request, HTTPException, Form
-    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 
     app = FastAPI(title=BRAND["app_name_zh"], version="2.0.0")
+
+    # ── Favicon ────────────────────────────────────────────────────────────
+    @app.get("/favicon.ico", response_class=FileResponse)
+    async def favicon():
+        return "static/favicon.ico"
+
+    # ── 全局 state 初始化 ────────────────────────────────────────────────────
+    app.state._2fa_pending = {}
 
     # ── 认证中间件（必须注册在 SessionMiddleware 之前，使其成为 innermost） ─────
     @app.middleware("http")
@@ -193,10 +256,12 @@ def build_app() -> "FastAPI":
             "/login", "/logout",
             "/privacy", "/terms",
             "/static/",
+            "/favicon.ico",
             "/api/v2/auth/",
             "/api/v3/live",
             "/api/health-check",
             "/webhook",
+            "/dashboard/tenant/webhook/",
             "/health",
         ]
         if any(path.startswith(pp) for pp in public_paths):
@@ -215,7 +280,7 @@ def build_app() -> "FastAPI":
 
     try:
         from starlette.middleware.sessions import SessionMiddleware
-        app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400, same_site="lax", https_only=False)
+        app.add_middleware(SessionMiddleware, secret_key=settings.session_secret, max_age=86400, same_site="lax", https_only=True)
     except ImportError:
         pass
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
@@ -384,7 +449,11 @@ def build_app() -> "FastAPI":
     async def _compute_kpi_data(tid: str) -> dict:
         """Compute KPI data for tenant dashboard — all queries tenant-isolated.
            Uses Webhook reconstruction as base, Metrics API as Business enhancement."""
+        t_kpi = _t_ms()
+        t0 = _t_ms()
         today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
+        _log_perf("kpi_today_participants", _t_ms() - t0)
+        t_db = _t_ms()
         
         # ── Online — Single Source of Truth ──
         online_data = db.get_current_online(tid)
@@ -396,32 +465,47 @@ def build_app() -> "FastAPI":
         metrics_available = (_tenant or {}).get("metrics_available", 0)
         if metrics_available:
             try:
-                accounts = db.get_zoom_accounts(tid)
-                active = next(
-                    (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
-                    None,
-                )
-                if active:
-                    from zoom_metrics import ZoomMetrics
-                    zm = ZoomMetrics(active)
-                    live_data = await zm.get_live()
-                    if live_data.get("meetings"):
-                        current_online = live_data.get("total_online", current_online)
-                        meetings_raw = live_data.get("meetings", [])
-                        active_meetings = [
-                            {
-                                "id": m.get("id", ""),
-                                "topic": m.get("topic", ""),
-                                "participant_count": len(m.get("participants", [])),
-                                "start_time": iso_to_myt_str(m.get("start_time", "")),
-                            }
-                            for m in meetings_raw
-                        ]
+                # ── Check cache first ──
+                cached = _get_cached_zoom_live(tid)
+                if cached is not None:
+                    current_online = cached.get("total_online", current_online)
+                    active_meetings = cached.get("meetings", active_meetings)
+                else:
+                    accounts = db.get_zoom_accounts(tid)
+                    active = next(
+                        (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
+                        None,
+                    )
+                    if active:
+                        t0 = _t_ms()
+                        from zoom_metrics import ZoomMetrics
+                        zm = ZoomMetrics(active)
+                        try:
+                            live_data = await asyncio.wait_for(zm.get_live(), timeout=0.8)
+                            zoom_ms = _t_ms() - t0
+                            _log_perf("zoom_live", zoom_ms)
+                            current_online = live_data.get("total_online", current_online)
+                            meetings_raw = live_data.get("meetings", [])
+                            active_meetings = [
+                                {
+                                    "id": m.get("id", ""),
+                                    "topic": m.get("topic", ""),
+                                    "participant_count": len(m.get("participants", [])),
+                                    "start_time": iso_to_myt_str(m.get("start_time", "")),
+                                }
+                                for m in meetings_raw
+                            ]
+                            _set_cached_zoom_live(tid, {
+                                "total_online": current_online,
+                                "meetings": active_meetings,
+                            })
+                        except (asyncio.TimeoutError, asyncio.CancelledError):
+                            _log_perf("zoom_live_timeout", _t_ms() - t0)
             except Exception:
                 pass  # Metrics failed — webhook data remains
         conn = db._get_conn()
         today_myt = datetime.now(MYT).strftime("%Y-%m-%d")
-        myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+        myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         row = conn.execute(
             "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
             (myt_day_start_utc, tid),
@@ -432,11 +516,17 @@ def build_app() -> "FastAPI":
             (tid, myt_day_start_utc),
         ).fetchone()
         today_alerts = row["c"] if row else 0
+        _log_perf("kpi_db_query", _t_ms() - t_db)
+        t_events = _t_ms()
         recent_events = db.get_recent_events(limit=5, tenant_id=tid)
         recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tid)
+        _log_perf("kpi_events", _t_ms() - t_events)
+        t_push = _t_ms()
         channels = db.get_tenant_channels(tid)
         push_configured = any(c.get("is_enabled") for c in channels)
         push_channel_count = len([c for c in channels if c.get("is_enabled")])
+        _log_perf("kpi_push", _t_ms() - t_push)
+        t_part = _t_ms()
         participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
         # ── 按 name 去重，取每个人最新一条（dashboard 最近活跃成员用） ──
         seen = {}
@@ -445,6 +535,8 @@ def build_app() -> "FastAPI":
             if name and name not in seen:
                 seen[name] = p
         participants_deduped = list(seen.values())
+        _log_perf("kpi_participants_dedup", _t_ms() - t_part)
+        _log_perf("kpi_total", _t_ms() - t_kpi)
         return {
             "today_participants": today_participants,
             "current_online": current_online,
@@ -501,7 +593,7 @@ def build_app() -> "FastAPI":
         participant_count = row["c"] if row else 0
         checks["participants"] = participant_count > 0
         from datetime import datetime, timedelta, timezone
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
         row = conn.execute(
             "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
             (cutoff, tid),
@@ -546,6 +638,7 @@ def build_app() -> "FastAPI":
                 score += weight
             elif isinstance(checks[key], bool) and checks[key]:
                 score += weight
+        score = min(score, 100)
         if score >= 80:
             status_label = "good"
         elif score >= 50:
@@ -610,9 +703,16 @@ def build_app() -> "FastAPI":
         return demo.get_demo_stats()
 
     # ── Dashboard JSON API (JS polling) ───────────────────────────────────────
+    # In-memory cache for Zoom live data: key=tenant_id, value=cached result
+    _dash_cache: dict = {}
+    _dash_cache_time: dict = {}
+    DASH_CACHE_TTL = 30  # seconds
+
     @app.get("/dashboard/data")
     async def dashboard_data_api(request: Request):
         """JSON endpoint for dashboard JS polling — tenant-scoped."""
+        t_total = time.monotonic()
+
         if settings.demo_mode:
             return {
                 "kpi": {"today_participants": 12, "online_now": 5, "today_events": 47, "today_alerts": 3},
@@ -622,6 +722,7 @@ def build_app() -> "FastAPI":
             }
         tid = request.app.state.get_effective_tenant_id(request)
         kpi = await _compute_kpi_data(tid)
+        _log_perf("dashboard_total", (time.monotonic() - t_total) * 1000)
         return {
             "kpi": {
                 "today_participants": kpi["today_participants"],
@@ -819,9 +920,9 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/member-groups")
     async def api_v3_create_member_group(request: Request):
-        """创建成员分组"""
+        """创建成员分组——super_admin 可在任意租户创建"""
         role = request.session.get("role", "tenant")
-        if role != "super_admin":
+        if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         data = await request.json()
         name = data.get("name", "").strip()
@@ -841,7 +942,7 @@ def build_app() -> "FastAPI":
     async def api_v3_update_member_group(group_id: int, request: Request):
         """更新成员分组"""
         role = request.session.get("role", "tenant")
-        if role != "super_admin":
+        if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         data = await request.json()
         name = data.get("name", "").strip()
@@ -855,7 +956,7 @@ def build_app() -> "FastAPI":
     async def api_v3_delete_member_group(group_id: int, request: Request):
         """删除成员分组"""
         role = request.session.get("role", "tenant")
-        if role != "super_admin":
+        if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         ok = db.delete_member_group(group_id)
         return {"ok": ok}
@@ -1272,7 +1373,9 @@ def build_app() -> "FastAPI":
                 meeting_id = str(payload.get("payload", {}).get("object", {}).get("id", ""))
             name = participant.get("user_name", "").strip()
             email = participant.get("email", "")
-            action = "enter" if "joined" in event_type else "leave"
+            action = "breakout_enter" if "breakout" in event_type and "joined" in event_type else \
+                     "breakout_leave" if "breakout" in event_type and "left" in event_type else \
+                     "enter" if "joined" in event_type else "leave"
             action_time = datetime.now(timezone.utc)
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
@@ -1835,7 +1938,18 @@ def build_app() -> "FastAPI":
         
         def disp(m):
             return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
-        
+
+        def _lookup_group(raw_name):
+            _g = conn.execute(
+                "SELECT md.group_id, mg.name FROM member_display md "
+                "LEFT JOIN member_groups mg ON mg.id=md.group_id AND mg.tenant_id=md.tenant_id "
+                "WHERE (md.raw_name=? OR md.display_name=?) AND md.tenant_id=?",
+                (raw_name, raw_name, tenant_id)
+            ).fetchone()
+            if _g and _g[0]:
+                return {"group_id": str(_g[0]), "group_name": _g[1] or ""}
+            return {"group_id": "", "group_name": ""}
+
         conn = db._get_conn()
         merged = {}  # normalized_name -> sharing_info
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
@@ -1860,11 +1974,13 @@ def build_app() -> "FastAPI":
                             continue
                         uid = p.get("user_id", "")
                         content = p.get("sharing_content", "desktop")
+                        _g = _lookup_group(raw)
                         merged[norm_key] = {
                             "name": name, "raw_name": raw,
                             "user_id": uid, "meeting_id": mid,
                             "content": content, "start_time": p.get("join_time", ""),
-                            "source": "metrics_api"
+                            "source": "metrics_api",
+                            "group_id": _g["group_id"], "group_name": _g["group_name"]
                         }
                         sources["metrics_api"] += 1
             except Exception:
@@ -1893,10 +2009,12 @@ def build_app() -> "FastAPI":
                         raw = d.get("user_name", "")
                         _rm = resolve_member(raw)
                         dn = _rm["standard_name"]
+                        _g = _lookup_group(raw)
                         norm_key = re.sub(r"\s+", "", dn.lower())
                         if norm_key and norm_key not in merged:
                             merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
                                            "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
+                                           "group_id": _g["group_id"], "group_name": _g["group_name"],
                                            "_stale": True}
                             sources["sharing_live"] += 1
                         continue
@@ -1905,10 +2023,12 @@ def build_app() -> "FastAPI":
                 raw = d.get("user_name", "")
                 _rm = resolve_member(raw)
                 dn = _rm["standard_name"]
+                _g = _lookup_group(raw)
                 norm_key = re.sub(r"\s+", "", dn.lower())
                 if norm_key and norm_key not in merged:
                     merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                                   "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live"}
+                                   "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
+                                   "group_id": _g["group_id"], "group_name": _g["group_name"]}
                     sources["sharing_live"] += 1
         
         # Source 3: webhook events — recovery from last 2 hours (no ended received)
@@ -1962,12 +2082,14 @@ def build_app() -> "FastAPI":
             uid = key[1]
             _rm = resolve_member(info["raw_name"])
             dn = _rm["standard_name"]
+            _g = _lookup_group(info["raw_name"])
             norm_key = re.sub(r"\s+", "", dn.lower())
             if uid and norm_key and norm_key not in merged:
                 merged[norm_key] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
                                "meeting_id": info.get("meeting_id", ""),
                                "content": info.get("content", ""), "start_time": info.get("start_time", ""),
-                               "source": "webhook_recovery"}
+                               "source": "webhook_recovery",
+                               "group_id": _g["group_id"], "group_name": _g["group_name"]}
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
         # ── 从 sharing_live 表统计每个人今日累计共享时长 ──
@@ -2034,12 +2156,39 @@ def build_app() -> "FastAPI":
                 "metrics_available": _tenant.get("metrics_available", 0),
             }
         
+        # 构建分组统计：遍历 active + recent 统计每组人数
+        groups_stats = {}
+        for entry in [*active, *recent]:
+            gid = entry.get("group_id", "")
+            gname = entry.get("group_name", "未分组")
+            if gid:
+                key = f"{gid}_{gname}"
+                if key not in groups_stats:
+                    groups_stats[key] = {"group_id": gid, "group_name": gname, "count": 0}
+                groups_stats[key]["count"] += 1
+        # 获取所有启用分组（包括共享人数为0的）
+        all_groups = conn.execute(
+            "SELECT id, name FROM member_groups WHERE tenant_id=? ORDER BY id",
+            (tenant_id,)
+        ).fetchall()
+        groups_list = []
+        for gid, gname in all_groups:
+            sgid = str(gid)
+            key = f"{sgid}_{gname}"
+            cnt = groups_stats[key]["count"] if key in groups_stats else 0
+            groups_list.append({"group_id": sgid, "group_name": gname, "count": cnt})
+        # 未分组统计
+        ungrouped_cnt = sum(1 for e in [*active, *recent] if not e.get("group_id"))
+        groups_list.insert(0, {"group_id": "", "group_name": "全部", "count": len(active) + len(recent)})
+
         return {
             "ok": True,
             "current": len(active),
             "active": active,
             "recent": recent,
             "recent_total": len(recent),
+            "groups": groups_list,
+            "ungrouped": ungrouped_cnt,
             "sources": sources,
             "capability": cap,
         }
@@ -2243,6 +2392,23 @@ def build_app() -> "FastAPI":
         except:
             pass
 
+        data_source = "metrics" if online_names else "webhook"
+        is_realtime = data_source == "metrics"
+        metrics_online = bool(online_names)
+
+        # 获取每个成员今天最早进入时间（first_join）
+        first_join_map = {}
+        try:
+            for r in conn.execute("""
+                SELECT name, MIN(action_time) as first_time
+                FROM zoom_participants
+                WHERE action_time >= ? AND action = 'enter'
+                GROUP BY name
+            """, (today_start_utc,)).fetchall():
+                first_join_map[r["name"]] = r["first_time"] or ""
+        except:
+            pass
+
         # 获取今日累计时长
         today_secs = {}
         last_seen = {}
@@ -2294,6 +2460,16 @@ def build_app() -> "FastAPI":
                     latest = als
             m["today_seconds"] = total_sec
             m["last_activity"] = latest
+            # 补充 first_join（取所有别名中最小的 enter 时间）
+            fj = ""
+            for alias in [m["raw_name"]] + (m.get("aliases") or []):
+                afj = first_join_map.get(alias, "")
+                if afj and (not fj or afj < fj):
+                    fj = afj
+            m["first_join"] = fj
+            # 保证 last_activity >= first_join
+            if fj and (not latest or fj > latest):
+                m["last_activity"] = fj
 
         items.sort(key=lambda m: (
             0 if m.get("is_online") else 1,
@@ -2302,7 +2478,14 @@ def build_app() -> "FastAPI":
             m.get("display_name") or "",
         ))
 
-        return {"ok": True, "items": items, "today_seconds_source": "participant_sessions_empty"}
+        return {
+            "ok": True,
+            "items": items,
+            "today_seconds_source": "participant_sessions_empty",
+            "data_source": data_source,
+            "is_realtime": is_realtime,
+            "metrics_online": metrics_online,
+        }
 
     @app.post("/api/v3/members")
     async def api_v3_members_add(request: Request):
@@ -2887,6 +3070,68 @@ def build_app() -> "FastAPI":
             "meetings": meetings,
         }
 
+    # ── 多租户总览（super_admin 专用） ────────────────────────────────────
+
+    @app.get("/api/v3/overview")
+    async def api_v3_overview(request: Request):
+        """跨租户总览：每个租户的在线人数、成员数、账号状态"""
+        role = request.session.get("role", "")
+        if role != "super_admin":
+            return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
+
+        from zoom_metrics import ZoomMetrics
+        conn = db._get_conn()
+        tenants = conn.execute("SELECT * FROM tenants WHERE is_active=1").fetchall()
+        result = []
+
+        for t_row in tenants:
+            t = dict(t_row)
+            tid = t["id"]
+            # 成员数
+            members = conn.execute("SELECT COUNT(*) FROM member_display WHERE tenant_id=?", (tid,)).fetchone()[0]
+            # 账号
+            accounts = conn.execute("SELECT * FROM zoom_accounts WHERE tenant_id=? AND is_active=1", (tid,)).fetchall()
+            account_info = []
+            online_count = 0
+            for a_row in accounts:
+                a = dict(a_row)
+                acct_label = a.get("label", tid)
+                acct_status = a.get("status", "unknown")
+                # 尝试拉在线
+                try:
+                    zm = ZoomMetrics(a)
+                    live = await zm.get_live()
+                    acct_online = live.get("total_online", 0)
+                    online_count += acct_online
+                    account_info.append({
+                        "label": acct_label,
+                        "status": acct_status,
+                        "online": acct_online,
+                        "plan": a.get("zoom_plan", "unknown"),
+                        "metrics_ok": live.get("total_online", 0) > 0 or True,
+                    })
+                except Exception as e:
+                    account_info.append({
+                        "label": acct_label,
+                        "status": acct_status,
+                        "online": 0,
+                        "plan": a.get("zoom_plan", "unknown"),
+                        "metrics_ok": False,
+                        "error": str(e)[:80],
+                    })
+            result.append({
+                "tenant_id": tid,
+                "display_name": t.get("display_name", tid),
+                "members": members,
+                "accounts": len(accounts),
+                "online": online_count,
+                "account_info": account_info,
+                "plan": t.get("zoom_plan", "unknown"),
+                "metrics_available": t.get("metrics_available", 0),
+            })
+
+        return {"ok": True, "tenants": result}
+
     # ── 实时功能 ────────────────────────────────────────────────────────────
 
     async def _build_live_from_metrics(meetings_data: list, token: str) -> dict:
@@ -3370,29 +3615,115 @@ def build_app() -> "FastAPI":
 
     @app.post("/login")
     async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+        client_ip = get_client_ip(request)
+
+        # ── 登录失败锁定检查 ──
+        ip_check = db.check_login_attempts(client_ip)
+        if ip_check["locked"]:
+            return RedirectResponse(url="/login?error=登录过于频繁，请15分钟后再试", status_code=303)
+
         user = db.verify_user_password(username, password)
         if not user:
+            db.record_login_attempt(client_ip, username, success=False)
+            db.log_security_event("login_failed", username=username, ip=client_ip,
+                                  user_agent=request.headers.get("user-agent", ""),
+                                  result="failed", details="密码错误")
             return RedirectResponse(url="/login?error=用户名或密码错误", status_code=303)
         if not user.get("is_active"):
+            db.record_login_attempt(client_ip, username, success=False)
+            db.log_security_event("login_failed", username=username, ip=client_ip,
+                                  result="failed", details="账号已被禁用")
             return RedirectResponse(url="/login?error=账号已被禁用", status_code=303)
+
+        # ── 密码正确 → 重置尝试计数 ──
+        db.record_login_attempt(client_ip, username, success=True)
+
+        # ── 强制 super_admin 开启 2FA ──
+        is_super = user.get("role") == "super_admin"
+        if is_super and not db.is_2fa_enabled(user["id"]):
+            db.log_security_event("login_blocked_no_2fa", user_id=user["id"], username=user["username"],
+                                  tenant_id=user.get("tenant_id", ""), ip=client_ip,
+                                  user_agent=request.headers.get("user-agent", ""),
+                                  result="failed", details="超管必须启用两步验证")
+            return RedirectResponse(url="/login?error=管理员账户必须启用两步验证，请联系另一管理员", status_code=303)
+
+        # ── Telegram 2FA ──
+        if db.is_2fa_enabled(user["id"]):
+            import secrets as _secrets
+            chat_id = user.get("telegram_chat_id", "")
+
+            # 使用用户所在租户的 bot token，而非全局 token
+            user_tenants = db.get_user_tenants(user["id"])
+            tenant_id = user_tenants[0]["tenant_id"] if user_tenants else "default"
+            bot_cfg = db.get_tenant_bot_config(tenant_id)
+            from config import settings as _2fa_settings
+            bot_token = bot_cfg.get("token") or _2fa_settings.telegram_bot_token
+
+            code = telegram_push.send_2fa_code(user["id"], chat_id, bot_token=bot_token)
+            if code:
+                pending_token = _secrets.token_urlsafe(32)
+                # 从 _2fa_codes 中取出 chat_id 和 message_id
+                _entry = telegram_push.get_2fa_entry(user["id"])
+                app.state._2fa_pending[pending_token] = {
+                    "user_id": user["id"],
+                    "username": user["username"],
+                    "role": "super_admin" if user.get("role") == "super_admin" else (user.get("role") or "tenant"),
+                    "tenant_id": user.get("tenant_id", "default"),
+                    "code": code,
+                    "created_at": __import__('time').time(),
+                    "ip": client_ip,
+                    "chat_id": (_entry or {}).get("chat_id", ""),
+                    "message_id": (_entry or {}).get("message_id"),
+                }
+                return RedirectResponse(url=f"/login/2fa?token={pending_token}", status_code=303)
+            else:
+                # Telegram delivery failed, allow backup code
+                return RedirectResponse(url="/login/2fa?backup=1&uid=" + str(user["id"]), status_code=303)
+
+        # ── 正常登录流程 ──
+        db.log_security_event("login_success", user_id=user["id"], username=user["username"],
+                              tenant_id=user.get("tenant_id", ""), ip=client_ip,
+                              user_agent=request.headers.get("user-agent", ""))
+
+        # ── 新 IP 登录 Telegram 通知 ──
+        try:
+            last_ip = db.get_last_login_ip(user["id"])
+            if last_ip and last_ip != client_ip:
+                chat_id = user.get("telegram_chat_id", "")
+                if chat_id:
+                    ua = request.headers.get("user-agent", "未知")
+                    _ua_short = ua[:60] + "…" if len(ua) > 60 else ua
+                    msg = (
+                        f"🔐 新 IP 登录通知\n\n"
+                        f"账号：{user['username']}\n"
+                        f"IP：{client_ip}\n"
+                        f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"设备：{_ua_short}"
+                    )
+                    telegram_push.send_message(msg, chat_id)
+                    db.log_security_event("new_ip_login_notice", user_id=user["id"],
+                                          username=user["username"], ip=client_ip,
+                                          user_agent=request.headers.get("user-agent", ""),
+                                          result="success", details=f"新IP={client_ip}, 上次IP={last_ip}")
+        except Exception as _nip_e:
+            import logging as _nip_log
+            _nip_log.getLogger("app").warning(f"new_ip_login_notice error: {_nip_e}")
+
         request.session.clear()
         request.session["user_id"] = user["id"]
         request.session["username"] = user["username"]
         request.session["role"] = "super_admin" if user.get("role") == "super_admin" else (user.get("role") or "tenant")
-        # ── 租户选择逻辑 ──
-        # super_admin: 设 selected_tenant=default（可切换）
-        # tenant/viewer: 走 tenant_users 绑定（固定）
+
         role = request.session["role"]
         if role == "super_admin":
             request.session["selected_tenant"] = "default"
-            request.session["tenant_id"] = "default"  # 保持兼容
+            request.session["tenant_id"] = "default"
             return RedirectResponse(url="/dashboard", status_code=303)
-        # 非 super_admin: 通过 tenant_users 绑定限制
-        # 0个绑定 → 报错
-        # 1个绑定 → 自动进入该租户
-        # 2+个绑定 → 弹租户选择页
+
         user_tenants = db.get_user_tenants(user["id"])
         if len(user_tenants) == 0:
+            db.log_security_event("login_success_no_tenant", user_id=user["id"], username=user["username"],
+                                  ip=client_ip, result="failed", details="未分配租户")
             return RedirectResponse(url="/login?error=未分配任何租户，请联系管理员", status_code=303)
         elif len(user_tenants) == 1:
             selected = user_tenants[0]["tenant_id"]
@@ -3400,9 +3731,7 @@ def build_app() -> "FastAPI":
             request.session["pending_tenants"] = [t["tenant_id"] for t in user_tenants]
             return RedirectResponse(url="/select-tenant", status_code=303)
         request.session["tenant_id"] = selected
-        # 根据角色决定重定向目标
-        redirect_url = "/dashboard/tenant"
-        return RedirectResponse(url=redirect_url, status_code=303)
+        return RedirectResponse(url="/dashboard/tenant", status_code=303)
 
     @app.get("/select-tenant")
     async def select_tenant_page(request: Request):
@@ -3448,6 +3777,154 @@ def build_app() -> "FastAPI":
         request.session["tenant_id"] = tenant_id  # 保持兼容
         redirect_url = next or "/dashboard"
         return RedirectResponse(url=redirect_url, status_code=303)
+
+    # ── Telegram 2FA ───────────────────────────────────────────────────────────
+    @app.get("/login/2fa", response_class=HTMLResponse)
+    async def login_2fa_page(request: Request, token: str = "", backup: str = "0", uid: str = "", error: str = ""):
+        # Validate token exists
+        if token and not hasattr(app.state, "_2fa_pending"):
+            return RedirectResponse(url="/login", status_code=303)
+        if token and token not in getattr(app.state, "_2fa_pending", {}):
+            return RedirectResponse(url="/login", status_code=303)
+        return tmpl.TemplateResponse(request, "login_2fa.html", {
+            "request": request, "token": token, "backup": backup, "uid": uid, "error": error
+        })
+
+    @app.post("/login/2fa")
+    async def login_2fa_submit(request: Request, token: str = Form(""), code: str = Form(""),
+                                backup_code: str = Form(""), uid: str = Form("")):
+        import time
+        client_ip = get_client_ip(request)
+        user_agent = request.headers.get("user-agent", "")
+
+        # ── Verify via pending token (normal 2fa flow) ──
+        if token and hasattr(app.state, "_2fa_pending"):
+            pending = app.state._2fa_pending.get(token)
+            if not pending:
+                return RedirectResponse(url="/login", status_code=303)
+            if time.time() - pending["created_at"] > 300:
+                _chat_id = pending.get("chat_id", "")
+                _msg_id = pending.get("message_id")
+                if _chat_id and _msg_id is not None:
+                    telegram_push.delete_message(str(_chat_id), _msg_id)
+                app.state._2fa_pending.pop(token, None)
+                return RedirectResponse(url="/login?error=验证码已过期，请重新登录", status_code=303)
+
+            if not telegram_push.verify_2fa_code(pending["user_id"], code):
+                return tmpl.TemplateResponse(request, "login_2fa.html", {
+                    "request": request, "token": token, "error": "验证码错误"
+                })
+
+            # ── 验证成功 → 删除 TG 消息 → 建立 session ──
+            # 先删消息（防止 verify_2fa_code pop 后丢失 entry），再 verify
+            _chat_id = pending.get("chat_id", "")
+            _msg_id = pending.get("message_id")
+            if _chat_id and _msg_id is not None:
+                telegram_push.delete_message(str(_chat_id), _msg_id)
+            app.state._2fa_pending.pop(token, None)
+            db.log_security_event("login_success", user_id=pending["user_id"], username=pending["username"],
+                                  tenant_id=pending.get("tenant_id", ""), ip=client_ip,
+                                  user_agent=user_agent, details="2FA验证通过")
+
+            # ── 新 IP 登录通知 (2FA 路径) ──
+            try:
+                _last_ip = db.get_last_login_ip(pending["user_id"])
+                if _last_ip and _last_ip != client_ip:
+                    _chat = db.get_user_by_id(pending["user_id"]).get("telegram_chat_id", "")
+                    if _chat:
+                        _msg = (
+                            f"🔐 新 IP 登录通知\n\n"
+                            f"账号：{pending['username']}\n"
+                            f"IP：{client_ip}\n"
+                            f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"设备：{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
+                        )
+                        telegram_push.send_message(_msg, _chat)
+                        db.log_security_event("new_ip_login_notice", user_id=pending["user_id"],
+                                              username=pending["username"], ip=client_ip,
+                                              user_agent=user_agent, result="success",
+                                              details=f"新IP={client_ip}, 上次IP={_last_ip}")
+            except Exception as _e:
+                __import__('logging').getLogger("app").warning(f"2fa new_ip notice error: {_e}")
+
+            request.session.clear()
+            request.session["user_id"] = pending["user_id"]
+            request.session["username"] = pending["username"]
+            request.session["role"] = pending["role"]
+
+            role = pending["role"]
+            if role == "super_admin":
+                request.session["selected_tenant"] = "default"
+                request.session["tenant_id"] = "default"
+                return RedirectResponse(url="/dashboard", status_code=303)
+
+            user_tenants = db.get_user_tenants(pending["user_id"])
+            if len(user_tenants) == 0:
+                return RedirectResponse(url="/login?error=未分配任何租户，请联系管理员", status_code=303)
+            elif len(user_tenants) == 1:
+                selected = user_tenants[0]["tenant_id"]
+            else:
+                request.session["pending_tenants"] = [t["tenant_id"] for t in user_tenants]
+                return RedirectResponse(url="/select-tenant", status_code=303)
+            request.session["tenant_id"] = selected
+            return RedirectResponse(url="/dashboard/tenant", status_code=303)
+
+        # ── Backup code flow ──
+        uid_int = int(uid) if uid and uid.isdigit() else 0
+        if uid_int and db.verify_backup_code(uid_int, backup_code):
+            user = db.get_user_by_id(uid_int)
+            # 删除之前发送的验证码消息（如果有）
+            telegram_push.delete_2fa_message(uid_int)
+            if not user:
+                return RedirectResponse(url="/login?error=用户不存在", status_code=303)
+            db.log_security_event("login_success", user_id=user["id"], username=user["username"],
+                                  tenant_id=user.get("tenant_id", ""), ip=client_ip,
+                                  user_agent=user_agent, details="备用码验证通过")
+
+            # ── 新 IP 登录通知 (备用码路径) ──
+            try:
+                _last_ip = db.get_last_login_ip(user["id"])
+                if _last_ip and _last_ip != client_ip:
+                    _chat = user.get("telegram_chat_id", "")
+                    if _chat:
+                        _msg = (
+                            f"🔐 新 IP 登录通知\n\n"
+                            f"账号：{user['username']}\n"
+                            f"IP：{client_ip}\n"
+                            f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"设备：{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
+                        )
+                        telegram_push.send_message(_msg, _chat)
+                        db.log_security_event("new_ip_login_notice", user_id=user["id"],
+                                              username=user["username"], ip=client_ip,
+                                              user_agent=user_agent, result="success",
+                                              details=f"新IP={client_ip}, 上次IP={_last_ip}")
+            except Exception as _e:
+                __import__('logging').getLogger("app").warning(f"backup new_ip notice error: {_e}")
+
+            request.session.clear()
+            request.session["user_id"] = user["id"]
+            request.session["username"] = user["username"]
+            request.session["role"] = "super_admin" if user.get("role") == "super_admin" else (user.get("role") or "tenant")
+            role = request.session["role"]
+            if role == "super_admin":
+                request.session["selected_tenant"] = "default"
+                request.session["tenant_id"] = "default"
+                return RedirectResponse(url="/dashboard", status_code=303)
+            user_tenants = db.get_user_tenants(user["id"])
+            if len(user_tenants) == 0:
+                return RedirectResponse(url="/login?error=未分配任何租户，请联系管理员", status_code=303)
+            elif len(user_tenants) == 1:
+                selected = user_tenants[0]["tenant_id"]
+            else:
+                request.session["pending_tenants"] = [t["tenant_id"] for t in user_tenants]
+                return RedirectResponse(url="/select-tenant", status_code=303)
+            request.session["tenant_id"] = selected
+            return RedirectResponse(url="/dashboard/tenant", status_code=303)
+
+        return tmpl.TemplateResponse(request, "login_2fa.html", {
+            "request": request, "token": token, "backup": "1", "uid": uid, "error": "备用码错误或已使用"
+        })
 
     @app.get("/logout")
     async def logout_get(request: Request):

@@ -10,6 +10,12 @@
   <div class="trend-card"><div class="t-icon">👥</div><div class="t-value" id="sUsers">—</div><div class="t-label">共享成员</div></div>
 </div>
 
+<!-- 分组筛选 -->
+<div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+  <span class="text-sm text-muted" style="margin-right:4px">分组筛选：</span>
+  <div id="groupFilters" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+</div>
+
 <div class="card" style="margin-bottom:16px">
   <div class="card-header"><h2>当前共享</h2></div>
   <table class="data-table"><tbody id="currentTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table>
@@ -17,40 +23,76 @@
 
 <div class="card" style="margin-bottom:16px">
   <div class="card-header"><h2>今日共享历史</h2></div>
-  <table class="data-table"><thead><tr><th>成员</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr></thead><tbody id="historyTable"><tr><td colspan="5" class="td-empty">加载中...</td></tr></tbody></table></table>
+  <table class="data-table"><thead><tr><th>成员</th><th>分组</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr></thead><tbody id="historyTable"><tr><td colspan="6" class="td-empty">加载中...</td></tr></tbody></table>
 </div>
 </div>
+
+<style>
+.btn-group{display:inline-block;padding:3px 12px;font-size:12px;border-radius:4px;cursor:pointer;border:1px solid var(--border);background:var(--bg-card);color:var(--text);transition:all 0.15s}
+.btn-group.active{background:#3b82f6;color:#fff;border-color:#3b82f6}
+.btn-group:hover:not(.active){background:var(--bg-subtle)}
+.btn-group .count{font-size:10px;opacity:0.7;margin-left:2px}
+</style>
 
 <script>
-async function loadShare(){
+let allActive = [];
+let allRecent = [];
+let currentFilter = '';
+
+function renderTables() {
+  // 按分组筛选
+  const filterActive = currentFilter ? allActive.filter(s => s.group_id === currentFilter) : allActive;
+  const filterRecent = currentFilter ? allRecent.filter(s => s.group_id === currentFilter) : allRecent;
+
+  // 更新统计
+  document.getElementById("sActive").textContent = filterActive.length;
+  document.getElementById("sTotal").textContent = allActive.length;
+  document.getElementById("sUsers").textContent = allActive.length;
+
+  // 当前共享表
+  const ct = document.getElementById("currentTable");
+  if (filterActive.length) {
+    ct.innerHTML = filterActive.map(s => `<tr><td class="td-name">${s.name}</td><td class="td-mono" style="font-size:11px">${s.content||'—'}</td><td>${s.start_time_display||'—'}</td><td>—</td><td><span class="badge badge-green">${s.duration_display||'0分钟'}</span></td></tr>`).join("");
+  } else {
+    ct.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--tm)">当前无人共享</td></tr>';
+  }
+
+  // 今日历史表
+  const ht = document.getElementById("historyTable");
+  if (filterRecent.length) {
+    ht.innerHTML = '<tr><th>成员</th><th>分组</th><th>内容</th><th>开始</th><th>结束</th><th>时长</th></tr>' +
+      filterRecent.map(s => `<tr><td class="td-name">${s.name}</td><td class="td-mono" style="font-size:11px">${s.group_name||'—'}</td><td class="td-mono" style="font-size:11px">${s.content||'—'}</td><td class="td-mono">${s.start_time_display||'—'}</td><td class="td-mono">—</td><td><span class="badge badge-muted">${s.duration_display||'0分钟'}</span></td></tr>`).join("");
+  } else {
+    ht.innerHTML = '<tr><td colspan="6" class="td-empty">当前无共享</td></tr>';
+  }
+}
+
+function setFilter(groupId) {
+  currentFilter = groupId;
+  document.querySelectorAll('.btn-group').forEach(b => {
+    b.classList.toggle('active', b.dataset.groupId === groupId);
+  });
+  renderTables();
+}
+
+async function loadShare() {
   try {
-    const r=await fetch("/api/v3/sharing-live");
-    const d=await r.json();
-    if(!d.ok) return;
+    const r = await fetch("/api/v3/sharing-live");
+    const d = await r.json();
+    if (!d.ok) return;
 
-    // Fields: current (number), active (array), sources (object)
-    // No today_summary or today_history in current API
-    const active = d.active || [];
-    document.getElementById("sActive").textContent = d.current || 0;
-    document.getElementById("sTotal").textContent = active.length;
-    document.getElementById("sUsers").textContent = active.length;
+    allActive = d.active || [];
+    allRecent = d.recent || [];
 
-    // Current sharing table
-    const ct = document.getElementById("currentTable");
-    if (ct) {
-      if (active.length) {
-        ct.innerHTML = active.map(s => `<tr><td class="td-name">${s.name}</td><td class="td-mono">${s.content||'—'}</td><td>${s.start_time_display||'—'}</td><td>—</td><td><span class="badge badge-green">${s.duration_display||'0分钟'}</span></td></tr>`).join("");
-      } else {
-        ct.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:32px;color:var(--tm)">当前无人共享</td></tr>';
-      }
-    }
+    // 渲染分组筛选按钮
+    const groups = d.groups || [];
+    const gf = document.getElementById("groupFilters");
+    gf.innerHTML = groups.map(g =>
+      `<span class="btn-group ${g.group_id === '' ? 'active' : ''}" data-group-id="${g.group_id}" onclick="setFilter('${g.group_id}')">${g.group_name}<span class="count">(${g.count})</span></span>`
+    ).join("");
+    currentFilter = '';
 
-    // History — from sharing_live DB via separate call or leave as is
-    // Current API doesn't have today_history, show message
-    const ht = document.getElementById("historyTable");
-    if (ht) {
-      ht.innerHTML = '<tr><td colspan="5" class="td-empty">历史记录暂不展示（需要额外数据源）</td></tr>';
-    }
+    renderTables();
   } catch(e) {
     console.error("sharing page error:", e);
     const ct = document.getElementById("currentTable");

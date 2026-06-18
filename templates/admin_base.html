@@ -42,6 +42,7 @@
 </head>
 <body>
     {% set nav_items = {
+        'overview': '/dashboard/overview',
         'dashboard': '/dashboard',
         'events': '/dashboard/events',
         'participants': '/dashboard/participants',
@@ -50,12 +51,24 @@
         'admin': '/dashboard/admin/tenants',
     } %}
 
+    {% set nav_labels = {
+        'overview': '总览',
+        'dashboard': '首页',
+        'events': '事件',
+        'participants': '参会',
+        'alerts': '告警',
+        'settings': '设置',
+        'admin': '管理',
+    } %}
+
     <!-- Topbar -->
     <div class="topbar flex items-center justify-between">
         <div class="flex items-center gap-4">
             <span style="color:#818cf8; font-weight:700;">Zoom Monitor</span>
             {% for key, url in nav_items.items() %}
-            <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">{{ {'dashboard':'首页','events':'事件','participants':'参会','alerts':'告警','settings':'设置','admin':'管理'}[key] }}</a>
+            {% if not (key == 'overview' and not is_super_admin) %}
+            <a href="{{ url }}" class="nav-link {% if active == key %}active{% endif %}">{{ nav_labels[key] }}</a>
+            {% endif %}
             {% endfor %}
         </div>
         <form method="post" action="/logout" style="display:inline">

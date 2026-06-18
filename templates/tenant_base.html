@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% block title %}设置{% endblock %} - Zoom Monitor</title>
+<title>{% block title %}设置{% endblock %} - Zoom Monitor</title>{% block head_extra %}{% endblock %}
 <style>
 :root{--bg:#070b1a;--bg2:#0b1024;--bg3:#101936;--bg4:#161e3e;--panel:#101936;--panel-hover:#1a234a;--border:rgba(0,183,255,.25);--border-light:rgba(0,183,255,.12);--border-active:rgba(0,217,255,.5);--accent:#00d9ff;--accent-dim:rgba(0,217,255,.15);--cyan:#00d9ff;--cyan-glow:0 0 12px rgba(0,217,255,.4);--warning:#ffd600;--danger:#ff4d4f;--success:#00e676;--text:#e8edf5;--text-secondary:#8ba4c0;--text-muted:#5a7a9a;--nav-bg:#080d1e;--nav-border:rgba(0,183,255,.15);--nav-hover:rgba(0,217,255,.08);--nav-active:rgba(0,217,255,.12);--nav-text:#6f8aa8;--nav-text-hover:#c0d4e8;--nav-text-active:#00d9ff;--overlay:rgba(0,0,0,.6);--header-h:44px;--font:'SF Pro Display','SF Mono','PingFang SC','Segoe UI',system-ui,sans-serif;--mono:'SF Mono','Fira Code','JetBrains Mono',monospace;--scroll:#1a3050}
 *,*::before,*::after{box-sizing:border-box}
@@ -135,29 +135,21 @@ select option{background:var(--bg3);color:var(--text)}
 </head>
 <body>
 
-{% set nav_map = {
-    'overview':      ['总览', '/dashboard'],
-    'participants':  ['成员', '/dashboard/participants'],
-    'meetings':      ['会议', '/dashboard/meetings'],
-    'alerts':        ['预警', '/dashboard/alerts'],
-    'settings': ['账号', '/dashboard/zoom'],
-    'channels': ['推送', '/dashboard/tenant/channels'],
-} %}
+{% set is_accounts_admin = current_user.role in ('super_admin', 'admin') %}
+{% set is_super_admin = current_user.role == 'super_admin' %}
 
 <header class="topbar">
   <a href="/dashboard" class="topbar-brand">ZOOM MONITOR</a>
   <span class="topbar-sep"></span>
   <nav class="topbar-nav">
-    {% for key, val in nav_map.items() %}
-    {% if not (is_viewer and key in ('settings','channels')) %}
-    <a href="{{ val[1] }}" class="{% if active == key %}active{% endif %}">{{ val[0] }}</a>
-    {% endif %}
+    {% for item in nav_items %}
+    <a href="{{ item.href }}" class="{% if active == item.key %}active{% endif %}"><span>{{ item.icon }}</span> {{ item.label }}</a>
     {% endfor %}
   </nav>
   <div class="topbar-right">
     <span class="text-muted" id="myt-clock" style="font-size:10px;font-family:var(--mono);opacity:0.7">🕒 --:--:--</span>
-    <span class="text-muted" style="font-size:10px;font-family:var(--mono)">{{ current_user.display_name|default('') }}</span>
-    {% if is_super_admin %}
+    <span class="text-muted" style="font-size:10px;font-family:var(--mono)">{{ current_user.display_name|default(current_user.username) }}</span>
+    {% if is_accounts_admin %}
     <span class="tenant-label">当前租户：</span>
     <div class="tenant-selector">
       <select onchange="switchTenant(this.value)">
@@ -166,8 +158,6 @@ select option{background:var(--bg3);color:var(--text)}
         {% endfor %}
       </select>
     </div>
-    {% else %}
-    <span class="text-muted" style="border-left:1px solid var(--nav-border);padding-left:8px;font-size:10px;font-family:var(--mono)">{{ tenant_name }}</span>
     {% endif %}
     <form method="post" action="/logout" style="display:inline">
       <button type="submit" class="tb-btn">退出</button>

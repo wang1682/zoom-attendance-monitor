@@ -3,6 +3,7 @@ Multi-tenant admin dashboard routes for Zoom Attendance Monitor.
 Mounted as an APIRouter under /dashboard in the main app.
 """
 import json
+import re
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, Query
@@ -237,6 +238,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     except Exception:
         pass  # 静默失败，live_map 为空
 
+    # ── 数据源标注 ──
+    data_source = "metrics" if live_map else "webhook"
+    is_realtime = data_source == "metrics"
+    metrics_online = bool(live_map)
+
     # ── 今日考勤汇总（累计数据） ──
     summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
@@ -325,7 +331,10 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          group_filter=group_filter,
                          status_filter=status_filter,
                          member_displays=json.dumps(member_displays),
-                         tenant_id=tenant_id)
+                         tenant_id=tenant_id,
+                         data_source=data_source,
+                         is_realtime=is_realtime,
+                         metrics_online=metrics_online)
 
 
 @router.get("/meetings", response_class=HTMLResponse)
@@ -895,6 +904,11 @@ async def dashboard_users_create(request: Request,
         db.set_user_tenant_role(uid, tenant_id, role)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    # Audit log
+    after = {"username": username, "role": role, "tenant_id": tenant_id}
+    db.audit_log_action(tenant_id=tenant_id, action="user.create",
+                        entity_type="user", entity_id=uid,
+                        details=json.dumps(after, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -907,6 +921,14 @@ async def dashboard_users_toggle(request: Request, user_id: int,
     if not target or not _user_can_manage(actor_role, target):
         raise HTTPException(status_code=403, detail="无权操作此用户")
     db.toggle_user(user_id)
+    # Audit log
+    refreshed = db.get_user_by_id(user_id)
+    now_active = refreshed.get("is_active", 0)
+    action = "user.enable" if now_active else "user.disable"
+    before_after = {"username": target.get("username", ""), "is_active": bool(now_active)}
+    db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action=action,
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(before_after, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -918,6 +940,11 @@ async def dashboard_users_delete(request: Request, user_id: int,
     target = db.get_user_by_id(user_id)
     if not target or not _user_can_manage(actor_role, target):
         raise HTTPException(status_code=403, detail="无权删除此用户")
+    # Audit log before deletion
+    before = {"username": target.get("username", ""), "role": target.get("role", ""), "tenant_id": target.get("tenant_id", "default")}
+    db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action="user.delete",
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(before, ensure_ascii=False))
     db.delete_user(user_id)
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
@@ -957,7 +984,14 @@ async def dashboard_users_role(request: Request, user_id: int,
         if len(remaining) <= 1:
             raise HTTPException(status_code=400, detail="系统必须至少保留一个超级管理员")
 
+    old_role = target.get("role", "")
     db.update_user(user_id, role=role)
+    # Audit log
+    details = {"username": target.get("username", ""), "old_role": old_role, "new_role": role,
+               "operator": user.get("username", "")}
+    db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action="user.role_change",
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(details, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -994,6 +1028,13 @@ async def dashboard_users_update(request: Request, user_id: int,
                 raise HTTPException(status_code=400, detail="系统必须至少保留一个超级管理员")
 
     db.update_user_full(user_id, **kwargs)
+    # Audit log
+    before = {k: target.get(k, "") for k in ("username", "display_name", "role", "tenant_id") if k in kwargs}
+    after = {k: kwargs[k] for k in kwargs if k in ("username", "display_name", "role", "tenant_id")}
+    details = {"before": before, "after": after}
+    db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action="user.update",
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(details, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -1007,6 +1048,11 @@ async def dashboard_users_reset_password(request: Request, user_id: int,
     if not target or not _user_can_manage(actor_role, target):
         raise HTTPException(status_code=403, detail="无权重置此用户密码")
     db.reset_user_password(user_id, new_password)
+    # Audit log
+    details = {"username": target.get("username", ""), "operator": user.get("username", "")}
+    db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action="user.reset_password",
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(details, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -1019,7 +1065,14 @@ async def dashboard_users_tenant(request: Request, user_id: int,
     target = db.get_user_by_id(user_id)
     if not target or not _user_can_manage(actor_role, target):
         raise HTTPException(status_code=403, detail="无权修改此用户租户")
+    old_tenant = target.get("tenant_id", "")
     db.update_user_full(user_id, tenant_id=tenant_id)
+    # Audit log
+    details = {"username": target.get("username", ""), "old_tenant": old_tenant, "new_tenant": tenant_id,
+               "operator": user.get("username", "")}
+    db.audit_log_action(tenant_id=tenant_id, action="user.tenant_change",
+                        entity_type="user", entity_id=user_id,
+                        details=json.dumps(details, ensure_ascii=False))
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
@@ -1042,6 +1095,40 @@ async def dashboard_tenants(request: Request, user: dict = Depends(require_user)
         tenants.append(td)
     return _render_admin(request, "admin_center", user, "admin_tenants.html",
                          tenants=tenants)
+
+
+@router.post("/tenants/create")
+async def dashboard_tenants_create(request: Request, user: dict = Depends(require_user)):
+    """Create tenant — super_admin only."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="权限不足")
+    form = await request.form()
+    tenant_id = form.get("tenant_id", "").strip()
+    display_name = form.get("display_name", "").strip()
+    description = form.get("description", "").strip()
+    # validate
+    if not tenant_id or not display_name:
+        raise HTTPException(status_code=400, detail="租户ID和显示名称为必填")
+    if not re.match(r'^[a-z0-9_-]+$', tenant_id):
+        raise HTTPException(status_code=400, detail="租户ID只能包含小写字母、数字、下划线和短横线")
+    # check unique
+    existing = db.get_tenant_by_id(tenant_id)
+    if existing:
+        raise HTTPException(status_code=400, detail="租户ID已存在")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    import secrets
+    api_token = secrets.token_hex(24)
+    conn = db._get_conn()
+    conn.execute(
+        "INSERT INTO tenants (id, name, display_name, plan, is_active, is_global_admin, api_token, zoom_plan, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, 1, 0, ?, 'unknown', ?, ?)",
+        (tenant_id, display_name, display_name, "pro", api_token, now, now),
+    )
+    conn.commit()
+    db.audit_log_action(tenant_id=tenant_id, action='tenant.create', entity_type='tenant', entity_id=tenant_id,
+                        details=json.dumps({"tenant_id": tenant_id, "display_name": display_name, "description": description, "operator": user.get("username")}, ensure_ascii=False))
+    return RedirectResponse(url="/dashboard/tenants", status_code=303)
 
 
 @router.get("/tenants/{tenant_id}", response_class=HTMLResponse)
