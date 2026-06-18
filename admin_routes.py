@@ -223,6 +223,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
 
     # ── 获取当前在线数据（live source） ──
     live_map = {}
+    live_data = {"meetings": []}
     try:
         from zoom_metrics import ZoomMetrics
         from db import get_zoom_accounts
@@ -251,6 +252,59 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 今日参会汇总（纯成员数据，不含班次） ──
     summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
+
+    # ── 兜底：webhook 无数据时，用 Metrics 实时参与者填 ──
+    from db import resolve_display_name, get_all_groups
+    if not members and live_map:
+        group_lookup = {}
+        conn_local = db._get_conn()
+        if tenant_id:
+            grp_rows = conn_local.execute(
+                "SELECT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+                "FROM member_display md "
+                "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+                "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
+                (tenant_id,),
+            ).fetchall()
+        else:
+            grp_rows = conn_local.execute(
+                "SELECT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+                "FROM member_display md "
+                "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+                "WHERE md.group_id IS NOT NULL"
+            ).fetchall()
+        for gr in grp_rows:
+            for key in (gr[0].strip().lower().replace(" ", ""),
+                        gr[1].strip().lower().replace(" ", "")):
+                if key:
+                    group_lookup[key] = gr[2]
+
+        seen = set()
+        for meeting in live_data.get("meetings", []):
+            for p in meeting.get("participants", []):
+                pname = p.get("name", "").strip()
+                if not pname or pname in seen:
+                    continue
+                seen.add(pname)
+                resolved = resolve_display_name(pname, tenant_id=tenant_id)
+                sn = resolved["display_name"]
+                key = sn.strip().lower().replace(" ", "")
+                grp_name = group_lookup.get(key, "")
+                members.append({
+                    "standard_name": sn,
+                    "raw_name": pname,
+                    "status": "online",
+                    "group_name": grp_name,
+                    "group_id": None,
+                    "first_join": "",
+                    "last_activity": p.get("join_time", ""),
+                    "today_total_duration": "",
+                    "join_count": 0,
+                    "leave_count": 0,
+                    "email": "",
+                    "aliases": [],
+                })
+        data_source = "metrics"
 
     # ── 合并 live 数据：在线成员状态用实时数据标记 ──
     for m in members:
@@ -322,7 +376,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         m["raw_name"] = md_entry.get("raw_name", sn)
         m["group_id"] = md_entry.get("group_id")
 
-    return _render_admin(request, "members", user, "participants.html",
+    return _render_admin(request, "participants", user, "participants.html",
                          title="成员中心",
                          members=members,
                          online_count=live_online,

@@ -43,6 +43,7 @@
     <th>成员</th>
     <th style="width:60px">状态</th>
     <th>分组</th>
+    <th>今日累计</th>
     <th>进入/离开次数</th>
     <th>首次进入</th>
     <th>最近活动</th>
@@ -51,6 +52,7 @@
   <tbody id="memberTable">
   {% for m in members %}
   {% set grp = m.get("group_name", "") %}
+  {% set dur = m.get("today_total_duration", "") %}
   {% set join_c = m.get("join_count", 0) %}
   {% set leave_c = m.get("leave_count", 0) %}
   {% set first_j = m.get("first_join", "") %}
@@ -78,6 +80,7 @@
       {% endif %}
     </td>
     <td class="td-mono">{{ grp }}</td>
+    <td class="td-mono">{{ dur if dur else '—' }}</td>
     <td class="td-mono">{{ join_c }} / {{ leave_c }}</td>
     <td class="td-mono" style="white-space:nowrap">
       {% if first_j %}{{ first_j[:16].replace("T"," ") }}{% else %}—{% endif %}
