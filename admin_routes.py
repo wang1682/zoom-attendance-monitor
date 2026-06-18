@@ -162,10 +162,20 @@ async def dashboard_index(request: Request, user: dict = Depends(require_user)):
     score = min(score, 100)
     db_ms = _t_ms() - t0
     _log_perf("dashboard_checks", db_ms)
+
+    # 运营统计（同 admin_center 数据源）
+    stats = {
+        "total_tenants": db.count_total_tenants(),
+        "total_users": db.count_total_users(),
+        "total_zoom_accounts": db.count_total_zoom_accounts(),
+        "total_channels": db.count_total_channels(),
+        "today_alerts": db.count_today_alerts(),
+        "today_push_count": db.count_today_push_count(),
+    }
+
     # Return skeleton HTML — /dashboard/data fills the rest via JS
     return _render_admin(request, "overview", user, "dashboard.html",
-                         score=score, checks=checks,
-                         next_steps=[])
+                         **{"score": score, "checks": checks, "stats": stats, "next_steps": []})
 
 @router.get("/events", response_class=HTMLResponse)
 async def dashboard_events_page(request: Request, user: dict = Depends(require_user)):
@@ -963,18 +973,7 @@ async def dashboard_admin_center(request: Request, user: dict = Depends(require_
     if role not in ("super_admin", "admin", "tenant_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
 
-    # Compute stats
-    stats = {
-        "total_tenants": db.count_total_tenants(),
-        "total_users": db.count_total_users(),
-        "total_zoom_accounts": db.count_total_zoom_accounts(),
-        "total_channels": db.count_total_channels(),
-        "today_alerts": db.count_today_alerts(),
-        "today_push_count": db.count_today_push_count(),
-    }
-
-    return _render_admin(request, "admin_center", user, "admin_center.html",
-                         stats=stats)
+    return _render_admin(request, "admin_center", user, "admin_center.html")
 
 
 # ── Admin: Tenants ────────────────────────────────────────────────────────────
@@ -1747,7 +1746,6 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         current_tenant_name = ""
 
     context = {
-        **extra,
         "request": request,
         "active": active,
         "current_user": current_user,
@@ -1758,5 +1756,7 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         "current_tenant_name": current_tenant_name,
         "hide_settings": current_user.get("role", "user") not in ("super_admin", "admin"),
         "nav_items": _get_nav_items(user.get("role", "user")),
+        "stats": extra.pop("stats", None),
+        **extra,
     }
     return templates.TemplateResponse(request, template_name, context)

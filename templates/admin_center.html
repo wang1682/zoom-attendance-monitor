@@ -11,48 +11,8 @@
 {% set is_admin = current_user.role in ('super_admin', 'admin') %}
 {% set is_tenant_admin = current_user.role == 'tenant_admin' %}
 
-<!-- 统计概览 -->
-<div class="stats-wrapper">
-  <div class="stat-card">
-    <div class="stat-label">🏢 总租户</div>
-    <div class="stat-value">{{ stats.total_tenants }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">👥 总用户</div>
-    <div class="stat-value">{{ stats.total_users }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">📹 Zoom 账号</div>
-    <div class="stat-value">{{ stats.total_zoom_accounts }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">✈️ Telegram 频道</div>
-    <div class="stat-value">{{ stats.total_channels }}</div>
-  </div>
-</div>
-
-<div class="stats-wrapper">
-  <div class="stat-card">
-    <div class="stat-label">🔔 今日告警</div>
-    <div class="stat-value {% if stats.today_alerts > 0 %}text-warning{% endif %}">{{ stats.today_alerts }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">📤 今日推送</div>
-    <div class="stat-value">{{ stats.today_push_count }}</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">📊 系统状态</div>
-    <div class="stat-value" style="font-size:14px;color:var(--success)">✅ 运行中</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">🕐 更新时间</div>
-    <div class="stat-value" style="font-size:12px;font-family:var(--mono);color:var(--text-muted)">
-      <span id="myt-now"></span>
-    </div>
-  </div>
-</div>
-
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+<!-- 功能入口卡片 -->
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:20px">
 
   <!-- ① 用户管理 — super_admin / admin -->
   {% if is_admin %}
@@ -132,14 +92,5 @@
   {% endif %}
 
 </div>
-
-<script>
-function updateNow() {
-  var now = new Date();
-  var opts = { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-  document.getElementById('myt-now').textContent = new Intl.DateTimeFormat('zh-CN', opts).format(now);
-}
-updateNow();
-</script>
 
 {% endblock %}
