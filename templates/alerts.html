@@ -2,29 +2,53 @@
 {% block title %}告警日志{% endblock %}
 {% block content %}
 
-<div class="page-header">
-  <h1 class="page-title">告警中心</h1>
-  <p class="page-subtitle">监控告警记录 · 推送状态</p>
-</div>
+<div class="main-container" style="max-width:1400px;margin:0 auto">
 
-<div class="panel">
+  {# ── 页面标题 ── #}
+  <div class="page-header">
+    <h1 class="page-title">告警中心</h1>
+    <p class="page-subtitle">监控告警记录 · 推送状态</p>
+  </div>
+
+  {# ── 筛选工具栏 ── #}
+  <div class="toolbar" style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <div class="search-box" style="display:flex;align-items:center;gap:6px;flex:1;min-width:200px">
+      <input type="text" class="filter-input" placeholder="搜索告警标题…" id="alertSearch" oninput="filterAlerts()"
+             style="flex:1;max-width:300px">
+    </div>
+    <select class="filter-input" style="width:auto;min-width:100px" id="severityFilter" onchange="filterAlerts()">
+      <option value="">全部级别</option>
+      <option value="critical">Critical</option>
+      <option value="error">Error</option>
+      <option value="warning">Warning</option>
+      <option value="info">Info</option>
+    </select>
+    <select class="filter-input" style="width:auto;min-width:100px" id="pushFilter" onchange="filterAlerts()">
+      <option value="">全部推送</option>
+      <option value="pushed">已推送</option>
+      <option value="unpushed">未推送</option>
+    </select>
+    <span class="text-muted" style="font-size:11px;white-space:nowrap" id="alertCount"></span>
+  </div>
+
+  {# ── 列表 ── #}
   {% if alerts %}
-  <div class="overflow-x">
-    <table class="data-table">
+  <div class="table-wrap">
+    <table class="member-table" id="alertTable">
       <thead>
         <tr>
-          <th>级别</th>
-          <th>类型</th>
+          <th style="width:70px">级别</th>
+          <th style="width:100px">类型</th>
           <th>标题</th>
-          <th>推送</th>
-          <th>时间</th>
+          <th style="width:90px">推送</th>
+          <th style="width:140px">时间</th>
         </tr>
       </thead>
       <tbody>
       {% for a in alerts %}
-      <tr>
+      <tr class="alert-row" data-severity="{{ a.severity|default('info') }}" data-pushed="{{ '1' if a.pushed else '0' }}">
         <td>
-          {% if a.severity == 'critical' or a.severity == 'error' %}
+          {% if a.severity in ('critical', 'error') %}
           <span class="status-dot danger"></span>
           {% elif a.severity == 'warning' %}
           <span class="status-dot warning"></span>
@@ -32,9 +56,19 @@
           <span class="status-dot online"></span>
           {% endif %}
         </td>
-        <td><span class="badge badge-{{ 'danger' if a.severity == 'error' or a.severity == 'critical' else 'warning' if a.severity == 'warning' else 'success' }}">{{ a.severity|default('info') }}</span></td>
+        <td>
+          <span class="badge badge-{{ 'danger' if a.severity in ('error', 'critical') else 'warning' if a.severity == 'warning' else 'cyan' }}">
+            {{ a.severity|default('info') }}
+          </span>
+        </td>
         <td class="td-name">{{ a.title or a.message }}</td>
-        <td>{% if a.pushed %}<span class="text-success">● 已推送</span>{% else %}<span class="text-muted">○</span>{% endif %}</td>
+        <td>
+          {% if a.pushed %}
+          <span class="badge badge-success">● 已推送</span>
+          {% else %}
+          <span class="badge badge-muted">○ 未推送</span>
+          {% endif %}
+        </td>
         <td class="td-mono">{{ fmt_myt(a.created_at) }}</td>
       </tr>
       {% endfor %}
@@ -42,12 +76,37 @@
     </table>
   </div>
   {% else %}
-  <div class="empty-state">
-    <div class="es-icon">✓</div>
-    <div class="es-title">一切正常</div>
-    <div class="es-desc">暂无告警记录</div>
+  <div class="table-wrap" style="padding:60px 20px;text-align:center">
+    <div style="font-size:32px;margin-bottom:12px">✓</div>
+    <div style="font-size:16px;font-weight:600;color:var(--text)">一切正常</div>
+    <div style="font-size:12px;color:var(--text-muted);margin-top:4px">暂无告警记录</div>
   </div>
   {% endif %}
+
 </div>
+
+<script>
+function filterAlerts() {
+  const search = document.getElementById('alertSearch')?.value.toLowerCase() || '';
+  const sev = document.getElementById('severityFilter')?.value || '';
+  const push = document.getElementById('pushFilter')?.value || '';
+  const rows = document.querySelectorAll('.alert-row');
+  let visible = 0;
+  rows.forEach(function(row) {
+    const title = row.querySelector('.td-name')?.textContent.toLowerCase() || '';
+    const sevVal = row.dataset.severity || '';
+    const pushVal = row.dataset.pushed || '0';
+    const matchSearch = !search || title.includes(search);
+    const matchSev = !sev || sevVal === sev;
+    const matchPush = !push || (push === 'pushed' && pushVal === '1') || (push === 'unpushed' && pushVal === '0');
+    const show = matchSearch && matchSev && matchPush;
+    row.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const el = document.getElementById('alertCount');
+  if (el) el.textContent = '显示 ' + visible + ' / ' + rows.length + ' 条';
+}
+document.addEventListener('DOMContentLoaded', filterAlerts);
+</script>
 
 {% endblock %}
