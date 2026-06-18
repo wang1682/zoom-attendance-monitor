@@ -3,17 +3,11 @@
 {% block content %}
 
 <style>
-:root {
-  --rate-green: #22c55e;
-  --rate-yellow: #eab308;
-  --rate-red: #ef4444;
-}
-
-.member-grid { max-width:1400px; margin:0 auto; }
+/* ── participants 特有样式 ── */
 .shift-card {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   border:1px solid #334155;
-  border-radius:12px;
+  border-radius:8px;
   padding:20px 24px;
   margin-bottom:20px;
   display:grid;
@@ -36,92 +30,21 @@
   color:#93c5fd;
   font-size:13px;
 }
-.meeting-not-open strong { color:#60a5fa; }
-
-.table-wrap {
-  background:#1e293b;
-  border:1px solid #334155;
-  border-radius:12px;
-  overflow:visible;
-}
-.table-wrap table { width:100%; border-collapse:collapse; font-size:13px; }
-.table-wrap th {
-  text-align:left;
-  padding:12px 10px;
-  color:#94a3b8;
-  font-weight:500;
-  font-size:11px;
-  text-transform:uppercase;
-  letter-spacing:0.5px;
-  border-bottom:1px solid #334155;
-  white-space:nowrap;
-  position:sticky;
-  top:0;
-  background:#1e293b;
-  z-index:2;
-}
-.table-wrap td { padding:10px; border-bottom:1px solid #2d3a4e; vertical-align:middle; }
-.table-wrap tr:hover td { background:rgba(59,130,246,0.05); }
-
 .rate-badge {
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-  padding:2px 8px;
-  border-radius:6px;
-  font-weight:600;
-  font-size:12px;
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:6px;font-weight:600;font-size:12px;
 }
 .rate-green { background:rgba(34,197,94,0.15); color:#22c55e; }
 .rate-yellow { background:rgba(234,179,8,0.15); color:#eab308; }
 .rate-red { background:rgba(239,68,68,0.15); color:#ef4444; }
-
 .away-badge {
-  display:inline-flex;
-  align-items:center;
-  gap:3px;
-  padding:1px 6px;
-  border-radius:4px;
-  font-size:11px;
+  display:inline-flex;align-items:center;gap:3px;
+  padding:1px 6px;border-radius:4px;font-size:11px;
 }
 .away-warn { background:rgba(234,179,8,0.12); color:#fbbf24; }
 .away-ok { color:#94a3b8; }
-
-.status-dot {
-  display:inline-block;
-  width:8px; height:8px;
-  border-radius:50%;
-  margin-right:6px;
-}
-.dot-online { background:#22c55e; box-shadow:0 0 6px rgba(34,197,94,0.5); }
-.dot-offline { background:#475569; }
-
 .early-leave { color:#f87171; font-size:11px; }
 .absent-num { color:#94a3b8; font-size:11px; }
-
-.filter-row {
-  display:flex;
-  align-items:center;
-  gap:12px;
-  margin-bottom:16px;
-  flex-wrap:wrap;
-}
-.filter-row input, .filter-row select {
-  background:#1e293b;
-  border:1px solid #334155;
-  border-radius:8px;
-  padding:8px 12px;
-  color:#f1f5f9;
-  font-size:13px;
-  outline:none;
-}
-.filter-row input:focus, .filter-row select:focus { border-color:#3b82f6; }
-.stats-line {
-  color:#94a3b8;
-  font-size:12px;
-  margin-bottom:12px;
-}
-.stats-line strong { color:#f1f5f9; }
 </style>
 
 {% set shift_name = shift.get("name", "") %}
@@ -129,18 +52,18 @@
 {% set shift_req = shift.get("required_minutes", 0) %}
 {% set shift_start_s = shift.get("start", "")[:16].replace("T", " ") %}
 
-<div class="member-grid">
+<div class="main-container" style="max-width:1400px;margin:0 auto">
 
 {# ── 标题 ── #}
 <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px">
-  <h2 style="font-size:20px;font-weight:600;color:#f1f5f9;margin:0">
+  <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0">
     {{ title }}
   </h2>
-  <span style="font-size:14px;color:#94a3b8;font-weight:500">
+  <span style="font-size:14px;color:var(--text-secondary);font-weight:500">
     · 当前班次：{{ shift_name }} {{ shift_start_s }}-{{ shift.get("end","")[:16].replace("T"," ") }}
   </span>
 </div>
-<p style="color:#64748b;font-size:12px;margin:-8px 0 16px 0">
+<p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px 0">
   班次统计说明：如会议室晚于班次开启，晚开时间不计入员工缺勤。
 </p>
 
@@ -184,27 +107,34 @@
 {% endif %}
 
 {# ── 筛选器 ── #}
-<div class="filter-row">
-  <input type="text" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
-  <select id="groupFilter">
+<div class="toolbar">
+  <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
+  <select class="toolbar-select" id="groupFilter">
     <option value="">所有分组</option>
     {% for g in groups %}
     <option value="{{ g.name }}" {{ 'selected' if group_filter == g.name }}>{{ g.name }}</option>
     {% endfor %}
   </select>
-  <select id="statusFilter">
+  <select class="toolbar-select" id="statusFilter">
     <option value="">所有状态</option>
     <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
     <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
+    <option value="absent" {{ 'selected' if status_filter == 'absent' }}>未到岗</option>
   </select>
-  <span class="stats-line" style="margin-left:auto">
-    <strong>{{ online_count }}</strong> 在线 · <strong>{{ offline_count }}</strong> 离线 · 共 <strong>{{ total_members }}</strong> 人
+  <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
+    {% set online_count = members|selectattr('status', 'equalto', 'online')|list|length %}
+    {% set offline_count = members|selectattr('status', 'equalto', 'offline')|list|length %}
+    {% set absent_count = members|selectattr('status', 'equalto', 'absent')|list|length %}
+    <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
+    <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
+    <strong style="color:var(--text-muted)">{{ absent_count }}</strong> 未到岗 ·
+    共 <strong style="color:var(--text)">{{ members|list|length }}</strong> 人
   </span>
 </div>
 
 {# ── 表格 ── #}
-<div class="table-wrap">
-<table>
+<div class="panel" style="padding:0;overflow:visible">
+<table class="data-table">
 <thead>
 <tr>
   <th>成员</th>
@@ -213,7 +143,7 @@
   <th>班次在线</th>
   <th>出勤率</th>
   <th>缺勤</th>
-  <th>中途离开&gt;15m</th>
+  <th>中途离开>15m</th>
   <th>最大离开</th>
   <th>提前离场</th>
   <th>进入/离开</th>
@@ -236,20 +166,27 @@
     data-group="{{ grp }}"
     data-status="{{ m.get("status","offline") }}">
   <td>
-    <div style="display:flex;align-items:center;gap:8px">
-      <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#6366f1);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;flex-shrink:0">
+    <div class="user-cell-name">
+      <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:50%">
         {{ m.get("standard_name","?")[:2]|upper }}
       </div>
-      <div>
-        <div style="color:#f1f5f9;font-weight:500">{{ m.get("standard_name","") }}</div>
+      <div class="name-text">
+        <span class="primary">{{ m.get("standard_name","") }}</span>
       </div>
     </div>
   </td>
   <td>
-    <span class="status-dot dot-{{ 'online' if m.get('status')=='online' else 'offline' }}"></span>
+    {% set st = m.get('status','offline') %}
+    {% if st == 'online' %}
+    <span class="status-dot online" title="在线"></span>
+    {% elif st == 'offline' %}
+    <span class="status-dot offline" title="离线（本班次有记录）"></span>
+    {% else %}
+    <span class="status-dot absent" title="未到岗（本班次无记录）" style="background:var(--text-muted);opacity:0.35"></span>
+    {% endif %}
   </td>
-  <td style="color:#94a3b8;font-size:12px">{{ grp }}</td>
-  <td style="color:#f1f5f9;font-weight:500">{{ online_m // 60 }}h{{ "%02d"|format(online_m % 60) }}m</td>
+  <td class="td-mono">{{ grp }}</td>
+  <td class="td-name">{{ online_m // 60 }}h{{ "%02d"|format(online_m % 60) }}m</td>
   <td>
     <span class="rate-badge {{ rate_cls }}">{{ rate_pct }}%</span>
   </td>
@@ -261,10 +198,10 @@
     <span class="away-badge away-ok">—</span>
     {% endif %}
   </td>
-  <td style="color:#94a3b8;font-size:12px">{% set maxa = m.get("max_away_minutes", 0) %}{% if maxa > 0 %}{{ maxa // 60 }}h{{ "%02d"|format(maxa % 60) }}m{% else %}—{% endif %}</td>
-  <td>{% if early > 0 %}<span class="early-leave">☰ {{ early // 60 }}h{{ "%02d"|format(early % 60) }}m</span>{% else %}<span style="color:#475569">—</span>{% endif %}</td>
-  <td style="color:#94a3b8;font-size:12px">{{ sessions }}次</td>
-  <td style="color:#64748b;font-size:11px;white-space:nowrap">
+  <td class="td-mono">{% set maxa = m.get("max_away_minutes", 0) %}{% if maxa > 0 %}{{ maxa // 60 }}h{{ "%02d"|format(maxa % 60) }}m{% else %}—{% endif %}</td>
+  <td>{% set early = m.get('early_leave_minutes', 0) %}{% set s = m.get('sessions', 0) %}{% if s > 0 and early > 0 %}<span class="early-leave">☰ {{ early // 60 }}h{{ '%02d'|format(early % 60) }}m</span>{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
+  <td class="td-mono">{{ sessions }}次</td>
+  <td class="td-mono" style="white-space:nowrap">
     {% set m_act = m.get("last_activity", "") %}
     {% if m_act %}{{ m_act[:16].replace("T"," ") }}{% else %}—{% endif %}
   </td>

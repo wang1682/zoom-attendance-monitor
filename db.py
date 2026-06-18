@@ -987,8 +987,11 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
                     prev_leave = None
 
         # ── 提前离场 ──
+        # 只有本班次有实际进入记录才计算提前离场
+        # 如果成员本班次没有任何 enter/joined，则 last_leave 可能是其他班次的遗留值
         early_leave_seconds = 0
-        if last_leave and last_leave < effective_end and not is_online:
+        has_enter_this_shift = len([ev for ev in deduped if ev["action"] in ("enter", "joined") and datetime.fromisoformat(ev["action_time"]) >= effective_start]) > 0
+        if has_enter_this_shift and last_leave and last_leave < effective_end and not is_online:
             early_leave_seconds = int((effective_end - last_leave).total_seconds())
             if early_leave_seconds < 0:
                 early_leave_seconds = 0
@@ -1004,9 +1007,16 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
         m["away_minutes"] = int(away_seconds) // 60
         m["max_away_minutes"] = int(max_away) // 60
         m["away_over_15_count"] = away_over_15_count
-        m["early_leave_minutes"] = early_leave_seconds // 60
-        m["status"] = "online" if is_online else "offline"
-        m["last_leave"] = last_leave.isoformat() if last_leave else None
+        m['early_leave_minutes'] = early_leave_seconds // 60
+        # status: online=当前在线, offline=有进入记录但已离开, absent=本班次无
+        has_enter = m['sessions'] > 0
+        if is_online:
+            m['status'] = 'online'
+        elif has_enter:
+            m['status'] = 'offline'
+        else:
+            m['status'] = 'absent'
+        m['last_leave'] = last_leave.isoformat() if last_leave else None
         m["sessions"] = len([ev for ev in deduped if ev["action"] in ("enter", "joined")])
 
     # ── 排序：在线优先 → 在线时长降序 ──
