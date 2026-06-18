@@ -3,6 +3,7 @@ Multi-tenant admin dashboard routes for Zoom Attendance Monitor.
 Mounted as an APIRouter under /dashboard in the main app.
 """
 import json
+import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -10,8 +11,21 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import db
 from config import settings
 from zoom_api import ZoomAPI
+from tenant_routes import _get_nav_items
 
 router = APIRouter()
+
+# ── Performance helpers ──
+PERF_WARN_MS = 1000
+
+def _t_ms() -> float:
+    return time.monotonic() * 1000
+
+def _log_perf(label: str, ms: float) -> None:
+    if ms >= PERF_WARN_MS:
+        import logging; logging.getLogger("perf").warning(f"[PERF] {label} took {ms:.0f}ms")
+    else:
+        import logging; logging.getLogger("perf").info(f"[PERF] {label} {ms:.0f}ms")
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -35,6 +49,15 @@ async def require_user(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=303, headers={"Location": "/login"})
     return user
+
+
+def require_role(role: str):
+    """Dependency factory: require minimum role level."""
+    async def _check(user: dict = Depends(require_user)) -> dict:
+        if db.ROLE_HIERARCHY.get(user.get("role", "user"), 0) < db.ROLE_HIERARCHY.get(role, 0):
+            raise HTTPException(status_code=403, detail="权限不足")
+        return user
+    return _check
 
 
 # ── Template helpers ──────────────────────────────────────────────────────────
@@ -112,9 +135,8 @@ def _channel_dict(c: dict) -> dict:
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def dashboard_index(request: Request, user: dict = Depends(require_user)):
-    compute_fn = request.app.state.compute_kpi_data
     tenant_id = request.app.state.get_effective_tenant_id(request)
-    recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tenant_id)
+    t0 = _t_ms()
     # score/checks from DB (sync, no Zoom API call)
     score = 0
     checks = {}
@@ -129,12 +151,12 @@ async def dashboard_index(request: Request, user: dict = Depends(require_user)):
     channels = db.get_tenant_channels(tenant_id)
     checks["telegram"] = any(c.get("is_enabled") for c in channels)
     score = sum(1 for v in checks.values() if v) * 20
-    kpi = await compute_fn(tenant_id)
+    score = min(score, 100)
+    db_ms = _t_ms() - t0
+    _log_perf("dashboard_checks", db_ms)
+    # Return skeleton HTML — /dashboard/data fills the rest via JS
     return _render_admin(request, "overview", user, "dashboard.html",
-                         kpi=kpi, active_meetings=kpi.get("active_meetings", []),
                          score=score, checks=checks,
-                         recent_alerts=recent_alerts,
-                         participants=kpi.get("participants", []),
                          next_steps=[])
 
 @router.get("/events", response_class=HTMLResponse)
@@ -185,8 +207,9 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     group_filter = request.query_params.get("group", "").strip()
     status_filter = request.query_params.get("status", "").strip()  # "online" or "offline"
 
-    # ── 获取当前在线名单（live source） ──
-    online_names = set()
+    # ── 获取当前在线数据（live source） ──
+    # 对 Business 租户，在线成员时长优先用 Zoom Metrics 的实时 online_minutes
+    live_map = {}
     try:
         from zoom_metrics import ZoomMetrics
         from db import get_zoom_accounts
@@ -203,22 +226,35 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                 for p in m.get("participants", []):
                     name = p.get("name", "").strip()
                     if name:
-                        online_names.add(name)
+                        live_map[name] = p
     except Exception:
-        pass  # 静默失败，online_names 为空则全部离线
+        pass  # 静默失败，live_map 为空
 
     # ── 今日考勤汇总（累计数据） ──
     summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
 
-    # ── 用 live 名单覆盖在线状态 ──
+    # ── 合并 live 数据：在线成员用实时时长，离线成员保留 webhook 累计 ──
+    from db import _fmt_dur
     for m in members:
         sn = m.get("standard_name", "")
-        m["status"] = "online" if sn in online_names else "offline"
-    # 重新排序：在线优先 → 今日时长降序（status 被 live 数据覆盖后重新排）
+        lp = live_map.get(sn)
+        if lp:
+            m["status"] = "online"
+            # 优先用 Zoom Metrics 的实时时长
+            live_secs = lp.get("online_minutes", 0) * 60
+            m["today_total_seconds"] = max(m.get("today_total_seconds", 0), live_secs)
+            m["today_total_duration"] = _fmt_dur(live_secs)
+            # 最后活动优先用 live join_time
+            jt = lp.get("join_time", "")
+            if jt:
+                m["last_activity"] = jt
+        else:
+            m["status"] = "offline"
+    # 重新排序：在线优先 → 今日时长降序
     members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("today_total_seconds", 0) or 0)))
     # 按 live 数据计算在线/离线数量
-    live_online = len(online_names)
+    live_online = len(live_map)
     live_offline = sum(1 for m in members if m.get("status") == "offline")
 
     # ── 搜索 / 筛选 ──
@@ -245,16 +281,28 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display"
         ).fetchall()
     member_displays = {}
+    # 同时建两个索引：key=raw_name & key=display_name
     for r in md_rows:
         raw_name = r[0]
+        disp_name = r[1]
         aliases = json.loads(r[2]) if r[2] else []
-        member_displays[raw_name] = {
-            "display_name": r[1],
+        entry = {
+            "display_name": disp_name,
             "aliases": aliases,
             "note": r[3] or "",
             "count_enabled": bool(r[4]),
             "group_id": r[5],
+            "raw_name": raw_name,
         }
+        member_displays[raw_name] = entry
+        member_displays[disp_name] = entry
+
+    # 给每个 member 补充 raw_name 和 group_id（从 member_displays 取）
+    for m in members:
+        sn = m.get("standard_name", "")
+        md_entry = member_displays.get(sn, {})
+        m["raw_name"] = md_entry.get("raw_name", sn)
+        m["group_id"] = md_entry.get("group_id")
 
     return _render_admin(request, "participants", user, "participants.html",
                          title="总管理成员中心" if role in ("admin", "super_admin") else "租户成员中心",
@@ -356,12 +404,28 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
 
     history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
     sharing_search = request.query_params.get("search", "")
+    sharing_group_id = request.query_params.get("group_id", "")
     sharing, sharing_total, sharing_meta = get_sharing_records(
         tenant_id, limit=500,
         start_time=sharing_start_utc,
         end_time=sharing_end_utc,
         search=sharing_search or None,
+        group_id=sharing_group_id or None,
     )
+
+    # 查询本租户所有分组及各组共享人数
+    conn = db._get_conn()
+    all_groups = conn.execute(
+        "SELECT id, name FROM member_groups WHERE tenant_id=? ORDER BY id", (tenant_id,)
+    ).fetchall()
+    groups_stats = []
+    for gid_row, gname in all_groups:
+        gid = str(gid_row)
+        cnt = sum(1 for sr in sharing if str(sr.get("group_id", "")) == gid)
+        groups_stats.append({"group_id": gid, "group_name": gname, "count": cnt})
+    # 未分组人数
+    ungrouped_cnt = sum(1 for sr in sharing if not sr.get("group_id"))
+    groups_stats.insert(0, {"group_id": "", "group_name": "全部", "count": len(sharing)})
 
     # 显示筛选范围文本
     if range_val == "today":
@@ -389,7 +453,19 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                          sharing_start=start_param,
                          sharing_end=end_param,
                          sharing_search=sharing_search,
+                         sharing_group_id=sharing_group_id,
+                         sharing_groups=groups_stats,
                          tab=tab)
+
+
+@router.get("/overview", response_class=HTMLResponse)
+async def dashboard_overview(request: Request, user: dict = Depends(require_user)):
+    """多租户总览页（仅 super_admin）"""
+    role = request.session.get("role", "")
+    if role != "super_admin":
+        return RedirectResponse(url="/dashboard", status_code=303)
+    return _render_admin(request, "admin", user, "admin_overview.html",
+                         title="多租户总览")
 
 
 @router.get("/alerts", response_class=HTMLResponse)
@@ -407,8 +483,11 @@ async def dashboard_alerts_page(request: Request, user: dict = Depends(require_u
 
 @router.get("/settings", response_class=HTMLResponse)
 async def dashboard_settings(request: Request, user: dict = Depends(require_user)):
-    """Settings page — redirect to Zoom config for current tenant."""
-    return RedirectResponse(url="/dashboard/zoom", status_code=303)
+    """Settings page — system configuration (super_admin/admin)."""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+    return _render_admin(request, "admin_center", user, "system_settings.html")
 
 
 @router.get("/setup")
@@ -421,6 +500,8 @@ async def dashboard_setup_redirect():
 async def dashboard_zoom(request: Request, user: dict = Depends(require_user)):
     """Zoom account management — tenant-isolated."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
+    role = user.get("role", "")
+    # tenant 用户也能进入该页面——由 hide_settings 控制只显示 2FA
     accounts = db.get_zoom_accounts(tenant_id)
     display_accounts = []
     for a in accounts:
@@ -428,7 +509,8 @@ async def dashboard_zoom(request: Request, user: dict = Depends(require_user)):
         d["client_id_display"] = a.get("client_id", "")[:8] + "****" if a.get("client_id") else ""
         d["has_client_secret"] = bool(a.get("client_secret"))
         display_accounts.append(d)
-    return _render_admin(request, "settings", user, "tenant_zoom.html", accounts=display_accounts)
+    fresh_user = db.get_user_by_id(user["id"]) or user
+    return _render_admin(request, "settings", fresh_user, "tenant_zoom.html", accounts=display_accounts)
 
 
 @router.get("/channels", response_class=HTMLResponse)
@@ -437,8 +519,19 @@ async def dashboard_channels(request: Request, user: dict = Depends(require_user
     tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = [dict(c) for c in db.get_tenant_channels(tenant_id)]
     bot_config = db.get_tenant_bot_config(tenant_id)
-    return _render_admin(request, "settings", user, "tenant_channels.html",
+    return _render_admin(request, "channels", user, "tenant_channels.html",
                           channels=channels, bot_config=bot_config)
+
+
+# ── Admin Center ─────────────────────────────────────────────────────────────
+
+@router.get("/admin-center", response_class=HTMLResponse)
+async def dashboard_admin_center(request: Request, user: dict = Depends(require_user)):
+    """Admin center — hub page for management features."""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+    return _render_admin(request, "admin_center", user, "admin_center.html")
 
 
 # ── Admin: Tenants ────────────────────────────────────────────────────────────
@@ -457,7 +550,7 @@ async def admin_tenants_create(request: Request,
                                name: str = Form(...),
                                display_name: str = Form(""),
                                plan: str = Form("pro"),
-                               user: dict = Depends(require_user)):
+                               user: dict = Depends(require_role("super_admin"))):
     """Create a new tenant."""
     tenant_id = db.create_tenant(name, display_name, plan)
     request.session["tenant_id"] = tenant_id
@@ -466,7 +559,7 @@ async def admin_tenants_create(request: Request,
 
 @router.post("/admin/tenants/{tenant_id}/toggle")
 async def admin_tenants_toggle(request: Request, tenant_id: str,
-                               user: dict = Depends(require_user)):
+                               user: dict = Depends(require_role("super_admin"))):
     """Toggle tenant active/inactive."""
     db.toggle_tenant(tenant_id)
     return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
@@ -474,7 +567,7 @@ async def admin_tenants_toggle(request: Request, tenant_id: str,
 
 @router.post("/admin/tenants/{tenant_id}/switch")
 async def admin_tenants_switch(request: Request, tenant_id: str,
-                               user: dict = Depends(require_user)):
+                               user: dict = Depends(require_role("super_admin"))):
     """Switch admin context to this tenant."""
     request.session["tenant_id"] = tenant_id
     return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
@@ -482,7 +575,7 @@ async def admin_tenants_switch(request: Request, tenant_id: str,
 
 @router.post("/admin/tenants/{tenant_id}/delete")
 async def admin_tenants_delete(request: Request, tenant_id: str,
-                               user: dict = Depends(require_user)):
+                               user: dict = Depends(require_role("super_admin"))):
     """Delete a tenant."""
     db.delete_tenant(tenant_id)
     return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
@@ -490,7 +583,7 @@ async def admin_tenants_delete(request: Request, tenant_id: str,
 
 @router.post("/admin/tenants/{tenant_id}/token")
 async def admin_tenants_token(request: Request, tenant_id: str,
-                              user: dict = Depends(require_user)):
+                              user: dict = Depends(require_role("super_admin"))):
     """Regenerate tenant API token."""
     db.regenerate_tenant_token(tenant_id)
     return RedirectResponse(url="/dashboard/admin/tenants", status_code=303)
@@ -500,14 +593,12 @@ async def admin_tenants_token(request: Request, tenant_id: str,
 
 @router.get("/admin/users", response_class=HTMLResponse)
 async def admin_users(request: Request, user: dict = Depends(require_user)):
-    """User management page."""
-    all_users = db.get_all_users()
-    users = [_user_dict(u) for u in all_users]
-    return _render_admin(request, "admin", user, "admin_users.html", users=users)
+    """Redirect to new user management page."""
+    return RedirectResponse(url="/dashboard/users", status_code=302)
 
 
 @router.post("/members/update-display")
-async def update_member_display_api(request: Request):
+async def update_member_display_api(request: Request, user: dict = Depends(require_role("tenant_admin"))):
     """更新成员别名/备注/计入统计"""
     try:
         data = await request.json()
@@ -517,6 +608,7 @@ async def update_member_display_api(request: Request):
         note = data.get("note", "")
         count_enabled = data.get("count_enabled", True)
         aliases = data.get("aliases", [])
+        group_id = data.get("group_id", None)
         if not raw_name or not display_name:
             return {"ok": False, "message": "参数不完整"}
         import json
@@ -527,13 +619,13 @@ async def update_member_display_api(request: Request):
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE member_display SET display_name=?, aliases=?, note=?, count_enabled=?, updated_at=datetime('now') WHERE raw_name=? AND tenant_id=?",
-                (display_name, json.dumps(aliases), note, int(count_enabled), raw_name, tenant_id)
+                "UPDATE member_display SET display_name=?, aliases=?, note=?, count_enabled=?, group_id=?, updated_at=datetime('now') WHERE id=?",
+                (display_name, json.dumps(aliases), note, int(count_enabled), group_id, existing["id"])
             )
         else:
             conn.execute(
-                "INSERT INTO member_display (raw_name, display_name, aliases, note, count_enabled, tenant_id) VALUES (?,?,?,?,?,?)",
-                (raw_name, display_name, json.dumps(aliases), note, int(count_enabled), tenant_id)
+                "INSERT INTO member_display (raw_name, display_name, aliases, note, count_enabled, group_id, tenant_id) VALUES (?,?,?,?,?,?,?)",
+                (raw_name, display_name, json.dumps(aliases), note, int(count_enabled), group_id, tenant_id)
             )
         conn.commit()
         return {"ok": True, "message": "保存成功"}
@@ -575,6 +667,175 @@ async def admin_users_delete(request: Request, user_id: int,
     return RedirectResponse(url="/dashboard/admin/users", status_code=303)
 
 
+# ── New: /dashboard/users/* (role-based user management) ───────────────────
+
+def _user_can_manage(actor_role: str, target: dict) -> bool:
+    """Check if actor can manage (edit/delete/toggle) target user."""
+    if actor_role == "super_admin":
+        return True  # can manage everyone including self
+    if actor_role == "admin":
+        return target.get("role") != "super_admin"
+    if actor_role == "tenant_admin":
+        return target.get("role") == "user"
+    return False
+
+
+def _allowed_create_roles(actor_role: str) -> list[dict]:
+    """Roles the actor is allowed to create."""
+    if actor_role == "super_admin":
+        return [
+            {"value": "admin", "label": "管理员"},
+            {"value": "tenant_admin", "label": "租户管理员"},
+            {"value": "user", "label": "用户"},
+        ]
+    if actor_role == "admin":
+        return [
+            {"value": "tenant_admin", "label": "租户管理员"},
+            {"value": "user", "label": "用户"},
+        ]
+    if actor_role == "tenant_admin":
+        return [
+            {"value": "user", "label": "用户"},
+        ]
+    return []
+
+
+@router.get("/users", response_class=HTMLResponse)
+async def dashboard_users(request: Request, user: dict = Depends(require_user)):
+    """User management page — role-based data visibility."""
+    actor_role = user.get("role", "user")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    if actor_role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    all_tenants = db.get_all_tenants() if actor_role in ("super_admin", "admin") else []
+
+    # Get users filtered by role
+    users_raw = db.get_users(viewer_role=actor_role, tenant_id=tenant_id)
+    users = []
+    for u in users_raw:
+        ud = _user_dict(u)
+        ud["telegram_chat_id"] = u.get("telegram_chat_id", "")
+        ud["telegram_2fa_enabled"] = u.get("telegram_2fa_enabled", 0)
+        ud["can_manage"] = _user_can_manage(actor_role, u)
+        users.append(ud)
+
+    can_create = len(_allowed_create_roles(actor_role)) > 0
+
+    return _render_admin(request, "admin_center", user, "admin_users.html",
+                         users=users,
+                         can_create=can_create,
+                         createable_roles=_allowed_create_roles(actor_role),
+                         all_tenants=all_tenants)
+
+
+@router.post("/users/create")
+async def dashboard_users_create(request: Request,
+                                 username: str = Form(...),
+                                 password: str = Form(...),
+                                 display_name: str = Form(""),
+                                 role: str = Form("user"),
+                                 tenant_id: str = Form("default"),
+                                 user: dict = Depends(require_user)):
+    """Create a new user — role-gated."""
+    actor_role = user.get("role", "user")
+    allowed = {r["value"] for r in _allowed_create_roles(actor_role)}
+    if role not in allowed:
+        raise HTTPException(status_code=403, detail="无权创建此角色")
+    try:
+        uid = db.create_user(username, password, display_name, role, tenant_id=tenant_id)
+        db.set_user_tenant_role(uid, tenant_id, role)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+@router.post("/users/{user_id}/toggle")
+async def dashboard_users_toggle(request: Request, user_id: int,
+                                 user: dict = Depends(require_user)):
+    """Toggle user active/inactive — role-gated."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target or not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权操作此用户")
+    db.toggle_user(user_id)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+@router.post("/users/{user_id}/delete")
+async def dashboard_users_delete(request: Request, user_id: int,
+                                 user: dict = Depends(require_user)):
+    """Delete a user — role-gated."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target or not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权删除此用户")
+    db.delete_user(user_id)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+@router.post("/users/{user_id}/role")
+async def dashboard_users_role(request: Request, user_id: int,
+                               role: str = Form(...),
+                               user: dict = Depends(require_user)):
+    """Update user role — role-gated."""
+    actor_role = user.get("role", "user")
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    # super_admin cannot demote self
+    if actor_role == "super_admin" and user["id"] == user_id and target.get("role") == "super_admin" and role != "super_admin":
+        raise HTTPException(status_code=403, detail="超级管理员不能降级自己")
+
+    if not _user_can_manage(actor_role, target):
+        raise HTTPException(status_code=403, detail="无权修改此用户的角色")
+
+    # admin cannot create super_admin
+    if actor_role == "admin" and role == "super_admin":
+        raise HTTPException(status_code=403, detail="无权创建超级管理员")
+
+    # admin cannot promote someone to same level as self
+    if actor_role == "admin" and role == "admin":
+        raise HTTPException(status_code=403, detail="无权将他人设为管理员")
+
+    # tenant_admin can only set user role
+    if actor_role == "tenant_admin" and role != "user":
+        raise HTTPException(status_code=403, detail="无权设置此角色")
+
+    # Ensure at least 1 super_admin remains
+    if target.get("role") == "super_admin" and role != "super_admin":
+        remaining = db.get_users(viewer_role="super_admin")
+        if len(remaining) <= 1:
+            raise HTTPException(status_code=400, detail="系统必须至少保留一个超级管理员")
+
+    db.update_user(user_id, role=role)
+    return RedirectResponse(url="/dashboard/users", status_code=303)
+
+
+# ── Tenants / Audit / Settings (guarded routes) ────────────────────────────
+
+@router.get("/tenants", response_class=HTMLResponse)
+async def dashboard_tenants(request: Request, user: dict = Depends(require_user)):
+    """Tenant management — super_admin only."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="权限不足")
+    all_tenants = db.get_all_tenants()
+    tenants = [_tenant_dict(t) for t in all_tenants]
+    return _render_admin(request, "admin_center", user, "admin_tenants.html",
+                         tenants=tenants)
+
+
+@router.get("/audit", response_class=HTMLResponse)
+async def dashboard_audit(request: Request, user: dict = Depends(require_user)):
+    """Audit log — super_admin only (placeholder)."""
+    if user.get("role") != "super_admin":
+        raise HTTPException(status_code=403, detail="权限不足")
+    return _render_admin(request, "admin_center", user, "audit_log.html",
+                         events=[])
+
+
 # ── Admin: Zoom Accounts ─────────────────────────────────────────────────────
 
 @router.get("/admin/accounts", response_class=HTMLResponse)
@@ -595,7 +856,7 @@ async def admin_accounts_create(request: Request,
                                 client_secret: str = Form(...),
                                 host_email: str = Form(""),
                                 webhook_secret: str = Form(""),
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Create a new Zoom account binding."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_zoom_account(tenant_id, label, account_id, client_id, client_secret, host_email, webhook_secret)
@@ -610,7 +871,7 @@ async def admin_accounts_edit(request: Request, account_id: int,
                               is_active: str = Form("1"),
                               client_id: str = Form(""),
                               client_secret: str = Form(""),
-                              user: dict = Depends(require_user)):
+                              user: dict = Depends(require_role("admin"))):
     """Edit a Zoom account."""
     updates = dict(
         label=label,
@@ -629,7 +890,7 @@ async def admin_accounts_edit(request: Request, account_id: int,
 
 @router.post("/admin/accounts/{account_id}/delete")
 async def admin_accounts_delete(request: Request, account_id: int,
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Delete a Zoom account."""
     db.delete_zoom_account(account_id)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
@@ -654,7 +915,7 @@ async def admin_accounts_webhook_status(request: Request, account_id: int,
 
 @router.post("/admin/accounts/{account_id}/test")
 async def admin_accounts_test(request: Request, account_id: int,
-                               user: dict = Depends(require_user)):
+                               user: dict = Depends(require_role("admin"))):
     """Test Zoom API connection for a specific account."""
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
@@ -704,7 +965,7 @@ async def admin_meetings_create(request: Request,
                                 meeting_id: str = Form(...),
                                 label: str = Form(""),
                                 meeting_type: str = Form("pmi"),
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Add a monitored meeting room."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_meeting(tenant_id, 0, meeting_id, label, meeting_type)
@@ -713,7 +974,7 @@ async def admin_meetings_create(request: Request,
 
 @router.post("/admin/meetings/{meeting_db_id}/delete")
 async def admin_meetings_delete(request: Request, meeting_db_id: int,
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Remove a monitored meeting room."""
     db.delete_meeting(meeting_db_id)
     return RedirectResponse(url="/dashboard/admin/accounts", status_code=303)
@@ -735,7 +996,7 @@ async def admin_channels_create(request: Request,
                                 chat_id: str = Form(...),
                                 label: str = Form(""),
                                 is_group: str = Form("false"),
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Create a new telegram channel."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     db.create_tenant_channel(tenant_id, chat_id, label, is_group == "true")
@@ -744,7 +1005,7 @@ async def admin_channels_create(request: Request,
 
 @router.post("/admin/channels/{channel_id}/toggle")
 async def admin_channels_toggle(request: Request, channel_id: int,
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Toggle channel enabled/disabled."""
     db.toggle_tenant_channel(channel_id)
     return RedirectResponse(url="/dashboard/admin/channels", status_code=303)
@@ -752,7 +1013,7 @@ async def admin_channels_toggle(request: Request, channel_id: int,
 
 @router.post("/admin/channels/{channel_id}/delete")
 async def admin_channels_delete(request: Request, channel_id: int,
-                                user: dict = Depends(require_user)):
+                                user: dict = Depends(require_role("admin"))):
     """Delete a channel."""
     db.delete_tenant_channel(channel_id)
     return RedirectResponse(url="/dashboard/admin/channels", status_code=303)
@@ -763,7 +1024,7 @@ async def admin_channels_edit(request: Request, channel_id: int,
                               label: str = Form(""),
                               chat_id: str = Form(""),
                               is_group: str = Form("false"),
-                              user: dict = Depends(require_user)):
+                              user: dict = Depends(require_role("admin"))):
     """Edit a channel's label, chat_id, and/or is_group."""
     db.update_tenant_channel(channel_id, label=label.strip(), chat_id=chat_id.strip(),
                              is_group=(is_group == "true"))
@@ -772,7 +1033,7 @@ async def admin_channels_edit(request: Request, channel_id: int,
 
 @router.post("/admin/channels/{channel_id}/test")
 async def admin_channels_test(request: Request, channel_id: int,
-                              user: dict = Depends(require_user)):
+                              user: dict = Depends(require_role("admin"))):
     """Send a test push to the given channel."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = db.get_tenant_channels(tenant_id)
@@ -821,9 +1082,13 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         "id": user["id"],
         "username": user["username"],
         "display_name": user.get("display_name", ""),
-        "role": user.get("role", "viewer"),
+        "role": user.get("role", "user"),
         "tenant_id": tenant_id,
-        "is_active": user["is_active_str"],
+        "is_active": user.get("is_active_str", "true" if user.get("is_active") else "false"),
+        "telegram_chat_id": user.get("telegram_chat_id", ""),
+        "telegram_2fa_enabled": user.get("telegram_2fa_enabled", 0),
+        "telegram_2fa_verified_at": user.get("telegram_2fa_verified_at", ""),
+        "twofa_backup_codes": user.get("twofa_backup_codes", ""),
     }
 
     # ── 租户切换上下文（仅 super_admin 需要） ──
@@ -838,6 +1103,7 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         current_tenant_name = ""
 
     context = {
+        **extra,
         "request": request,
         "active": active,
         "current_user": current_user,
@@ -846,6 +1112,7 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         "available_tenants": all_tenants,
         "current_tenant_id": tenant_id,
         "current_tenant_name": current_tenant_name,
-        **extra,
+        "hide_settings": current_user.get("role", "user") not in ("super_admin", "admin"),
+        "nav_items": _get_nav_items(user.get("role", "user")),
     }
     return templates.TemplateResponse(request, template_name, context)

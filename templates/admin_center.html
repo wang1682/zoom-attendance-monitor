@@ -1,0 +1,64 @@
+{% extends "tenant_base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h2 class="page-title">管理中心</h2>
+  <p class="page-subtitle">系统管理功能汇总</p>
+</div>
+
+{% set is_super = current_user.role == 'super_admin' %}
+
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+
+  {% if is_super or current_user.role == 'admin' %}
+  <a href="/dashboard/users" class="admin-card">
+    <div class="admin-card-icon">👥</div>
+    <div class="admin-card-body">
+      <div class="admin-card-title">用户管理</div>
+      <div class="admin-card-desc">管理系统用户、角色和权限</div>
+    </div>
+  </a>
+  {% endif %}
+
+  {% if is_super %}
+  <a href="/dashboard/tenants" class="admin-card">
+    <div class="admin-card-icon">🏢</div>
+    <div class="admin-card-body">
+      <div class="admin-card-title">租户管理</div>
+      <div class="admin-card-desc">管理租户、状态和配置</div>
+    </div>
+  </a>
+  {% endif %}
+
+  {% if is_super or current_user.role == 'admin' %}
+  <a href="/dashboard/settings" class="admin-card">
+    <div class="admin-card-icon">⚙️</div>
+    <div class="admin-card-body">
+      <div class="admin-card-title">系统设置</div>
+      <div class="admin-card-desc">Zoom API、安全、TOTP 等配置</div>
+    </div>
+  </a>
+  {% endif %}
+
+  {% if is_super %}
+  <a href="/dashboard/audit" class="admin-card">
+    <div class="admin-card-icon">📋</div>
+    <div class="admin-card-body">
+      <div class="admin-card-title">审计日志</div>
+      <div class="admin-card-desc">查看用户操作和安全事件记录</div>
+    </div>
+  </a>
+  {% endif %}
+
+</div>
+
+<style>
+.admin-card{display:flex;align-items:flex-start;gap:12px;background:var(--bg3);border:1px solid var(--border-light);border-radius:4px;padding:16px;text-decoration:none;transition:all .15s}
+.admin-card:hover{border-color:var(--border);background:var(--panel-hover);transform:translateY(-1px)}
+.admin-card-icon{font-size:24px;line-height:1;flex-shrink:0}
+.admin-card-body{flex:1;min-width:0}
+.admin-card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}
+.admin-card-desc{font-size:11px;color:var(--text-muted);line-height:1.4}
+</style>
+
+{% endblock %}

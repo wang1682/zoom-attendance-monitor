@@ -7,8 +7,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
+import json
+import logging
+
 import db
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -41,6 +46,47 @@ async def require_editor(user: dict = Depends(require_user)) -> dict:
     return user
 
 
+# ── Shared nav items builder ──────────────────────────────────────────────────
+
+def _get_nav_items(role: str) -> list[dict]:
+    """Build the sidebar nav items filtered by user role.
+
+    super_admin: all items including management
+    admin: all items except tenant_admin, system, audit
+    tenant_admin: overview, participants, meetings, alerts, push, security
+    user: overview, participants, meetings, alerts, security
+    """
+    items = [
+        {"key": "overview",     "label": "总览",   "href": "/dashboard/",                      "icon": ""},
+        {"key": "participants", "label": "成员",   "href": "/dashboard/participants",           "icon": ""},
+        {"key": "meetings",     "label": "会议",   "href": "/dashboard/meetings",               "icon": ""},
+        {"key": "alerts",       "label": "预警",   "href": "/dashboard/alerts",                 "icon": ""},
+    ]
+    if role in ("super_admin", "admin", "tenant_admin"):
+        items += [
+            {"key": "channels",     "label": "推送",   "href": "/dashboard/tenant/channels",    "icon": ""},
+        ]
+    items += [
+        {"key": "security",     "label": "安全中心","href": "/dashboard/tenant/security",       "icon": ""},
+    ]
+    # Management items — 合并到「管理中心」
+    if role == "super_admin":
+        items += [
+            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
+            {"key": "admin_center", "label": "管理中心","href": "/dashboard/admin-center",         "icon": ""},
+        ]
+    elif role == "admin":
+        items += [
+            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
+            {"key": "admin_center", "label": "管理中心","href": "/dashboard/admin-center",         "icon": ""},
+        ]
+    elif role == "tenant_admin":
+        items += [
+            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
+        ]
+    return items
+
+
 # ── Render helper ─────────────────────────────────────────────────────────────
 
 
@@ -52,25 +98,58 @@ def _render_tenant(request: Request, active: str, user: dict,
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
+    # 从 DB 重读完整用户资料（确保 telegram 字段最新）
+    fresh_user = db.get_user_by_id(user["id"]) or user
+    logger.info(
+        "tenant zoom page user_id=%s username=%s selected_tenant=%s telegram_2fa=%s",
+        fresh_user.get("id"),
+        fresh_user.get("username"),
+        tenant_id,
+        fresh_user.get("telegram_2fa_enabled"),
+    )
     current_user = {
-        "id": user["id"],
-        "username": user["username"],
-        "display_name": user.get("display_name", ""),
-        "role": user.get("role", "viewer"),
+        "id": fresh_user["id"],
+        "username": fresh_user["username"],
+        "display_name": fresh_user.get("display_name", ""),
+        "role": fresh_user.get("role", "viewer"),
         "tenant_id": tenant_id,
-        "is_active": user["is_active_str"],
+        "is_active": fresh_user.get("is_active_str", "true" if fresh_user.get("is_active") else "false"),
+        "telegram_chat_id": fresh_user.get("telegram_chat_id", ""),
+        "telegram_2fa_enabled": fresh_user.get("telegram_2fa_enabled", 0),
+        "telegram_2fa_verified_at": fresh_user.get("telegram_2fa_verified_at", ""),
+        "twofa_backup_codes": fresh_user.get("twofa_backup_codes", ""),
     }
     tenant_info = db.get_tenant(tenant_id)
     tenant_name = tenant_info.get("display_name", tenant_id) if tenant_info else tenant_id
+    role = user.get("role", "user")
+    is_viewer = role == "viewer"
+    is_super_admin = role == "super_admin"
 
-    is_viewer = user.get("role", "viewer") == "viewer"
+    # ── 租户切换上下文（仅 super_admin 需要） ──
+    if is_super_admin:
+        all_tenants = db.get_all_tenants()
+        current_tenant = next((t for t in all_tenants if t["id"] == tenant_id), None)
+        current_tenant_name = current_tenant["display_name"] if current_tenant else tenant_id
+    else:
+        all_tenants = []
+        current_tenant_name = ""
+
+    hide_settings = role not in ("admin", "super_admin")
+    nav_items = _get_nav_items(role)
+
     context = {
+        **extra,
         "request": request,
         "active": active,
-        "current_user": current_user,
         "tenant_name": tenant_name,
         "is_viewer": is_viewer,
-        **extra,
+        "is_super_admin": is_super_admin,
+        "available_tenants": all_tenants,
+        "current_tenant_id": tenant_id,
+        "current_tenant_name": current_tenant_name,
+        "hide_settings": hide_settings,
+        "current_user": current_user,
+        "nav_items": nav_items,
     }
     return templates.TemplateResponse(request, template_name, context)
 
@@ -168,12 +247,19 @@ async def tenant_setup_redirect():
 # ── Zoom 账号自助配置 ──────────────────────────────────────────────────────
 
 
-@router.get("/zoom", response_class=HTMLResponse)
-async def tenant_zoom(request: Request, user: dict = Depends(require_user)):
-    """Zoom account self-service page — create, edit, test connection."""
+@router.get("/security", response_class=HTMLResponse)
+async def tenant_security(request: Request, user: dict = Depends(require_user)):
+    """Security center page — Telegram 2FA, backup codes."""
+    return _render_tenant(
+        request, "security", user, "tenant_security.html",
+    )
+
+
+@router.get("/accounts", response_class=HTMLResponse)
+async def tenant_accounts(request: Request, user: dict = Depends(require_editor)):
+    """Zoom OAuth account management — admin only."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     accounts = db.get_zoom_accounts(tenant_id)
-    # Mask secrets in display dicts
     display_accounts = []
     for a in accounts:
         d = _account_dict(a)
@@ -181,9 +267,18 @@ async def tenant_zoom(request: Request, user: dict = Depends(require_user)):
         d["has_client_secret"] = bool(a.get("client_secret"))
         display_accounts.append(d)
     return _render_tenant(
-        request, "zoom", user, "tenant_zoom.html",
+        request, "accounts", user, "tenant_accounts.html",
         accounts=display_accounts,
     )
+
+
+@router.get("/zoom", response_class=RedirectResponse)
+async def tenant_zoom_redirect(request: Request, user: dict = Depends(require_user)):
+    """Redirect /zoom to /security for tenant users, /accounts for admin."""
+    role = user.get("role", "")
+    if role in ("super_admin", "admin"):
+        return RedirectResponse(url="/dashboard/tenant/accounts", status_code=302)
+    return RedirectResponse(url="/dashboard/tenant/security", status_code=302)
 
 
 @router.post("/zoom/create", response_class=RedirectResponse)
@@ -472,6 +567,28 @@ async def tenant_zoom_delete(
     return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
 
 
+@router.post("/zoom/{account_db_id}/set-active")
+async def tenant_zoom_set_active(
+    request: Request,
+    account_db_id: int,
+    user: dict = Depends(require_editor),
+):
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    acct = db.get_zoom_account(account_db_id)
+    if not acct or str(acct.get("tenant_id")) != str(tenant_id):
+        return _render_tenant(request, "zoom", user, "tenant_zoom.html",
+                              zoom_accounts=db.get_zoom_accounts(tenant_id),
+                              error="账号不存在或不属于当前租户")
+    # 该租户下所有账号 is_active=0，目标账号 is_active=1
+    conn = db._get_conn()
+    conn.execute("UPDATE zoom_accounts SET is_active = 0 WHERE tenant_id = ?", (tenant_id,))
+    conn.execute("UPDATE zoom_accounts SET is_active = 1 WHERE id = ?", (account_db_id,))
+    conn.commit()
+    db.log_audit("update", "zoom_account", account_db_id,
+                 f"Set zoom account {acct.get('account_id','')} as active for tenant {tenant_id}")
+    return RedirectResponse(url="/dashboard/tenant/zoom", status_code=303)
+
+
 # ── Telegram 频道管理 ────────────────────────────────────────────────────────
 
 
@@ -722,7 +839,7 @@ async def _compute_setup_status(tenant_id: str) -> dict:
 
     # 5. Webhook recent 24h (15 pts)
     from datetime import datetime, timedelta, timezone
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
     row = conn.execute(
         "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
         (cutoff, tenant_id),
@@ -812,4 +929,345 @@ async def _compute_setup_status(tenant_id: str) -> dict:
 async def setup_status(request: Request, user: dict = Depends(require_user)):
     """Setup Center readiness score for the current tenant."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
-    return await _compute_setup_status(tenant_id)
+
+
+# ═══════════════════════════════════════════
+# Telegram 2FA 设置
+# ═══════════════════════════════════════════
+
+
+@router.post("/settings/2fa/bind")
+async def bind_telegram_2fa(request: Request,
+                            user: dict = Depends(require_user),
+                            chat_id: str = Form(...)):
+    """Step 1: Send a 6-digit confirmation code to the given chat_id."""
+    chat_id = chat_id.strip()
+    if not chat_id:
+        return {"success": False, "error": "Chat ID 不能为空"}
+    if not chat_id.lstrip("-").isdigit():
+        return {"success": False, "error": "Chat ID 格式错误，请输入纯数字"}
+    from config import settings
+    from telegram_push import send_message
+    import secrets as sec
+
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    bot_cfg = db.get_tenant_bot_config(tenant_id)
+    token = bot_cfg.get("token") or settings.telegram_bot_token
+
+    code = f"{sec.randbelow(1000000):06d}"
+
+    result = send_message(
+        f"🔐 两步验证绑定确认\n\n确认码：{code}\n\n请在 Dashboard 输入该确认码完成绑定。验证码 5 分钟内有效。",
+        chat_id=chat_id,
+        bot_token=token
+    )
+    if not result.get("ok"):
+        msg = result.get("error", "")
+        hint = ""
+        if "chat not found" in msg.lower():
+            hint = " — 请先向 Bot 发送 /start"
+        elif "forbidden" in msg.lower():
+            hint = " — Bot 被用户拉黑"
+        return {"success": False, "error": f"无法发送消息到此 Chat ID: {msg}{hint}"}
+
+    # 存储确认码（在 app.state 中，过期时间 5 分钟）
+    # 以 chat_id 为 key，方便 webhook 通过 chat_id 查到绑定关系
+    import time as _time
+    if not hasattr(request.app.state, "_2fa_bind_pending"):
+        request.app.state._2fa_bind_pending = {}
+    request.app.state._2fa_bind_pending[chat_id] = {
+        "user_id": user["id"],
+        "code": code,
+        "expires_at": _time.time() + 300,
+    }
+    db.log_security_event("bind_telegram_2fa_sent_code", username=user["username"],
+                          tenant_id=request.app.state.get_effective_tenant_id(request),
+                          result="success")
+    return {"success": True, "sent": True}
+
+
+@router.post("/settings/2fa/bind/confirm")
+async def confirm_bind_2fa(request: Request,
+                           user: dict = Depends(require_user),
+                           code: str = Form(...)):
+    """Step 2: Verify the confirmation code and bind the Telegram chat_id."""
+    code = code.strip()
+    if not code:
+        return {"success": False, "error": "确认码不能为空"}
+    if not hasattr(request.app.state, "_2fa_bind_pending"):
+        return {"success": False, "error": "未找到待绑定的确认码，请重新发送"}
+    import time as _time
+    # 遍历查找 user_id 对应的 pending（key 现在是 chat_id）
+    pending = None
+    pending_chat_id = None
+    for cid, p in request.app.state._2fa_bind_pending.items():
+        if p.get("user_id") == user["id"]:
+            pending = p
+            pending_chat_id = cid
+            break
+    if not pending:
+        return {"success": False, "error": "未找到待绑定的确认码，请先发送确认码"}
+    if _time.time() > pending["expires_at"]:
+        request.app.state._2fa_bind_pending.pop(pending_chat_id, None)
+        return {"success": False, "error": "确认码已过期，请重新发送"}
+    if code != pending["code"]:
+        return {"success": False, "error": "确认码错误"}
+
+    chat_id = pending_chat_id
+    db.set_user_telegram_chat_id(user["id"], chat_id)
+    db.enable_telegram_2fa(user["id"])
+    request.app.state._2fa_bind_pending.pop(pending_chat_id, None)
+    db.log_security_event("bind_telegram_2fa", username=user["username"],
+                          tenant_id=request.app.state.get_effective_tenant_id(request),
+                          result="success")
+
+    # 再次通知用户
+    from config import settings
+    from telegram_push import send_message
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    bot_cfg = db.get_tenant_bot_config(tenant_id)
+    token = bot_cfg.get("token") or settings.telegram_bot_token
+    send_message("✅ Telegram 已绑定，两步验证已启用。\n下次登录将需要 Telegram 验证码。", chat_id=chat_id, bot_token=token)
+
+    return {"success": True}
+
+
+@router.post("/settings/2fa/unbind")
+async def unbind_telegram_2fa(request: Request,
+                              user: dict = Depends(require_user)):
+    """Unbind Telegram and disable 2FA."""
+    db.disable_telegram_2fa(user["id"])
+    db.log_security_event("unbind_telegram_2fa", username=user["username"], result="success")
+    return {"success": True}
+
+
+@router.post("/settings/2fa/enable")
+async def enable_telegram_2fa(request: Request,
+                              user: dict = Depends(require_user)):
+    """Enable Telegram 2FA — requires bound chat_id."""
+    from config import settings
+    full_user = db.get_user_by_id(user["id"])
+    if not full_user or not full_user.get("telegram_chat_id"):
+        return {"success": False, "error": "请先绑定 Telegram 账号"}
+    codes = db.generate_backup_codes(8)
+    db.save_backup_codes(user["id"], codes)
+    db.enable_telegram_2fa(user["id"])
+    from telegram_push import send_message
+
+    # 使用租户级 bot token，而非全局 token
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    bot_cfg = db.get_tenant_bot_config(tenant_id)
+    token = bot_cfg.get("token") or settings.telegram_bot_token
+
+    send_message(
+        "✅ 两步验证已启用\n\n登录时请使用 Telegram 验证码。\n\n备用码已生成，请妥善保管。",
+        chat_id=full_user["telegram_chat_id"],
+        bot_token=token
+    )
+    db.log_security_event("enable_telegram_2fa", username=user["username"], result="success")
+    return {"success": True, "backup_codes": codes}
+
+
+@router.post("/settings/2fa/disable")
+async def disable_telegram_2fa(request: Request,
+                               user: dict = Depends(require_user),
+                               password: str = Form(...)):
+    """Disable Telegram 2FA — requires current password verification."""
+    # 验证当前用户密码
+    from db import verify_user_password
+    if not verify_user_password(user["username"], password):
+        db.log_security_event("disable_2fa_failed", user_id=user["id"],
+                              username=user["username"], result="failed",
+                              details="密码验证失败")
+        return {"success": False, "error": "密码错误，操作已记录"}
+    db.disable_telegram_2fa(user["id"])
+    db.log_security_event("disable_telegram_2fa", user_id=user["id"],
+                          username=user["username"], result="success")
+    return {"success": True}
+
+
+@router.post("/settings/2fa/backup-codes")
+async def get_backup_codes(request: Request,
+                           user: dict = Depends(require_user)):
+    """Return current backup codes."""
+    full_user = db.get_user_by_id(user["id"])
+    if not full_user or not full_user.get("twofa_backup_codes"):
+        return {"success": False, "error": "无备用码"}
+    return {"success": True, "codes": json.loads(full_user["twofa_backup_codes"])}
+
+
+@router.post("/settings/2fa/backup-codes/regenerate")
+async def regenerate_backup_codes(request: Request,
+                                  user: dict = Depends(require_user)):
+    """Regenerate and save new backup codes."""
+    codes = db.generate_backup_codes(8)
+    db.save_backup_codes(user["id"], codes)
+    db.log_security_event("regenerate_backup_codes", username=user["username"], result="success")
+    return {"success": True, "codes": codes}
+
+# ═══════════════════════════════════════════
+# Telegram Bot Webhook — /start chat ID
+# ═══════════════════════════════════════════
+
+@router.post("/webhook/telegram/{tenant_id}")
+async def telegram_bot_webhook(request: Request, tenant_id: str):
+    """Interactive Telegram bot webhook — menu, Chat ID, and bind 2FA."""
+    from telegram_push import send_message
+    import time as _time
+
+    body = await request.json()
+    message = body.get("message", {})
+    chat = message.get("chat", {})
+    from_user = message.get("from", {})
+
+    # ── callback_query 优先处理（不依赖顶层 chat_id） ──────────────
+    if body.get("callback_query"):
+        cb = body["callback_query"]
+        cb_data = cb.get("data", "")
+        cb_chat = cb.get("message", {}).get("chat", {})
+        cb_chat_id = str(cb_chat.get("id", ""))
+        cb_from = cb.get("from", {})
+
+        if not cb_chat_id:
+            return {"ok": False, "error": "No chat_id in callback_query"}
+
+        bot_cfg = db.get_tenant_bot_config(tenant_id)
+        bot_token = bot_cfg.get("token") or ""
+        if not bot_token:
+            return {"ok": False, "error": "Tenant bot not configured"}
+
+        import httpx
+
+        if cb_data == "chatid":
+            username = cb_from.get("username") or cb_from.get("first_name", "未知")
+            first_name = cb_from.get("first_name", "")
+            last_name = cb_from.get("last_name", "")
+            full_name = f"{first_name} {last_name}".strip() or username
+            reply = (
+                "🆔 当前 Telegram 信息\n\n"
+                f"Chat ID:\n{cb_chat_id}\n\n"
+                f"用户名:\n@{username}\n\n"
+                f"名称:\n{full_name}\n\n"
+                "可复制 Chat ID 到 Dashboard 完成绑定。"
+            )
+            send_message(reply, chat_id=cb_chat_id, bot_token=bot_token)
+            httpx.post(f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                       json={"callback_query_id": cb["id"]})
+            return {"ok": True, "handled": "cb_chatid"}
+
+        elif cb_data == "bind":
+            reply = (
+                "🔗 Dashboard 绑定\n\n"
+                "请先登录：\n"
+                "https://zoom.dhbwang.com/dashboard/zoom\n\n"
+                "在 Dashboard 点击「发送确认码」\n"
+                "然后将收到的 6 位确认码发送给我\n\n"
+                "例如：\n"
+                "123456"
+            )
+            send_message(reply, chat_id=cb_chat_id, bot_token=bot_token)
+            httpx.post(f"https://api.telegram.org/bot{bot_token}/answerCallbackQuery",
+                       json={"callback_query_id": cb["id"]})
+            return {"ok": True, "handled": "cb_bind"}
+
+        return {"ok": True}
+
+    chat_id = str(chat.get("id", ""))
+    text = (message.get("text") or "").strip()
+
+    print(f"[webhook] tenant={tenant_id} chat_id={chat_id} text={text}")
+
+    if not chat_id:
+        return {"ok": False, "error": "No chat_id"}
+
+    bot_cfg = db.get_tenant_bot_config(tenant_id)
+    bot_token = bot_cfg.get("token") or ""
+    if not bot_token:
+        return {"ok": False, "error": "Tenant bot not configured"}
+
+    # ── /start — 主菜单 ──────────────────────────────────────────────
+    if text == "/start":
+        reply = (
+            "🔐 Zoom Monitor 安全中心\n\n"
+            "欢迎使用两步验证服务\n\n"
+            "🆔 我的 Chat ID\n"
+            "🔗 绑定 Dashboard 2FA\n\n"
+            "请选择功能："
+        )
+        # Inline keyboard via reply markup
+        import json as _json
+        menu = _json.dumps({
+            "inline_keyboard": [
+                [
+                    {"text": "🆔 我的 Chat ID", "callback_data": "chatid"},
+                    {"text": "🔗 绑定 Dashboard 2FA", "callback_data": "bind"},
+                ]
+            ]
+        })
+        send_message(reply, chat_id=chat_id, bot_token=bot_token, reply_markup=menu)
+        print(f"[webhook] menu sent to {chat_id}")
+        return {"ok": True, "handled": "menu"}
+
+    # ── /chatid — 显示用户信息 ──────────────────────────────────────
+    if text == "/chatid":
+        username = from_user.get("username") or from_user.get("first_name", "未知")
+        first_name = from_user.get("first_name", "")
+        last_name = from_user.get("last_name", "")
+        full_name = f"{first_name} {last_name}".strip() or username
+        reply = (
+            "🆔 当前 Telegram 信息\n\n"
+            f"Chat ID:\n{chat_id}\n\n"
+            f"用户名:\n@{username}\n\n"
+            f"名称:\n{full_name}\n\n"
+            "可复制 Chat ID 到 Dashboard 完成绑定。"
+        )
+        send_message(reply, chat_id=chat_id, bot_token=bot_token)
+        print(f"[webhook] chatid sent to {chat_id}")
+        return {"ok": True, "handled": "chatid"}
+    if text.isdigit() and len(text) == 6:
+        if not hasattr(request.app.state, "_2fa_bind_pending"):
+            reply = "❌ 没有待绑定的确认码，请先在 Dashboard 点击「发送确认码」。"
+            send_message(reply, chat_id=chat_id, bot_token=bot_token)
+            return {"ok": True, "handled": "no_pending"}
+
+        pending = request.app.state._2fa_bind_pending.get(chat_id)
+        if not pending:
+            reply = "❌ 未找到对应此 Chat ID 的绑定请求，请先在 Dashboard 点击「发送确认码」。"
+            send_message(reply, chat_id=chat_id, bot_token=bot_token)
+            return {"ok": True, "handled": "not_found"}
+
+        if _time.time() > pending["expires_at"]:
+            request.app.state._2fa_bind_pending.pop(chat_id, None)
+            reply = "⏰ 确认码已过期，请重新在 Dashboard 点击「发送确认码」。"
+            send_message(reply, chat_id=chat_id, bot_token=bot_token)
+            return {"ok": True, "handled": "expired"}
+
+        if text != pending["code"]:
+            reply = "❌ 确认码错误，请重试。"
+            send_message(reply, chat_id=chat_id, bot_token=bot_token)
+            return {"ok": True, "handled": "wrong_code"}
+
+        # ✅ 验证通过 — 绑定
+        user_id = pending["user_id"]
+        db.set_user_telegram_chat_id(user_id, chat_id)
+        request.app.state._2fa_bind_pending.pop(chat_id, None)
+
+        # 查用户信息
+        user = db.get_user_by_id(user_id)
+        username = user.get("username", "?") if user else "?"
+
+        reply = (
+            "✅ 绑定成功\n\n"
+            f"账户：{tenant_id}\n"
+            f"Telegram：{chat_id}\n\n"
+            "两步验证已关联。\n"
+            "请返回 Dashboard 启用两步验证。"
+        )
+        send_message(reply, chat_id=chat_id, bot_token=bot_token)
+        print(f"[webhook] bind success: user={user_id} chat_id={chat_id}")
+        return {"ok": True, "handled": "bound"}
+
+    # ── 其他消息 ────────────────────────────────────────────────────
+    reply = "请发送 /start 查看菜单"
+    send_message(reply, chat_id=chat_id, bot_token=bot_token)
+    return {"ok": True, "chat_id": chat_id}
