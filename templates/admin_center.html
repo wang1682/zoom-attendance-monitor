@@ -82,31 +82,11 @@
   {% endif %}
 
   {% if is_super %}
-  <a href="/dashboard/admin/audit" class="admin-card">
+  <a href="/dashboard/audit" class="admin-card">
     <div class="admin-card-icon">📋</div>
     <div class="admin-card-body">
       <div class="admin-card-title">审计日志</div>
       <div class="admin-card-desc">查看用户操作和安全事件记录</div>
-    </div>
-  </a>
-  {% endif %}
-
-  {% if is_super or current_user.role == 'admin' %}
-  <a href="/dashboard/tenant/accounts" class="admin-card">
-    <div class="admin-card-icon">🔑</div>
-    <div class="admin-card-body">
-      <div class="admin-card-title">账号管理</div>
-      <div class="admin-card-desc">管理 Zoom OAuth 账号和凭据</div>
-    </div>
-  </a>
-  {% endif %}
-
-  {% if is_super or current_user.role == 'admin' %}
-  <a href="/dashboard/channels" class="admin-card">
-    <div class="admin-card-icon">📨</div>
-    <div class="admin-card-body">
-      <div class="admin-card-title">推送管理</div>
-      <div class="admin-card-desc">Telegram 推送频道和消息模板</div>
     </div>
   </a>
   {% endif %}
