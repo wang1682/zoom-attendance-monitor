@@ -481,7 +481,7 @@ def build_app() -> "FastAPI":
                         from zoom_metrics import ZoomMetrics
                         zm = ZoomMetrics(active)
                         try:
-                            live_data = await asyncio.wait_for(zm.get_live(), timeout=0.8)
+                            live_data = await asyncio.wait_for(zm.get_live(), timeout=3.0)
                             zoom_ms = _t_ms() - t0
                             _log_perf("zoom_live", zoom_ms)
                             current_online = live_data.get("total_online", current_online)
@@ -489,7 +489,7 @@ def build_app() -> "FastAPI":
                             active_meetings = [
                                 {
                                     "id": m.get("id", ""),
-                                    "topic": m.get("topic", ""),
+                                    "topic": m.get("meeting_topic", m.get("topic", "")),
                                     "participant_count": len(m.get("participants", [])),
                                     "start_time": iso_to_myt_str(m.get("start_time", "")),
                                 }
@@ -499,6 +499,12 @@ def build_app() -> "FastAPI":
                                 "total_online": current_online,
                                 "meetings": active_meetings,
                             })
+                            # 补充 today_participants：当 webhook 数据缺失(0)时，
+                            # 用 participants_summary 长度作为下限（当前在线人数即今日参与者）
+                            if today_participants == 0:
+                                ps = live_data.get("participants_summary", [])
+                                if ps:
+                                    today_participants = len(ps)
                         except (asyncio.TimeoutError, asyncio.CancelledError):
                             _log_perf("zoom_live_timeout", _t_ms() - t0)
             except Exception:
