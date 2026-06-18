@@ -16,23 +16,27 @@
 </head>
 <body style="background:var(--bg);color:var(--text)">
     {% set nav_items = {
-        'overview': '/dashboard/overview',
-        'dashboard': '/dashboard',
+        'overview': '/dashboard',
+        'members': '/dashboard/participants',
+        'shifts': '/dashboard/shifts',
         'events': '/dashboard/events',
-        'participants': '/dashboard/participants',
         'alerts': '/dashboard/alerts',
-        'settings': '/dashboard/settings',
-        'admin': '/dashboard/admin/tenants',
+        'channels': '/dashboard/channels',
+        'security': '/dashboard/tenant/zoom',
+        'accounts': '/dashboard/accounts',
+        'admin': '/dashboard/admin-center',
     } %}
 
     {% set nav_labels = {
         'overview': '总览',
-        'dashboard': '首页',
-        'events': '事件',
-        'participants': '参会',
-        'alerts': '告警',
-        'settings': '设置',
-        'admin': '管理',
+        'members': '成员',
+        'shifts': '班次',
+        'events': '会议',
+        'alerts': '预警',
+        'channels': '推送',
+        'security': '安全中心',
+        'accounts': '账号管理',
+        'admin': '管理中心',
     } %}
 
     <!-- Topbar -->
@@ -41,9 +45,7 @@
         <div class="topbar-sep"></div>
         <div class="topbar-nav">
             {% for key, url in nav_items.items() %}
-            {% if not (key == 'overview' and not is_super_admin) %}
             <a href="{{ url }}" class="{% if active == key %}active{% endif %}">{{ nav_labels[key] }}</a>
-            {% endif %}
             {% endfor %}
         </div>
         <div class="topbar-right">

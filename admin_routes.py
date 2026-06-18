@@ -199,21 +199,17 @@ async def dashboard_events_page(request: Request, user: dict = Depends(require_u
 
 @router.get("/participants", response_class=HTMLResponse)
 async def dashboard_participants(request: Request, user: dict = Depends(require_user)):
-    """Admin dashboard 成员中心 — 租户可见。
-    
-    在线状态使用实时 live meetings 数据（Zoom Metrics API），
-    今日累计数据（进入、离开、时长、首次/最后活动）用今日考勤汇总。
-    """
+    """成员中心 — 实时在线 + 今日参会统计。"""
     role = user.get("role", "")
 
-    from db import get_shift_attendance, get_all_groups
+    from db import get_today_attendance_summary, get_all_groups
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
     # ── 参数 ──
     search = request.query_params.get("search", "").strip()
     group_filter = request.query_params.get("group", "").strip()
-    status_filter = request.query_params.get("status", "").strip()  # "online" or "offline"
+    status_filter = request.query_params.get("status", "").strip()
 
     # ── 获取当前在线数据（live source） ──
     live_map = {}
@@ -242,39 +238,26 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     is_realtime = data_source == "metrics"
     metrics_online = bool(live_map)
 
-    # ── 班次出勤分析（替代旧的今日考勤汇总） ──
-    summary = get_shift_attendance(tenant_id=tenant_id)
-    shift_info = summary.get("shift", {})
+    # ── 今日参会汇总（纯成员数据，不含班次） ──
+    summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
 
     # ── 合并 live 数据：在线成员状态用实时数据标记 ──
-    from db import _fmt_dur
     for m in members:
         sn = m.get("standard_name", "")
         lp = live_map.get(sn)
         if lp:
             m["status"] = "online"
-            # 班次在线时长优先用 Metrics 实时数据（取大值）
-            live_secs = lp.get("online_minutes", 0) * 60
-            shift_secs = m.get("shift_online_minutes", 0) * 60
-            actual_secs = max(live_secs, shift_secs)
-            m["shift_online_minutes"] = actual_secs // 60
-            m["shift_online_duration"] = _fmt_dur(actual_secs)
-            # 更新出勤率
-            required_secs = shift_info.get("required_minutes", 0) * 60
-            if required_secs > 0:
-                m["attendance_rate"] = min(actual_secs / required_secs, 1.0)
-                m["absent_minutes"] = max(0, (required_secs - actual_secs) // 60)
             jt = lp.get("join_time", "")
             if jt:
                 m["last_activity"] = jt
         else:
             m["status"] = "offline"
 
-    # 排序：在线优先 → 班次在线时长降序
-    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("shift_online_minutes", 0) or 0)))
-    live_online = len(live_map)
-    live_offline = sum(1 for m in members if m.get("status") == "offline")
+    # 排序：在线优先
+    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("join_count", 0) or 0)))
+    live_online = sum(1 for m in members if m.get("status") == "online")
+    live_offline = len(members) - live_online
 
     # ── 搜索 / 筛选 ──
     if search:
@@ -296,7 +279,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 分组列表（用于筛选器） ──
     all_groups = get_all_groups(tenant_id)
 
-    # ── member_display 映射（按 tenant 隔离；super_admin 不过滤） ──
+    # ── member_display 映射 ──
     conn = db._get_conn()
     if tenant_id:
         md_rows = conn.execute(
@@ -308,7 +291,6 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display"
         ).fetchall()
     member_displays = {}
-    # 同时建两个索引：key=raw_name & key=display_name
     for r in md_rows:
         raw_name = r[0]
         disp_name = r[1]
@@ -324,21 +306,17 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         member_displays[raw_name] = entry
         member_displays[disp_name] = entry
 
-    # 给每个 member 补充 raw_name 和 group_id（从 member_displays 取）
     for m in members:
         sn = m.get("standard_name", "")
         md_entry = member_displays.get(sn, {})
         m["raw_name"] = md_entry.get("raw_name", sn)
         m["group_id"] = md_entry.get("group_id")
 
-    return _render_admin(request, "participants", user, "participants.html",
-                         title="总管理成员中心" if role in ("admin", "super_admin") else "租户成员中心",
+    return _render_admin(request, "members", user, "participants.html",
+                         title="成员中心",
                          members=members,
-                         total_members=summary.get("total_members", 0),
                          online_count=live_online,
                          offline_count=live_offline,
-                         shift=shift_info,
-                         date=shift_info.get("shift_date", ""),
                          groups=all_groups,
                          search=search,
                          group_filter=group_filter,
@@ -367,8 +345,8 @@ async def dashboard_shifts(request: Request, user: dict = Depends(require_user))
     shift_type = request.query_params.get("shift_type", "").strip()
 
     from datetime import datetime, timezone, timedelta
-    import pytz
-    mytz = pytz.timezone("Asia/Kuala_Lumpur")
+    import zoneinfo
+    mytz = zoneinfo.ZoneInfo("Asia/Kuala_Lumpur")
     today_myt = datetime.now(mytz).strftime("%Y-%m-%d")
     now_myt = datetime.now(mytz)
 
