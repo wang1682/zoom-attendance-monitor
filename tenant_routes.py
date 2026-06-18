@@ -49,12 +49,10 @@ async def require_editor(user: dict = Depends(require_user)) -> dict:
 # ── Shared nav items builder ──────────────────────────────────────────────────
 
 def _get_nav_items(role: str) -> list[dict]:
-    """Build the sidebar nav items filtered by user role.
+    """Build the top nav items filtered by user role.
 
-    super_admin: all items including management
-    admin: all items except tenant_admin, system, audit
-    tenant_admin: overview, participants, meetings, alerts, push, security
-    user: overview, participants, meetings, alerts, security
+    All admin pages (推送/安全中心/账号管理) are consolidated under 管理中心.
+    super_admin/admin/tenant_admin see 管理中心; user sees none.
     """
     items = [
         {"key": "overview",     "label": "总览",   "href": "/dashboard/",                      "icon": ""},
@@ -63,25 +61,7 @@ def _get_nav_items(role: str) -> list[dict]:
     ]
     if role in ("super_admin", "admin", "tenant_admin"):
         items += [
-            {"key": "channels",     "label": "推送",   "href": "/dashboard/tenant/channels",    "icon": ""},
-        ]
-    items += [
-        {"key": "security",     "label": "安全中心","href": "/dashboard/tenant/security",       "icon": ""},
-    ]
-    # Management items — 合并到「管理中心」
-    if role == "super_admin":
-        items += [
-            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
             {"key": "admin_center", "label": "管理中心","href": "/dashboard/admin-center",         "icon": ""},
-        ]
-    elif role == "admin":
-        items += [
-            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
-            {"key": "admin_center", "label": "管理中心","href": "/dashboard/admin-center",         "icon": ""},
-        ]
-    elif role == "tenant_admin":
-        items += [
-            {"key": "accounts",     "label": "账号管理","href": "/dashboard/tenant/accounts",     "icon": ""},
         ]
     return items
 

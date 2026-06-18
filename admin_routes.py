@@ -960,7 +960,7 @@ async def dashboard_channels(request: Request, user: dict = Depends(require_user
 async def dashboard_admin_center(request: Request, user: dict = Depends(require_user)):
     """Admin center — hub page for management features."""
     role = user.get("role", "")
-    if role not in ("super_admin", "admin"):
+    if role not in ("super_admin", "admin", "tenant_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
 
     # Compute stats
