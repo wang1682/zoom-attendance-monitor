@@ -8,10 +8,10 @@
   <div class="panel-header"><h2>系统接入状态</h2></div>
   <div class="panel-body">
     <div class="flex" style="align-items:center;gap:16px;flex-wrap:wrap">
-      <div class="metric" style="flex:none;min-width:100px;padding:8px 14px">
-        <div class="metric-label">接入评分</div>
-        <div class="flex" style="align-items:baseline;gap:4px">
-          <span class="metric-value {% if score >= 80 %}success{% elif score >= 50 %}warning{% else %}danger{% endif %}" id="health-score">{{ score }}</span>
+      <div class="stat-card" style="flex:none;min-width:100px;padding:8px 14px">
+        <div class="stat-label">接入评分</div>
+        <div>
+          <span class="stat-value {% if score >= 80 %}success{% elif score >= 50 %}warning{% else %}danger{% endif %}" id="health-score">{{ score }}</span>
           <span style="font-size:11px;color:var(--text-muted)">/ 100</span>
         </div>
       </div>
@@ -30,22 +30,22 @@
 
 <!-- ═══════ KPI Metric Row (skeleton → JS fills) ═══════ -->
 <div class="stats-row" id="kpi-row">
-  <div class="metric">
-    <div class="metric-label">今日参与者</div>
-    <div class="metric-value" id="kpi-today-participants"><span class="text-muted">—</span></div>
+  <div class="stat-card">
+    <div class="stat-label">今日参与者</div>
+    <div class="stat-value" id="kpi-today-participants"><span class="text-muted">—</span></div>
   </div>
-  <div class="metric">
-    <div class="metric-label">当前在线</div>
-    <div class="metric-value" id="kpi-online-now"><span class="text-muted">—</span></div>
+  <div class="stat-card">
+    <div class="stat-label">当前在线</div>
+    <div class="stat-value" id="kpi-online-now"><span class="text-muted">—</span></div>
     <div style="font-size:9px;color:var(--tm);margin-top:2px">仅标准 Zoom 会议</div>
   </div>
-  <div class="metric">
-    <div class="metric-label">今日告警 <span class="badge badge-warning" style="font-size:9px;vertical-align:middle">需关注</span></div>
-    <div class="metric-value warning" id="kpi-today-alerts"><span class="text-muted">—</span></div>
+  <div class="stat-card">
+    <div class="stat-label">今日告警</div>
+    <div class="stat-value warning" id="kpi-today-alerts"><span class="text-muted">—</span></div>
   </div>
-  <div class="metric">
-    <div class="metric-label">今日事件</div>
-    <div class="metric-value small" id="kpi-today-events"><span class="text-muted">—</span></div>
+  <div class="stat-card">
+    <div class="stat-label">今日事件</div>
+    <div class="stat-value small" id="kpi-today-events"><span class="text-muted">—</span></div>
   </div>
 </div>
 
