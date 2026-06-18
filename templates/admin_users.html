@@ -52,7 +52,7 @@
   flex-shrink: 0; line-height: 1;
 }
 
-/* ── Dropdown (操作) ── */
+/* ── Dropdown (操作) — fixed portal ── */
 .dropdown-wrap { position: relative; display: inline-block; }
 .dropdown-toggle {
   background: none; border: 1px solid var(--border); border-radius: 6px;
@@ -62,13 +62,16 @@
 }
 .dropdown-toggle:hover { background: var(--bg-hover); border-color: var(--border-hover); }
 .dropdown-menu {
-  position: absolute; right: 0; top: calc(100% + 4px);
+  /* portal version — JS injects this onto body, position:fixed */
+  display: none;
+}
+.dropdown-menu-portal {
+  position: fixed; z-index: 9999;
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.1);
-  min-width: 170px; z-index: 50; display: none;
-  padding: 4px;
+  min-width: 170px; padding: 4px; display: none;
 }
-.dropdown-menu.active { display: block; }
+.dropdown-menu-portal.active { display: block; }
 .dropdown-item {
   display: block; width: 100%; text-align: left;
   padding: 7px 12px; font-size: 12px; color: var(--text);
@@ -180,7 +183,7 @@
 </div>
 
 <!-- ===== Users Table ===== -->
-<div class="panel" style="padding:0;overflow:hidden">
+<div class="panel" style="padding:0">
   <table class="user-table" id="userTable">
     <thead>
       <tr>
@@ -238,8 +241,8 @@
       <td style="text-align:right">
         {% if u.can_manage %}
         <div class="dropdown-wrap" onclick="event.stopPropagation()">
-          <button class="dropdown-toggle" onclick="toggleDropdown(this)">⋯ 操作</button>
-          <div class="dropdown-menu">
+          <button class="dropdown-toggle" onclick="toggleDropdown(this, event)">⋯ 操作</button>
+          <div class="dropdown-menu" data-template="true" style="display:none">
             <button class="dropdown-item" onclick="openDrawer('{{ u.username|e }}', '{{ u.display_name|e }}', '{{ u.role|e }}', '{{ u.tenant_id|e }}', '{{ u.telegram_chat_id|e }}', '{{ fmt_myt(u.last_login) if u.last_login else '-' }}', '{{ fmt_myt(u.created_at) if u.created_at else '-' }}')">查看详情</button>
             <button class="dropdown-item" onclick="showEditModal({{ u.id }}, '{{ u.username|e }}', '{{ u.display_name|e }}', '{{ u.role|e }}', '{{ u.tenant_id|e }}', '{{ u.telegram_chat_id|e }}')">编辑用户</button>
             {% if u.role != 'super_admin' and is_super_admin %}
@@ -259,122 +262,89 @@
         {% endif %}
       </td>
     </tr>
-    {% else %}
-    <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px">暂无用户数据</td></tr>
     {% endfor %}
     </tbody>
   </table>
 </div>
 
-<!-- ===== User Detail Drawer ===== -->
+<!-- ===== Drawer ===== -->
 <div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
 <div class="drawer-panel" id="drawerPanel">
   <div class="drawer-header">
-    <h3 id="drawerTitle">用户详情</h3>
-    <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+    <h3 id="drawerDisplayName">用户详情</h3>
+    <button class="drawer-close" onclick="closeDrawer()">×</button>
   </div>
   <div class="drawer-body">
     <div class="drawer-section">
       <div class="drawer-section-title">账号信息</div>
-      <div class="drawer-field"><span class="drawer-field-label">用户名</span><span class="drawer-field-value td-mono" id="drawerUsername">-</span></div>
-      <div class="drawer-field"><span class="drawer-field-label">显示名称</span><span class="drawer-field-value" id="drawerDisplayName">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">用户名</span><span class="drawer-field-value" id="drawerUsername">-</span></div>
       <div class="drawer-field"><span class="drawer-field-label">邮箱</span><span class="drawer-field-value" id="drawerEmail">-</span></div>
-      <div class="drawer-field"><span class="drawer-field-label">Telegram</span><span class="drawer-field-value" id="drawerTelegram">-</span></div>
-      <div class="drawer-field"><span class="drawer-field-label">所属租户</span><span class="drawer-field-value" id="drawerTenant">-</span></div>
-      <div class="drawer-field"><span class="drawer-field-label">角色</span><span class="drawer-field-value" id="drawerRole">-</span></div>
     </div>
     <div class="drawer-section">
-      <div class="drawer-section-title">时间</div>
-      <div class="drawer-field"><span class="drawer-field-label">最后登录</span><span class="drawer-field-value td-mono" id="drawerLastLogin">-</span></div>
-      <div class="drawer-field"><span class="drawer-field-label">创建时间</span><span class="drawer-field-value td-mono" id="drawerCreatedAt">-</span></div>
+      <div class="drawer-section-title">系统信息</div>
+      <div class="drawer-field"><span class="drawer-field-label">角色</span><span class="drawer-field-value" id="drawerRole">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">租户</span><span class="drawer-field-value" id="drawerTenant">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">Telegram</span><span class="drawer-field-value" id="drawerTelegram">-</span></div>
+    </div>
+    <div class="drawer-section">
+      <div class="drawer-section-title">时间信息</div>
+      <div class="drawer-field"><span class="drawer-field-label">最后登录</span><span class="drawer-field-value" id="drawerLastLogin">-</span></div>
+      <div class="drawer-field"><span class="drawer-field-label">创建时间</span><span class="drawer-field-value" id="drawerCreatedAt">-</span></div>
     </div>
   </div>
 </div>
 
-<!-- ===== Create Modal ===== -->
-<div id="createModal" class="modal-overlay" style="display:none">
-  <div class="modal-content" style="max-width:440px">
-    <button type="button" class="modal-close" onclick="hideModal('createModal')">&times;</button>
-    <h3>创建用户</h3>
-    <form method="POST" action="/dashboard/users/create" onsubmit="return validateCreateForm()">
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">用户名 <span style="color:var(--danger)">*</span></label>
-        <input type="text" name="username" required class="form-input" style="width:100%" placeholder="登录账号">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">密码 <span style="color:var(--danger)">*</span></label>
-        <input type="password" name="password" required class="form-input" style="width:100%" placeholder="登录密码">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">显示名称</label>
-        <input type="text" name="display_name" class="form-input" style="width:100%" placeholder="可选，用于显示">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">角色 <span style="color:var(--danger)">*</span></label>
-        <select name="role" class="form-input" style="width:100%">
-          {% for r in createable_roles %}
-          <option value="{{ r.value }}">{{ r.label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% if is_super_admin %}
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">所属租户</label>
-        <select name="tenant_id" class="form-input" style="width:100%">
-          {% for t in all_tenants %}
-          <option value="{{ t.id }}">{{ t.display_name or t.id }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" onclick="hideModal('createModal')" class="btn">取消</button>
+<!-- ===== Create User Modal ===== -->
+<div class="modal-overlay" id="createModal" style="display:none">
+  <div class="modal-panel" style="max-width:420px">
+    <div class="modal-header">
+      <h3>创建用户</h3>
+      <button class="modal-close" onclick="hideModal('createModal')">×</button>
+    </div>
+    <form method="POST" action="/dashboard/users/create" onsubmit="return validateCreateForm()" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+      <label style="font-size:12px;color:var(--text-muted)">用户名</label>
+      <input type="text" name="username" required style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <label style="font-size:12px;color:var(--text-muted)">显示名称</label>
+      <input type="text" name="display_name" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <label style="font-size:12px;color:var(--text-muted)">密码</label>
+      <input type="text" name="password" minlength="4" required style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <label style="font-size:12px;color:var(--text-muted)">角色</label>
+      <select name="role" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      {% for r in createable_roles %}
+        <option value="{{ r.value }}">{{ r.label }}</option>
+      {% endfor %}
+      </select>
+      <label style="font-size:12px;color:var(--text-muted)">租户</label>
+      <select name="tenant_id" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+        <option value="">-</option>
+      {% for t in all_tenants %}
+        <option value="{{ t.id }}">{{ t.display_name }}</option>
+      {% endfor %}
+      </select>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('createModal')">取消</button>
         <button type="submit" class="btn btn-primary">创建</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ===== Edit Modal ===== -->
-<div id="editModal" class="modal-overlay" style="display:none">
-  <div class="modal-content" style="max-width:440px">
-    <button type="button" class="modal-close" onclick="hideModal('editModal')">&times;</button>
-    <h3>编辑用户</h3>
-    <form method="POST" id="editForm">
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">用户名</label>
-        <input type="text" name="username" id="editUsername" class="form-input" style="width:100%" placeholder="登录账号">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">显示名称</label>
-        <input type="text" name="display_name" id="editDisplayName" class="form-input" style="width:100%" placeholder="显示名称">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">Telegram Chat ID</label>
-        <input type="text" name="telegram_chat_id" id="editTelegramChatId" class="form-input" style="width:100%" placeholder="数字 ID">
-      </div>
-      {% if is_super_admin %}
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">角色</label>
-        <select name="role" id="editRole" class="form-input" style="width:100%">
-          <option value="super_admin">超级管理员</option>
-          <option value="admin">管理员</option>
-          <option value="tenant_admin">租户管理员</option>
-          <option value="user">普通用户</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">所属租户</label>
-        <select name="tenant_id" id="editTenant" class="form-input" style="width:100%">
-          <option value="">- 无 -</option>
-          {% for t in all_tenants %}
-          <option value="{{ t.id }}">{{ t.display_name or t.id }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" onclick="hideModal('editModal')" class="btn">取消</button>
+<!-- ===== Edit User Modal ===== -->
+<div class="modal-overlay" id="editModal" style="display:none">
+  <div class="modal-panel" style="max-width:420px">
+    <div class="modal-header">
+      <h3>编辑用户</h3>
+      <button class="modal-close" onclick="hideModal('editModal')">×</button>
+    </div>
+    <form id="editForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+      <label style="font-size:12px;color:var(--text-muted)">用户名</label>
+      <input type="text" id="editUsername" disabled style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg-hover);color:var(--text-muted)">
+      <label style="font-size:12px;color:var(--text-muted)">显示名称</label>
+      <input type="text" name="display_name" id="editDisplayName" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <label style="font-size:12px;color:var(--text-muted)">Telegram Chat ID</label>
+      <input type="text" name="telegram_chat_id" id="editTelegramChatId" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('editModal')">取消</button>
         <button type="submit" class="btn btn-primary">保存</button>
       </div>
     </form>
@@ -382,85 +352,134 @@
 </div>
 
 <!-- ===== Reset Password Modal ===== -->
-<div id="resetPwModal" class="modal-overlay" style="display:none">
-  <div class="modal-content" style="max-width:380px">
-    <button type="button" class="modal-close" onclick="hideModal('resetPwModal')">&times;</button>
-    <h3>重置密码</h3>
-    <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px">用户：<strong id="resetPwUser" style="color:var(--text)"></strong></p>
-    <form method="POST" id="resetPwForm">
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">新密码 <span style="color:var(--danger)">*</span></label>
-        <input type="password" name="new_password" required class="form-input" style="width:100%" placeholder="输入新密码" minlength="4">
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">确认密码 <span style="color:var(--danger)">*</span></label>
-        <input type="password" id="resetPwConfirm" class="form-input" style="width:100%" placeholder="再次输入新密码">
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" onclick="hideModal('resetPwModal')" class="btn">取消</button>
-        <button type="submit" class="btn btn-primary">重置</button>
+<div class="modal-overlay" id="resetPwModal" style="display:none">
+  <div class="modal-panel" style="max-width:400px">
+    <div class="modal-header">
+      <h3>重置密码</h3>
+      <button class="modal-close" onclick="hideModal('resetPwModal')">×</button>
+    </div>
+    <form id="resetPwForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+      <p style="font-size:12px;color:var(--text-muted);margin:0">将重置 <strong id="resetPwUser">-</strong> 的密码</p>
+      <label style="font-size:12px;color:var(--text-muted)">新密码</label>
+      <input type="text" name="new_password" minlength="4" required style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <label style="font-size:12px;color:var(--text-muted)">确认密码</label>
+      <input type="text" id="resetPwConfirm" placeholder="再次输入新密码" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('resetPwModal')">取消</button>
+        <button type="submit" class="btn btn-primary">确认重置</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ===== Role Modal ===== -->
-<div id="roleModal" class="modal-overlay" style="display:none">
-  <div class="modal-content" style="max-width:380px">
-    <button type="button" class="modal-close" onclick="hideModal('roleModal')">&times;</button>
-    <h3>修改角色</h3>
-    <form method="POST" id="roleForm">
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">新角色</label>
-        <select name="role" id="roleSelect" class="form-input" style="width:100%">
-          {% for r in createable_roles %}
-          <option value="{{ r.value }}">{{ r.label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" onclick="hideModal('roleModal')" class="btn">取消</button>
-        <button type="submit" class="btn btn-primary">保存</button>
+<!-- ===== Change Role Modal ===== -->
+{% if is_super_admin %}
+<div class="modal-overlay" id="roleModal" style="display:none">
+  <div class="modal-panel" style="max-width:400px">
+    <div class="modal-header">
+      <h3>修改角色</h3>
+      <button class="modal-close" onclick="hideModal('roleModal')">×</button>
+    </div>
+    <form id="roleForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+      <label style="font-size:12px;color:var(--text-muted)">新角色</label>
+      <select id="roleSelect" name="new_role" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      {% for r in createable_roles %}
+        <option value="{{ r.value }}">{{ r.label }}</option>
+      {% endfor %}
+      </select>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('roleModal')">取消</button>
+        <button type="submit" class="btn btn-primary">确认</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- ===== Tenant Modal ===== -->
-<div id="tenantModal" class="modal-overlay" style="display:none">
-  <div class="modal-content" style="max-width:380px">
-    <button type="button" class="modal-close" onclick="hideModal('tenantModal')">&times;</button>
-    <h3>修改所属租户</h3>
-    <form method="POST" id="tenantForm">
-      <div class="form-group" style="margin-bottom:10px">
-        <label class="form-label" style="display:block;margin-bottom:4px;font-size:11px;color:var(--text-secondary)">目标租户</label>
-        <select name="tenant_id" id="tenantSelect" class="form-input" style="width:100%">
-          <option value="">- 无 -</option>
-          {% for t in all_tenants %}
-          <option value="{{ t.id }}">{{ t.display_name or t.id }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button type="button" onclick="hideModal('tenantModal')" class="btn">取消</button>
-        <button type="submit" class="btn btn-primary">保存</button>
+<!-- ===== Change Tenant Modal ===== -->
+<div class="modal-overlay" id="tenantModal" style="display:none">
+  <div class="modal-panel" style="max-width:400px">
+    <div class="modal-header">
+      <h3>修改租户</h3>
+      <button class="modal-close" onclick="hideModal('tenantModal')">×</button>
+    </div>
+    <form id="tenantForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+      <label style="font-size:12px;color:var(--text-muted)">新租户</label>
+      <select id="tenantSelect" name="new_tenant_id" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+        <option value="">-</option>
+      {% for t in all_tenants %}
+        <option value="{{ t.id }}">{{ t.display_name }}</option>
+      {% endfor %}
+      </select>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('tenantModal')">取消</button>
+        <button type="submit" class="btn btn-primary">确认</button>
       </div>
     </form>
   </div>
 </div>
+{% endif %}
 
 <script>
-// ── Dropdown ──
-function toggleDropdown(btn) {
-  var menu = btn.nextElementSibling;
-  var active = menu.classList.contains('active');
-  // close all dropdowns first
-  document.querySelectorAll('.dropdown-menu.active').forEach(function(m) { m.classList.remove('active'); });
-  if (!active) menu.classList.add('active');
+// ── Dropdown (fixed portal) ──
+var portalMenu = null;
+
+function toggleDropdown(btn, event) {
+  if (event) event.preventDefault();
+  // close any existing portal
+  closePortal();
+
+  var template = btn.parentElement.querySelector('.dropdown-menu[data-template]');
+  if (!template) return;
+
+  // clone the menu items
+  portalMenu = document.createElement('div');
+  portalMenu.className = 'dropdown-menu-portal';
+  for (var i = 0; i < template.childNodes.length; i++) {
+    portalMenu.appendChild(template.childNodes[i].cloneNode(true));
+  }
+
+  // position via getBoundingClientRect
+  var rect = btn.getBoundingClientRect();
+  var estW = Math.max(170, Math.min(280, rect.width * 2.5));
+  var spaceBelow = window.innerHeight - rect.bottom;
+  var spaceAbove = rect.top;
+  var openUp = spaceBelow < 260 && spaceAbove > spaceBelow;
+  var left = Math.min(rect.right - estW, window.innerWidth - estW - 8);
+  left = Math.max(8, left);
+  portalMenu.style.width = estW + 'px';
+  portalMenu.style.left = left + 'px';
+  if (openUp) {
+    portalMenu.style.bottom = (window.innerHeight - rect.top) + 'px';
+    portalMenu.style.top = 'auto';
+  } else {
+    portalMenu.style.top = rect.bottom + 'px';
+    portalMenu.style.bottom = 'auto';
+  }
+  portalMenu.classList.add('active');
+  document.body.appendChild(portalMenu);
 }
-// Close dropdowns on outside click
-document.addEventListener('click', function() {
-  document.querySelectorAll('.dropdown-menu.active').forEach(function(m) { m.classList.remove('active'); });
+
+function closePortal() {
+  if (portalMenu && portalMenu.parentElement) {
+    portalMenu.parentElement.removeChild(portalMenu);
+  }
+  portalMenu = null;
+}
+
+// Close on outside click
+document.addEventListener('click', function(e) {
+  if (portalMenu && !e.target.closest('.dropdown-toggle') && !e.target.closest('.dropdown-menu-portal')) {
+    closePortal();
+  }
+});
+
+// ESC close
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    closePortal();
+    closeDrawer();
+    document.querySelectorAll('.modal-overlay[style*="flex"]').forEach(function(el) { el.style.display = 'none'; });
+  }
 });
 
 // ── Drawer ──
@@ -481,13 +500,6 @@ function closeDrawer() {
   document.getElementById('drawerPanel').classList.remove('active');
   document.getElementById('drawerOverlay').classList.remove('active');
 }
-// ESC to close drawer
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') {
-    closeDrawer();
-    document.querySelectorAll('.modal-overlay[style*="flex"]').forEach(function(el) { el.style.display = 'none'; });
-  }
-});
 
 // ── Table Filter ──
 function filterTable() {
