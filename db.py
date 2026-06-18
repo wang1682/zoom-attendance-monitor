@@ -711,6 +711,8 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             ev = deduped[i]
             if ev["action"] in ("enter", "joined"):
                 enter_dt = datetime.fromisoformat(ev["action_time"])
+                if enter_dt.tzinfo is None:
+                    enter_dt = enter_dt.replace(tzinfo=timezone.utc)
                 # 只算今日 MYT 范围内的时长
                 if enter_dt < today_start_utc:
                     enter_dt = today_start_utc
@@ -718,6 +720,8 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 for j in range(i + 1, len(deduped)):
                     if deduped[j]["action"] in ("leave", "left"):
                         leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
+                        if leave_dt is not None and leave_dt.tzinfo is None:
+                            leave_dt = leave_dt.replace(tzinfo=timezone.utc)
                         i = j
                         break
                 end_dt = leave_dt or now_utc
@@ -866,6 +870,8 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
                 at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
             except:
                 at_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if at_dt.tzinfo is None:
+                at_dt = at_dt.replace(tzinfo=timezone.utc)
             if at_dt >= shift_start_utc:
                 meeting_start = at_dt
                 break
@@ -954,6 +960,8 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
             if ev["action"] in ("enter", "joined"):
                 enter_dt = datetime.fromisoformat(ev["action_time"])
                 # 如果 enter 在班次窗口之前太远（超过 12h），可能无意义
+                if enter_dt.tzinfo is None:
+                    enter_dt = enter_dt.replace(tzinfo=timezone.utc)
                 # 但保留以防跨夜班场景—等待对应 leave
 
                 # 找对应的 leave
@@ -961,6 +969,8 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
                 for j in range(i + 1, len(deduped)):
                     if deduped[j]["action"] in ("leave", "left"):
                         leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
+                        if leave_dt is not None and leave_dt.tzinfo is None:
+                            leave_dt = leave_dt.replace(tzinfo=timezone.utc)
                         i = j
                         break
 
@@ -1002,11 +1012,15 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
         for ev in deduped:
             if ev["action"] in ("leave", "left"):
                 lv_dt = datetime.fromisoformat(ev["action_time"])
+                if lv_dt.tzinfo is None:
+                    lv_dt = lv_dt.replace(tzinfo=timezone.utc)
                 # 只考虑班次窗口内的离开
                 if effective_start <= lv_dt <= effective_end:
                     prev_leave_ol = lv_dt
             elif ev["action"] in ("enter", "joined"):
                 en_dt = datetime.fromisoformat(ev["action_time"])
+                if en_dt.tzinfo is None:
+                    en_dt = en_dt.replace(tzinfo=timezone.utc)
                 if en_dt >= effective_start and prev_leave_ol:
                     away_raw = (en_dt - prev_leave_ol).total_seconds()
                     if away_raw > 0:
@@ -3604,6 +3618,8 @@ def get_shift_attendance_for_shift(
                 at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
             except:
                 at_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if at_dt.tzinfo is None:
+                at_dt = at_dt.replace(tzinfo=timezone.utc)
             if at_dt >= shift_start_utc:
                 meeting_start = at_dt
                 break
@@ -3683,10 +3699,14 @@ def get_shift_attendance_for_shift(
             ev = deduped[i]
             if ev["action"] in ("enter", "joined"):
                 enter_dt = datetime.fromisoformat(ev["action_time"])
+                if enter_dt.tzinfo is None:
+                    enter_dt = enter_dt.replace(tzinfo=timezone.utc)
                 leave_dt = None
                 for j in range(i + 1, len(deduped)):
                     if deduped[j]["action"] in ("leave", "left"):
                         leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
+                        if leave_dt is not None and leave_dt.tzinfo is None:
+                            leave_dt = leave_dt.replace(tzinfo=timezone.utc)
                         i = j
                         break
 
@@ -3718,10 +3738,14 @@ def get_shift_attendance_for_shift(
         for ev in deduped:
             if ev["action"] in ("leave", "left"):
                 lv_dt = datetime.fromisoformat(ev["action_time"])
+                if lv_dt.tzinfo is None:
+                    lv_dt = lv_dt.replace(tzinfo=timezone.utc)
                 if effective_start <= lv_dt <= effective_end:
                     prev_leave_ol = lv_dt
             elif ev["action"] in ("enter", "joined"):
                 en_dt = datetime.fromisoformat(ev["action_time"])
+                if en_dt.tzinfo is None:
+                    en_dt = en_dt.replace(tzinfo=timezone.utc)
                 if en_dt >= effective_start and prev_leave_ol:
                     away_raw = (en_dt - prev_leave_ol).total_seconds()
                     if away_raw > 0:
