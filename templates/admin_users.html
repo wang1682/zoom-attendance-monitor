@@ -5,160 +5,24 @@
 {% set role_labels = {"super_admin":"超级管理员","admin":"管理员","tenant_admin":"租户管理员","user":"普通用户"} %}
 {% set admin_roles = ["super_admin","admin"] %}
 
-<style>
-/* ── Drawer ── */
-.drawer-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,.3);
-  z-index: 999; display: none;
-}
-.drawer-overlay.active { display: block; }
-.drawer-panel {
-  position: fixed; top: 0; right: -420px; width: 400px; height: 100%;
-  background: var(--bg-card); z-index: 1000;
-  box-shadow: -4px 0 24px rgba(0,0,0,.12);
-  transition: right .2s ease;
-  overflow-y: auto;
-}
-.drawer-panel.active { right: 0; }
-.drawer-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 24px; border-bottom: 1px solid var(--border);
-}
-.drawer-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
-.drawer-close {
-  background: none; border: none; font-size: 22px; cursor: pointer;
-  color: var(--text-muted); padding: 4px; line-height: 1;
-}
-.drawer-close:hover { color: var(--text); }
-.drawer-body { padding: 20px 24px; }
-.drawer-section { margin-bottom: 24px; }
-.drawer-section-title {
-  font-size: 10px; font-weight: 600; text-transform: uppercase;
-  letter-spacing: .05em; color: var(--text-muted); margin-bottom: 10px;
-}
-.drawer-field {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 8px 0; border-bottom: 1px solid var(--border-light);
-}
-.drawer-field:last-child { border: none; }
-.drawer-field-label { font-size: 12px; color: var(--text-muted); }
-.drawer-field-value { font-size: 13px; color: var(--text); font-weight: 500; }
-
-/* ── Avatar ── */
-.avatar {
-  width: 32px; height: 32px; border-radius: 8px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 600; color: #fff;
-  flex-shrink: 0; line-height: 1;
-}
-
-/* ── Dropdown (操作) — fixed portal ── */
-.dropdown-wrap { position: relative; display: inline-block; }
-.dropdown-toggle {
-  background: none; border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 10px; font-size: 12px; color: var(--text-secondary);
-  cursor: pointer; white-space: nowrap; display: inline-flex;
-  align-items: center; gap: 4px;
-}
-.dropdown-toggle:hover { background: var(--bg-hover); border-color: var(--border-hover); }
-.dropdown-menu {
-  /* portal version — JS injects this onto body, position:fixed */
-  display: none;
-}
-.dropdown-menu-portal {
-  position: fixed; z-index: 9999;
-  background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.1);
-  min-width: 170px; padding: 4px; display: none;
-}
-.dropdown-menu-portal.active { display: block; }
-.dropdown-item {
-  display: block; width: 100%; text-align: left;
-  padding: 7px 12px; font-size: 12px; color: var(--text);
-  background: none; border: none; cursor: pointer;
-  border-radius: 6px; white-space: nowrap;
-}
-.dropdown-item:hover { background: var(--bg-hover); }
-.dropdown-item.danger { color: var(--danger); }
-.dropdown-item.danger:hover { background: rgba(239,68,68,.08); }
-.dropdown-divider {
-  height: 1px; background: var(--border); margin: 4px 0;
-}
-
-/* ── Badge standardisation ── */
-.badge { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 500; }
-.badge-green { background: #05966915; color: #059669; }
-.badge-gray { background: #6b728015; color: #6b7280; }
-.badge-purple { background: #8b5cf615; color: #7c3aed; }
-.badge-blue { background: #2563eb15; color: #2563eb; }
-.badge-orange { background: #d9770615; color: #b45309; }
-.badge-teal { background: #0d948815; color: #0f766e; }
-.badge-red { background: #dc262615; color: #b91c1c; }
-
-/* ── Toolbar ── */
-.toolbar {
-  display: flex; align-items: center; gap: 8px;
-  margin-bottom: 16px; flex-wrap: wrap;
-}
-.toolbar-search {
-  flex: 1; min-width: 200px;
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 12px; font-size: 13px; background: var(--bg-card);
-  color: var(--text);
-}
-.toolbar-search::placeholder { color: var(--text-muted); }
-.toolbar-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-.toolbar-select {
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 8px 10px; font-size: 12px; background: var(--bg-card);
-  color: var(--text-secondary); cursor: pointer;
-}
-.toolbar-select:focus { outline: none; border-color: var(--accent); }
-
-/* ── Table ── */
-.user-table { width: 100%; border-collapse: separate; border-spacing: 0; }
-.user-table th {
-  text-align: left; padding: 10px 12px;
-  font-size: 11px; font-weight: 600; color: var(--text-muted);
-  text-transform: uppercase; letter-spacing: .04em;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-.user-table td {
-  padding: 12px; font-size: 13px; color: var(--text);
-  border-bottom: 1px solid var(--border-light);
-  vertical-align: middle;
-}
-.user-table tr:last-child td { border-bottom: none; }
-.user-table tr:hover td { background: var(--bg-hover); }
-.user-cell-name {
-  display: flex; align-items: center; gap: 10px;
-}
-.user-cell-name .name-text {
-  display: flex; flex-direction: column;
-}
-.user-cell-name .name-text .primary { font-weight: 500; font-size: 13px; }
-.user-cell-name .name-text .secondary { font-size: 11px; color: var(--text-muted); }
-</style>
-
 <!-- ===== Statistics Cards ===== -->
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px">
+<div class="stats-grid">
   <div class="panel" style="padding:16px">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">总用户</div>
-    <div style="font-size:24px;font-weight:700;color:var(--text);">{{ users|length if users else 0 }}</div>
+    <div class="text-xs text-muted mb-2">总用户</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text)">{{ users|length if users else 0 }}</div>
   </div>
   {% set active_count = users|selectattr("is_active","equalto",1)|list|length %}
   <div class="panel" style="padding:16px">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">启用</div>
-    <div style="font-size:24px;font-weight:700;color:#059669;">{{ active_count }}</div>
+    <div class="text-xs text-muted mb-2">启用</div>
+    <div style="font-size:24px;font-weight:700;color:var(--success)">{{ active_count }}</div>
   </div>
   <div class="panel" style="padding:16px">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">禁用</div>
-    <div style="font-size:24px;font-weight:700;color:var(--text-muted);">{{ (users|length) - active_count }}</div>
+    <div class="text-xs text-muted mb-2">禁用</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text-muted)">{{ (users|length) - active_count }}</div>
   </div>
   <div class="panel" style="padding:16px">
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">所属租户</div>
-    <div style="font-size:24px;font-weight:700;color:var(--text);">{{ all_tenants|length if all_tenants else 0 }}</div>
+    <div class="text-xs text-muted mb-2">所属租户</div>
+    <div style="font-size:24px;font-weight:700;color:var(--text)">{{ all_tenants|length if all_tenants else 0 }}</div>
   </div>
 </div>
 

@@ -269,6 +269,22 @@ def init_db(readonly: bool = False):
         "  created_at TEXT"
         ")",
 
+        "CREATE TABLE IF NOT EXISTS shift_assignments ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  tenant_id TEXT NOT NULL DEFAULT 'default',"
+        "  member_name TEXT NOT NULL,"
+        "  shift_name TEXT NOT NULL,"
+        "  shift_date TEXT NOT NULL,"
+        "  shift_start TEXT NOT NULL,"
+        "  shift_end TEXT NOT NULL,"
+        "  created_by INTEGER,"
+        "  created_at TEXT,"
+        "  UNIQUE(tenant_id, member_name, shift_date)"
+        ")",
+
+        "CREATE INDEX IF NOT EXISTS idx_shift_asgn_date ON shift_assignments(shift_date)",
+        "CREATE INDEX IF NOT EXISTS idx_shift_asgn_tenant ON shift_assignments(tenant_id)",
+
     ]
     for sql in statements:
         try:
@@ -1022,9 +1038,10 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
         m["away_minutes"] = int(away_seconds) // 60
         m["max_away_minutes"] = int(max_away) // 60
         m["away_over_15_count"] = away_over_15_count
+        m['sessions'] = overlap_sessions
         m['early_leave_minutes'] = early_leave_seconds // 60
         # status: online=当前在线, offline=有进入记录但已离开, absent=本班次无
-        has_enter = m['sessions'] > 0
+        has_enter = overlap_sessions > 0
         if is_online:
             m['status'] = 'online'
         elif has_enter:
@@ -1032,7 +1049,6 @@ def get_shift_attendance(tenant_id: str = None) -> dict:
         else:
             m['status'] = 'absent'
         m['last_leave'] = last_overlap_leave.isoformat() if last_overlap_leave else None
-        m['sessions'] = overlap_sessions
 
     # ── 排序：在线优先 → 在线时长降序 ──
     sorted_members = sorted(
@@ -3443,3 +3459,349 @@ def count_today_push_count() -> int:
         "SELECT COUNT(*) AS c FROM alert_sent WHERE sent_at >= ?", (today,)
     ).fetchone()
     return row["c"] if row else 0
+
+# ═══════════════════════════════════════════════════════════════
+# 班次统计管理 (shift_assignments)
+# ═══════════════════════════════════════════════════════════════
+
+def get_shift_assignments(shift_date: str = None, tenant_id: str = None) -> list[dict]:
+    """查询班次登记列表，支持按日期筛选。"""
+    conn = _get_conn()
+    where = []
+    params = []
+    if tenant_id:
+        where.append("sa.tenant_id = ?")
+        params.append(tenant_id)
+    if shift_date:
+        where.append("sa.shift_date = ?")
+        params.append(shift_date)
+    sql = "SELECT sa.* FROM shift_assignments sa"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY sa.member_name"
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_shift_assignment(tenant_id: str, member_name: str, shift_name: str,
+                            shift_date: str, shift_start: str, shift_end: str,
+                            created_by: int = None) -> int:
+    """新增班次登记。返回 id。"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "INSERT INTO shift_assignments (tenant_id, member_name, shift_name, "
+            "shift_date, shift_start, shift_end, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (tenant_id, member_name, shift_name, shift_date,
+             shift_start, shift_end, created_by, now),
+        )
+        return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    except Exception as e:
+        if "UNIQUE" in str(e):
+            return None
+        raise
+
+
+def delete_shift_assignment(assignment_id: int, tenant_id: str = None) -> bool:
+    """删除班次登记。"""
+    conn = _get_conn()
+    where = "id = ?"
+    params = [assignment_id]
+    if tenant_id:
+        where += " AND tenant_id = ?"
+        params.append(tenant_id)
+    conn.execute(f"DELETE FROM shift_assignments WHERE {where}", params)
+    return conn.total_changes > 0
+
+
+def batch_create_shift_assignments(entries: list[dict]) -> tuple[int, int]:
+    """批量登记班次。返回 (成功数, 失败数)"""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    success = 0
+    failed = 0
+    for entry in entries:
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO shift_assignments "
+                "(tenant_id, member_name, shift_name, shift_date, "
+                "shift_start, shift_end, created_by, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (entry["tenant_id"], entry["member_name"], entry["shift_name"],
+                 entry["shift_date"], entry["shift_start"], entry["shift_end"],
+                 entry.get("created_by"), now),
+            )
+            if conn.total_changes > 0:
+                success += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+    return success, failed
+
+
+def get_shift_attendance_for_shift(
+    tenant_id: str,
+    shift_start_myt_str: str,
+    shift_end_myt_str: str,
+    member_names: list[str] = None,
+) -> tuple[list[dict], dict]:
+    """
+    生成班次统计（session overlap 算法）。
+
+    参数:
+        tenant_id: 租户
+        shift_start_myt_str: 班次开始时间 (MYT ISO) e.g. "2026-06-18T07:00:00"
+        shift_end_myt_str:   班次结束时间 (MYT ISO) e.g. "2026-06-18T19:00:00"
+        member_names: 可选，指定成员列表（来自 shift_assignments 已登记成员）
+
+    返回:
+        ([成员统计数据], {班次汇总信息})
+    """
+    from datetime import datetime, timezone, timedelta
+    from collections import OrderedDict
+
+    now_utc = datetime.now(timezone.utc)
+
+    shift_start_myt = datetime.fromisoformat(shift_start_myt_str)
+    shift_end_myt = datetime.fromisoformat(shift_end_myt_str)
+    shift_start_utc = shift_start_myt - timedelta(hours=8)
+    shift_end_utc = shift_end_myt - timedelta(hours=8)
+    shift_start_utc = shift_start_utc.replace(tzinfo=timezone.utc)
+    shift_end_utc = shift_end_utc.replace(tzinfo=timezone.utc)
+
+    query_start_utc = shift_start_utc - timedelta(hours=12)
+    query_start_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+    query_end_str = (shift_end_utc + timedelta(hours=12)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    conn = _get_conn()
+    if member_names:
+        placeholders = ",".join("?" for _ in member_names)
+        params = [query_start_str, query_end_str, tenant_id] + member_names
+        rows = conn.execute(
+            f"SELECT * FROM zoom_participants "
+            f"WHERE action_time >= ? AND action_time < ? "
+            f"AND tenant_id = ? AND name IN ({placeholders}) "
+            f"ORDER BY name, action_time",
+            params,
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM zoom_participants "
+            "WHERE action_time >= ? AND action_time < ? AND tenant_id = ? "
+            "ORDER BY name, action_time",
+            (query_start_str, query_end_str, tenant_id),
+        ).fetchall()
+
+    all_events = [dict(r) for r in rows]
+
+    meeting_start = None
+    for ev in all_events:
+        if ev["action"] in ("enter", "joined"):
+            try:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+            except:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if at_dt >= shift_start_utc:
+                meeting_start = at_dt
+                break
+    if meeting_start is None:
+        meeting_start = shift_start_utc
+
+    effective_start = max(shift_start_utc, meeting_start)
+    effective_end = min(shift_end_utc, now_utc)
+    if effective_end < effective_start:
+        effective_end = effective_start
+
+    meeting_not_open_seconds = int((meeting_start - shift_start_utc).total_seconds()) if meeting_start > shift_start_utc else 0
+    required_seconds = int((effective_end - effective_start).total_seconds())
+    if required_seconds < 0:
+        required_seconds = 0
+
+    _group_map_cache = {}
+    grp_rows = conn.execute(
+        "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+        "FROM member_display md "
+        "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+        "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
+        (tenant_id,),
+    ).fetchall()
+    for gr in grp_rows:
+        grd = dict(gr)
+        for key in (grd.get("raw_name", "").strip().lower().replace(" ", ""),
+                    grd.get("display_name", "").strip().lower().replace(" ", "")):
+            if key:
+                _group_map_cache[key] = grd.get("group_name", "")
+
+    def _batch_group_lookup(name: str) -> str:
+        key = name.strip().lower().replace(" ", "")
+        return _group_map_cache.get(key, "")
+
+    from db import resolve_display_name as _resolve_display_name
+
+    members = OrderedDict()
+    for e in all_events:
+        resolved = _resolve_display_name(e["name"])
+        display_name = resolved["display_name"]
+        if display_name not in members:
+            members[display_name] = {
+                "standard_name": display_name,
+                "raw_name": resolved.get("raw_name", display_name),
+                "group_name": _batch_group_lookup(display_name),
+                "raw_events": [],
+            }
+        action = e["action"]
+        if action not in ("enter", "joined", "leave", "left"):
+            continue
+        members[display_name]["raw_events"].append({
+            "action": action,
+            "action_time": e["action_time"],
+        })
+
+    for m in members.values():
+        m["raw_events"].sort(key=lambda x: x["action_time"])
+        deduped = []
+        for ev in m["raw_events"]:
+            if deduped and deduped[-1]["action"] in ("enter", "joined", "leave", "left")                and deduped[-1]["action"] == ev["action"]:
+                continue
+            deduped.append(ev)
+
+        online_seconds = 0
+        away_seconds = 0
+        max_away = 0
+        away_over_15_count = 0
+        is_online = False
+        last_overlap_leave = None
+        overlap_sessions = 0
+        first_online_dt = None
+        last_online_dt = None
+
+        i = 0
+        while i < len(deduped):
+            ev = deduped[i]
+            if ev["action"] in ("enter", "joined"):
+                enter_dt = datetime.fromisoformat(ev["action_time"])
+                leave_dt = None
+                for j in range(i + 1, len(deduped)):
+                    if deduped[j]["action"] in ("leave", "left"):
+                        leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
+                        i = j
+                        break
+
+                session_start_raw = enter_dt
+                session_end_raw = leave_dt if leave_dt else None
+
+                ol_start = max(session_start_raw, effective_start)
+                ol_end = session_end_raw if session_end_raw else now_utc
+                ol_end = min(ol_end, effective_end)
+
+                if ol_end > ol_start:
+                    dur = (ol_end - ol_start).total_seconds()
+                    online_seconds += dur
+                    overlap_sessions += 1
+                    if first_online_dt is None:
+                        first_online_dt = ol_start
+                    last_online_dt = ol_end
+
+                    if session_end_raw and session_end_raw <= effective_end:
+                        last_overlap_leave = session_end_raw
+
+                    is_online = session_end_raw is None
+
+            elif ev["action"] in ("leave", "left"):
+                pass
+            i += 1
+
+        prev_leave_ol = None
+        for ev in deduped:
+            if ev["action"] in ("leave", "left"):
+                lv_dt = datetime.fromisoformat(ev["action_time"])
+                if effective_start <= lv_dt <= effective_end:
+                    prev_leave_ol = lv_dt
+            elif ev["action"] in ("enter", "joined"):
+                en_dt = datetime.fromisoformat(ev["action_time"])
+                if en_dt >= effective_start and prev_leave_ol:
+                    away_raw = (en_dt - prev_leave_ol).total_seconds()
+                    if away_raw > 0:
+                        away_clamped = min(away_raw, (effective_end - prev_leave_ol).total_seconds())
+                        away_seconds += away_clamped
+                        if away_clamped > max_away:
+                            max_away = away_clamped
+                        if away_clamped > 15 * 60:
+                            away_over_15_count += 1
+                    prev_leave_ol = None
+
+        early_leave_seconds = 0
+        if overlap_sessions > 0 and not is_online and last_overlap_leave and last_overlap_leave < effective_end:
+            early_leave_seconds = int((effective_end - last_overlap_leave).total_seconds())
+            if early_leave_seconds < 0:
+                early_leave_seconds = 0
+
+        m["shift_online_minutes"] = int(online_seconds) // 60
+        m["required_minutes"] = required_seconds // 60
+        if required_seconds > 0:
+            m["attendance_rate"] = round(online_seconds / required_seconds, 4)
+        else:
+            m["attendance_rate"] = 1.0
+        m["absent_minutes"] = max(0, int((required_seconds - online_seconds) // 60))
+        m["away_minutes"] = int(away_seconds) // 60
+        m["max_away_minutes"] = int(max_away) // 60
+        m["away_over_15_count"] = away_over_15_count
+        m["early_leave_minutes"] = early_leave_seconds // 60
+        m["first_online"] = first_online_dt.strftime("%H:%M") if first_online_dt else None
+        m["last_online"] = last_online_dt.strftime("%H:%M") if last_online_dt else None
+        m["last_activity"] = last_online_dt.isoformat() if last_online_dt else None
+        m["sessions"] = overlap_sessions
+        m["meeting_not_open_minutes"] = meeting_not_open_seconds // 60
+
+        if is_online:
+            m["status"] = "online"
+        elif overlap_sessions > 0:
+            m["status"] = "offline"
+        else:
+            m["status"] = "absent"
+
+    if member_names:
+        result = []
+        for name in member_names:
+            if name in members:
+                result.append(members[name])
+            else:
+                from db import resolve_display_name as _r
+                resolved = _r(name)
+                result.append({
+                    "standard_name": name,
+                    "raw_name": resolved.get("raw_name", name),
+                    "group_name": _batch_group_lookup(name),
+                    "status": "absent",
+                    "shift_online_minutes": 0,
+                    "required_minutes": required_seconds // 60,
+                    "attendance_rate": 0.0,
+                    "absent_minutes": required_seconds // 60 if required_seconds > 0 else 0,
+                    "away_minutes": 0,
+                    "max_away_minutes": 0,
+                    "away_over_15_count": 0,
+                    "early_leave_minutes": 0,
+                    "first_online": None,
+                    "last_online": None,
+                    "last_activity": None,
+                    "sessions": 0,
+                    "meeting_not_open_minutes": meeting_not_open_seconds // 60,
+                })
+    else:
+        result = list(members.values())
+
+    result.sort(key=lambda x: (
+        0 if x["status"] == "online" else 1 if x["status"] == "offline" else 2,
+        -x["shift_online_minutes"],
+    ))
+
+    return result, {
+        "meeting_start": meeting_start.isoformat() if meeting_start else None,
+        "effective_start": effective_start.isoformat(),
+        "effective_end": effective_end.isoformat(),
+        "required_minutes": required_seconds // 60,
+        "meeting_not_open_minutes": meeting_not_open_seconds // 60,
+    }

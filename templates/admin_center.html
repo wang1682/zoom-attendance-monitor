@@ -10,7 +10,7 @@
 {% set is_super = current_user.role == 'super_admin' %}
 
 <!-- 统计概览 -->
-<div class="stats-row">
+<div class="stats-wrapper">
   <div class="stat-card">
     <div class="stat-label">🏢 总租户</div>
     <div class="stat-value">{{ stats.total_tenants }}</div>
@@ -29,10 +29,10 @@
   </div>
 </div>
 
-<div class="stats-row">
+<div class="stats-wrapper">
   <div class="stat-card">
     <div class="stat-label">🔔 今日告警</div>
-    <div class="stat-value {% if stats.today_alerts > 0 %}warning{% endif %}">{{ stats.today_alerts }}</div>
+    <div class="stat-value {% if stats.today_alerts > 0 %}text-warning{% endif %}">{{ stats.today_alerts }}</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">📤 今日推送</div>
@@ -40,7 +40,7 @@
   </div>
   <div class="stat-card">
     <div class="stat-label">📊 系统状态</div>
-    <div class="stat-value accent" style="font-size:14px;color:var(--success)">✅ 运行中</div>
+    <div class="stat-value" style="font-size:14px;color:var(--success)">✅ 运行中</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">🕐 更新时间</div>
@@ -93,18 +93,6 @@
   {% endif %}
 
 </div>
-
-<style>
-.admin-card{display:flex;align-items:flex-start;gap:12px;background:var(--bg3);border:1px solid var(--border-light);border-radius:4px;padding:16px;text-decoration:none;transition:all .15s}
-.admin-card:hover{border-color:var(--border);background:var(--panel-hover);transform:translateY(-1px)}
-.admin-card-icon{font-size:24px;line-height:1;flex-shrink:0}
-.admin-card-body{flex:1;min-width:0}
-.admin-card-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px}
-.admin-card-desc{font-size:11px;color:var(--text-muted);line-height:1.4}
-
-.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
-@media(max-width:640px){.stats-row{grid-template-columns:repeat(2,1fr)}}
-</style>
 
 <script>
 function updateNow() {

@@ -350,6 +350,306 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          metrics_online=metrics_online)
 
 
+# ═══════════════════════════════════════════════════════════════
+# 班次统计 (Shifts)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/shifts", response_class=HTMLResponse)
+async def dashboard_shifts(request: Request, user: dict = Depends(require_user)):
+    """班次统计页面 — 手动登记的班次出勤统计。"""
+    role = user.get("role", "")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    # 参数
+    shift_date = request.query_params.get("date", "").strip()
+    group_id = request.query_params.get("group", "").strip()
+    search_q = request.query_params.get("q", "").strip()
+    shift_type = request.query_params.get("shift_type", "").strip()
+
+    from datetime import datetime, timezone, timedelta
+    import pytz
+    mytz = pytz.timezone("Asia/Kuala_Lumpur")
+    today_myt = datetime.now(mytz).strftime("%Y-%m-%d")
+    now_myt = datetime.now(mytz)
+
+    if not shift_date:
+        shift_date = today_myt
+
+    # 当前班次判断
+    current_hour = now_myt.hour
+    current_shift_type = None
+    default_shift_start = None
+    default_shift_end = None
+    if 7 <= current_hour < 19:
+        current_shift_type = "早班"
+        default_shift_start = f"{shift_date}T07:00:00"
+        default_shift_end = f"{shift_date}T19:00:00"
+    else:
+        current_shift_type = "夜班"
+        if current_hour < 7:
+            default_shift_start = f"{shift_date}T19:00:00"
+            next_day = (now_myt + timedelta(days=1)).strftime("%Y-%m-%d")
+            default_shift_end = f"{next_day}T07:00:00"
+        else:
+            default_shift_start = f"{shift_date}T19:00:00"
+            next_day = (datetime.fromisoformat(shift_date) + timedelta(days=1)).strftime("%Y-%m-%d")
+            default_shift_end = f"{next_day}T07:00:00"
+
+    # 加载已登记成员
+    from db import get_shift_assignments
+    all_assignments = get_shift_assignments(shift_date=shift_date, tenant_id=tenant_id)
+
+    # 筛选
+    if shift_type:
+        all_assignments = [a for a in all_assignments if a.get("shift_name") == shift_type]
+    if search_q:
+        q = search_q.lower()
+        all_assignments = [a for a in all_assignments if q in a.get("member_name", "").lower()]
+
+    member_names = [a["member_name"] for a in all_assignments]
+
+    # 获取分组数据
+    from db import get_all_groups
+    groups = get_all_groups(tenant_id)
+
+    # 如果指定了分组，过滤成员
+    if group_id:
+        try:
+            gid = int(group_id)
+            from db import _get_conn
+            conn = _get_conn()
+            grp_members = conn.execute(
+                "SELECT DISTINCT display_name FROM member_display "
+                "WHERE tenant_id = ? AND group_id = ? AND display_name IS NOT NULL",
+                (tenant_id, gid),
+            ).fetchall()
+            grp_names = set(r[0] for r in grp_members)
+            member_names = [n for n in member_names if n in grp_names]
+        except (ValueError, Exception):
+            pass
+
+    # 计算班次统计
+    from db import get_shift_attendance_for_shift
+    shift_stats = []
+    shift_summary = {}
+
+    if member_names:
+        # 取第一个班次的时间（假设同一批次都是相同班次类型）
+        first = all_assignments[0]
+        ss_myt = first["shift_start"] if first.get("shift_start") else default_shift_start
+        se_myt = first.get("shift_end", default_shift_end)
+
+        shift_stats, shift_summary = get_shift_attendance_for_shift(
+            tenant_id=tenant_id,
+            shift_start_myt_str=ss_myt,
+            shift_end_myt_str=se_myt,
+            member_names=member_names,
+        )
+
+        # 合并班次名称到统计结果
+        assignment_map = {a["member_name"]: a for a in all_assignments}
+        for s in shift_stats:
+            a = assignment_map.get(s["standard_name"], {})
+            s["shift_name"] = a.get("shift_name", current_shift_type)
+
+    # 统计省缺值
+    if not shift_summary:
+        shift_summary = {
+            "meeting_not_open_minutes": 0,
+            "required_minutes": 0,
+        }
+
+    total_count = len(shift_stats)
+    online_count = sum(1 for s in shift_stats if s["status"] == "online")
+    offline_count = sum(1 for s in shift_stats if s["status"] == "offline")
+    absent_count = sum(1 for s in shift_stats if s["status"] == "absent")
+    early_count = sum(1 for s in shift_stats if s.get("early_leave_minutes", 0) > 0)
+    avg_rate = round(
+        sum(s["attendance_rate"] for s in shift_stats) / total_count, 4
+    ) if total_count > 0 else 1.0
+
+    return _render_admin(
+        request, "shifts", user, "shifts.html",
+        active="shifts",
+        shift_stats=shift_stats,
+        shift_summary=shift_summary,
+        all_assignments=all_assignments,
+        groups=groups,
+        shift_date=shift_date,
+        today_myt=today_myt,
+        current_shift_type=current_shift_type,
+        default_shift_start=default_shift_start,
+        default_shift_end=default_shift_end,
+        total_count=total_count,
+        online_count=online_count,
+        offline_count=offline_count,
+        absent_count=absent_count,
+        early_count=early_count,
+        avg_rate=avg_rate,
+        shift_type=shift_type,
+        group_id=group_id,
+        search_q=search_q,
+    )
+
+
+@router.post("/shifts/new", response_class=HTMLResponse)
+async def dashboard_shifts_new(request: Request, user: dict = Depends(require_user)):
+    """新增单个班次登记。"""
+    role = user.get("role", "")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    form = await request.form()
+    member_name = form.get("member_name", "").strip()
+    shift_name = form.get("shift_name", "").strip()
+    shift_date = form.get("shift_date", "").strip()
+    shift_start = form.get("shift_start", "").strip()
+    shift_end = form.get("shift_end", "").strip()
+
+    if not all([member_name, shift_name, shift_date, shift_start, shift_end]):
+        return RedirectResponse(url="/dashboard/shifts?error=参数不完整", status_code=303)
+
+    from db import create_shift_assignment
+    rid = create_shift_assignment(
+        tenant_id=tenant_id,
+        member_name=member_name,
+        shift_name=shift_name,
+        shift_date=shift_date,
+        shift_start=shift_start,
+        shift_end=shift_end,
+        created_by=user["id"],
+    )
+
+    if rid is None:
+        return RedirectResponse(url=f"/dashboard/shifts?date={shift_date}&error=该成员当日已登记", status_code=303)
+    return RedirectResponse(url=f"/dashboard/shifts?date={shift_date}", status_code=303)
+
+
+@router.post("/shifts/delete", response_class=HTMLResponse)
+async def dashboard_shifts_delete(request: Request, user: dict = Depends(require_user)):
+    """删除班次登记。"""
+    role = user.get("role", "")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    form = await request.form()
+    assignment_id = form.get("assignment_id", "").strip()
+    shift_date = form.get("shift_date", "").strip()
+
+    if not assignment_id:
+        return RedirectResponse(url="/dashboard/shifts?error=缺少参数", status_code=303)
+
+    from db import delete_shift_assignment
+    delete_shift_assignment(int(assignment_id), tenant_id=tenant_id)
+
+    return RedirectResponse(url=f"/dashboard/shifts?date={shift_date}", status_code=303)
+
+
+@router.post("/shifts/batch", response_class=HTMLResponse)
+async def dashboard_shifts_batch(request: Request, user: dict = Depends(require_user)):
+    """批量登记班次。"""
+    role = user.get("role", "")
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    form = await request.form()
+    shift_name = form.get("shift_name", "").strip()
+    shift_date = form.get("shift_date", "").strip()
+    shift_start = form.get("shift_start", "").strip()
+    shift_end = form.get("shift_end", "").strip()
+    member_names_raw = form.get("member_names", "").strip()
+
+    if not all([member_names_raw, shift_name, shift_date, shift_start, shift_end]):
+        return RedirectResponse(url="/dashboard/shifts?error=参数不完整", status_code=303)
+
+    member_names = [m.strip() for m in member_names_raw.split(",") if m.strip()]
+
+    from db import batch_create_shift_assignments
+    entries = [
+        {
+            "tenant_id": tenant_id,
+            "member_name": name,
+            "shift_name": shift_name,
+            "shift_date": shift_date,
+            "shift_start": shift_start,
+            "shift_end": shift_end,
+            "created_by": user["id"],
+        }
+        for name in member_names
+    ]
+    success, failed = batch_create_shift_assignments(entries)
+
+    url = f"/dashboard/shifts?date={shift_date}&batch_result={success}+{failed}"
+    return RedirectResponse(url=url, status_code=303)
+
+
+@router.get("/shifts/members", response_class=JSONResponse)
+async def dashboard_shifts_members_api(request: Request, user: dict = Depends(require_user)):
+    """API: 获取租户成员列表（用于批量登记弹窗的成员选择）。"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    group_id = request.query_params.get("group_id", "").strip()
+
+    from db import _get_conn
+    conn = _get_conn()
+    if group_id:
+        try:
+            gid = int(group_id)
+            rows = conn.execute(
+                "SELECT DISTINCT display_name, group_id FROM member_display "
+                "WHERE tenant_id = ? AND group_id = ? AND display_name IS NOT NULL "
+                "ORDER BY display_name",
+                (tenant_id, gid),
+            ).fetchall()
+        except ValueError:
+            rows = []
+    else:
+        rows = conn.execute(
+            "SELECT DISTINCT display_name, group_id FROM member_display "
+            "WHERE tenant_id = ? AND display_name IS NOT NULL "
+            "ORDER BY display_name",
+            (tenant_id,),
+        ).fetchall()
+
+    members = [dict(r)["display_name"] for r in rows]
+    return {"members": members}
+
+
+@router.get("/shifts/members-by-group", response_class=JSONResponse)
+async def dashboard_shifts_members_by_group(request: Request, user: dict = Depends(require_user)):
+    """API: 按分组获取成员列表（多选批量登记用）。"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    from db import _get_conn, get_all_groups
+    conn = _get_conn()
+
+    groups = get_all_groups(tenant_id)
+    result = []
+    for g in groups:
+        rows = conn.execute(
+            "SELECT DISTINCT display_name FROM member_display "
+            "WHERE tenant_id = ? AND group_id = ? AND display_name IS NOT NULL "
+            "ORDER BY display_name",
+            (tenant_id, g["id"]),
+        ).fetchall()
+        result.append({
+            "group_id": g["id"],
+            "group_name": g["name"],
+            "members": [r[0] for r in rows],
+        })
+    # 无分组成员
+    ungrouped = conn.execute(
+        "SELECT DISTINCT display_name FROM member_display "
+        "WHERE tenant_id = ? AND group_id IS NULL AND display_name IS NOT NULL "
+        "ORDER BY display_name",
+        (tenant_id,),
+    ).fetchall()
+    if ungrouped:
+        result.insert(0, {
+            "group_id": 0,
+            "group_name": "未分组",
+            "members": [r[0] for r in ungrouped],
+        })
+
+    return {"groups": result}
+
+
 @router.get("/meetings", response_class=HTMLResponse)
 async def dashboard_meetings(request: Request, user: dict = Depends(require_user)):
     """Meetings center — live meetings from Zoom Metrics API + history + sharing."""

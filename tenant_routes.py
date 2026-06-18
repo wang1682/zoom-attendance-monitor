@@ -59,6 +59,7 @@ def _get_nav_items(role: str) -> list[dict]:
     items = [
         {"key": "overview",     "label": "总览",   "href": "/dashboard/",                      "icon": ""},
         {"key": "participants", "label": "成员",   "href": "/dashboard/participants",           "icon": ""},
+        {"key": "shifts",       "label": "班次",   "href": "/dashboard/shifts",                  "icon": ""},
         {"key": "meetings",     "label": "会议",   "href": "/dashboard/meetings",               "icon": ""},
         {"key": "alerts",       "label": "预警",   "href": "/dashboard/alerts",                 "icon": ""},
     ]
