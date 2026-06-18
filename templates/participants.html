@@ -1,34 +1,61 @@
 {% extends "admin_base.html" %}
-{% block title %}{{ title }}{% endblock %}
-{% block content %}
-
+{% block title %}参会中心{% endblock %}
+{% block head_extra %}
 <style>
-/* ── participants 特有样式 ── */
-.shift-card {
-  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-  border:1px solid #334155;
-  border-radius:8px;
-  padding:20px 24px;
-  margin-bottom:20px;
-  display:grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap:16px;
+/* ── Tab 切换 ── */
+.tab-bar {
+  display:flex; gap:0; margin-bottom:20px; border-bottom:1px solid #334155;
 }
-.shift-item { text-align:center; }
-.shift-item .label { font-size:11px; color:#94a3b8; margin-bottom:4px; }
-.shift-item .value { font-size:18px; font-weight:600; color:#f1f5f9; }
-.shift-item .value small { font-size:13px; font-weight:400; color:#94a3b8; }
-.meeting-not-open {
-  background:#1e3a5f;
-  border:1px solid #3b82f6;
-  border-radius:8px;
-  padding:10px 16px;
-  margin-bottom:16px;
-  display:flex;
-  align-items:center;
-  gap:8px;
-  color:#93c5fd;
-  font-size:13px;
+.tab-btn {
+  padding:10px 24px; font-size:14px; font-weight:500; cursor:pointer;
+  color:#94a3b8; background:none; border:none; border-bottom:2px solid transparent;
+  transition:all .15s;
+}
+.tab-btn:hover { color:#f1f5f9; }
+.tab-btn.active { color:#3b82f6; border-bottom-color:#3b82f6; }
+.tab-content { display:none; }
+.tab-content.active { display:block; }
+
+/* ── Shift-specific ── */
+.shift-summary-card {
+  background: linear-gradient(135deg,#1e293b 0%,#0f172a 100%);
+  border:1px solid #334155; border-radius:8px; padding:20px 24px;
+  margin-bottom:20px; display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:16px;
+}
+.shift-summary-item { text-align:center; }
+.shift-summary-item .label { font-size:11px; color:#94a3b8; margin-bottom:4px; }
+.shift-summary-item .value { font-size:16px; font-weight:600; color:#f1f5f9; }
+.shift-summary-item .value small { font-size:12px; font-weight:400; color:#94a3b8; }
+.shift-filter-bar {
+  display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:16px;
+}
+.shift-filter-bar input, .shift-filter-bar select {
+  background:#1e293b; border:1px solid #334155; border-radius:6px;
+  color:#f1f5f9; padding:8px 12px; font-size:13px;
+}
+.shift-filter-bar input:focus, .shift-filter-bar select:focus {
+  border-color:#3b82f6; outline:none;
+}
+.shift-filter-bar .action-btns {
+  margin-left:auto; display:flex; gap:8px;
+}
+.btn-shift {
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;
+  border:none;cursor:pointer;text-decoration:none;
+}
+.btn-primary { background:#3b82f6; color:#fff; }
+.btn-primary:hover { background:#2563eb; }
+.btn-secondary { background:#334155; color:#f1f5f9; }
+.btn-secondary:hover { background:#475569; }
+.btn-danger { background:#dc2626; color:#fff; }
+.btn-danger:hover { background:#b91c1c; }
+.batch-result-toast {
+  background:#1e3a5f; border:1px solid #3b82f6;
+  border-radius:8px; padding:10px 16px; margin-bottom:16px;
+  display:flex;align-items:center;gap:8px;
+  color:#93c5fd; font-size:13px;
 }
 .rate-badge {
   display:inline-flex;align-items:center;gap:4px;
@@ -45,94 +72,83 @@
 .away-ok { color:#94a3b8; }
 .early-leave { color:#f87171; font-size:11px; }
 .absent-num { color:#94a3b8; font-size:11px; }
-</style>
 
-{% set shift_name = shift.get("name", "") %}
-{% set shift_mnot = shift.get("meeting_not_open_minutes", 0) %}
-{% set shift_req = shift.get("required_minutes", 0) %}
-{% set shift_start_s = shift.get("start", "")[:16].replace("T", " ") %}
+/* ── Modal ── */
+.modal-overlay {
+  display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.6); z-index:1000;
+  align-items:center; justify-content:center;
+}
+.modal-box {
+  background:#1e293b; border:1px solid #334155; border-radius:12px;
+  padding:24px; max-width:420px; width:90%; margin:0 auto;
+  position:relative;
+}
+.modal-box.wide { max-width:600px; }
+.modal-box h3 { margin:0 0 20px; font-size:16px; color:#f1f5f9; }
+.modal-box label { display:block; font-size:12px; color:#94a3b8; margin-bottom:4px; }
+.modal-box input, .modal-box select {
+  width:100%; padding:8px 10px; background:#0f172a;
+  border:1px solid #334155; border-radius:6px; color:#f1f5f9; font-size:13px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
 
 <div class="main-container" style="max-width:1400px;margin:0 auto">
 
-{# ── 标题 ── #}
-<div style="display:flex;align-items:baseline;gap:12px;margin-bottom:16px">
-  <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0">
-    {{ title }}
-  </h2>
-  <span style="font-size:14px;color:var(--text-secondary);font-weight:500">
-    · 当前班次：{{ shift_name }} {{ shift_start_s }}-{{ shift.get("end","")[:16].replace("T"," ") }}
-  </span>
-</div>
-<p style="color:var(--text-muted);font-size:12px;margin:-8px 0 16px 0">
-  班次统计说明：如会议室晚于班次开启，晚开时间不计入员工缺勤。
+{# ── 页面标题 ── #}
+<h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0 0 4px">参会中心</h2>
+<p style="color:var(--text-muted);font-size:12px;margin:0 0 16px">
+  实时参会用于查看当前会议状态；班次统计用于按排班计算出勤。
 </p>
 
-{# ── 班次信息卡 ── #}
-<div class="shift-card">
-  <div class="shift-item">
-    <div class="label">当前班次</div>
-    <div class="value">{{ shift_name }}</div>
-  </div>
-  <div class="shift-item">
-    <div class="label">班次时间</div>
-    <div class="value">{{ shift_start_s }}<br><small>至 {{ shift.get("end","")[11:16] }}</small></div>
-  </div>
-  <div class="shift-item">
-    <div class="label">会议开启</div>
-    <div class="value">{{ shift.get("meeting_start","")[11:16] }}</div>
-  </div>
-  <div class="shift-item">
-    <div class="label">会议未开启</div>
-    <div class="value" style="color:#60a5fa">{{ shift_mnot }}h{{ "0" if shift_mnot%60==0 else shift_mnot%60 }}</div>
-  </div>
-  <div class="shift-item">
-    <div class="label">有效应出勤</div>
-    <div class="value">{{ shift_req//60 }}h{% if shift_req%60 %}{{ shift_req%60 }}m{% endif %}</div>
-  </div>
-  <div class="shift-item">
-    <div class="label">数据源</div>
-    <div class="value" style="font-size:14px">
-      {% if is_realtime %}🟢 Zoom Metrics API{% else %}🟡 Webhook{% endif %}
-    </div>
-  </div>
+{# ── Tab 切换栏 ── #}
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('live')" id="tabLive">实时参会</button>
+  <button class="tab-btn" onclick="switchTab('shift')" id="tabShift">班次统计</button>
 </div>
 
-{# ── 会议晚开提示 ── #}
-{% if shift_mnot > 0 %}
-<div class="meeting-not-open">
-  ℹ️ 会议延迟 <strong>{{ shift_mnot//60 }}h{% if shift_mnot%60 %}{{ shift_mnot%60 }}m{% endif %}</strong> 开启
-  （班次 {{ shift_start_s }}，会议 {{ shift.get("meeting_start","")[11:16] }}）
-  —— 此期间不计入员工缺勤。
+{# ══════════════════════════════════════════════════════════ #}
+{# Tab 1: 实时参会 #}
+{# ══════════════════════════════════════════════════════════ #}
+<div class="tab-content active" id="panelLive">
+
+{# ── 状态源标注 ── #}
+{% if data_source == "metrics" %}
+<div style="display:flex;gap:4px;align-items:center;font-size:12px;color:#94a3b8;margin-bottom:12px">
+  <span style="display:inline-flex;width:8px;height:8px;border-radius:50%;background:#22c55e"></span>
+  数据源：Metrics（实时）
+</div>
+{% else %}
+<div style="display:flex;gap:4px;align-items:center;font-size:12px;color:#94a3b8;margin-bottom:12px">
+  <span style="display:inline-flex;width:8px;height:8px;border-radius:50%;background:#eab308"></span>
+  数据源：Webhook 记录
 </div>
 {% endif %}
 
 {# ── 筛选器 ── #}
 <div class="toolbar">
-  <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
-  <select class="toolbar-select" id="groupFilter">
+  <input type="text" class="toolbar-search" id="liveSearchInput" placeholder="搜索成员..." value="{{ search }}">
+  <select class="toolbar-select" id="liveGroupFilter">
     <option value="">所有分组</option>
     {% for g in groups %}
     <option value="{{ g.name }}" {{ 'selected' if group_filter == g.name }}>{{ g.name }}</option>
     {% endfor %}
   </select>
-  <select class="toolbar-select" id="statusFilter">
+  <select class="toolbar-select" id="liveStatusFilter">
     <option value="">所有状态</option>
     <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
     <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
-    <option value="absent" {{ 'selected' if status_filter == 'absent' }}>未到岗</option>
   </select>
   <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
-    {% set online_count = members|selectattr('status', 'equalto', 'online')|list|length %}
-    {% set offline_count = members|selectattr('status', 'equalto', 'offline')|list|length %}
-    {% set absent_count = members|selectattr('status', 'equalto', 'absent')|list|length %}
     <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
-    <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
-    <strong style="color:var(--text-muted)">{{ absent_count }}</strong> 未到岗 ·
     共 <strong style="color:var(--text)">{{ members|list|length }}</strong> 人
   </span>
 </div>
 
-{# ── 表格 ── #}
+{# ── 实时参会表格 ── #}
 <div class="panel" style="padding:0;overflow:visible">
 <table class="data-table">
 <thead>
@@ -140,70 +156,47 @@
   <th>成员</th>
   <th style="width:60px">状态</th>
   <th>分组</th>
-  <th>班次在线</th>
-  <th>出勤率</th>
-  <th>缺勤</th>
-  <th>中途离开>15m</th>
-  <th>最大离开</th>
-  <th>提前离场</th>
+  <th>今日在线</th>
   <th>进入/离开</th>
-  <th>首次/最近</th>
+  <th>最后活动</th>
 </tr>
 </thead>
-<tbody id="memberTable">
+<tbody id="liveTable">
 {% for m in members %}
-{% set rate = m.get("attendance_rate", 0) %}
-{% set rate_pct = (rate * 100)|int %}
-{% set rate_cls = "rate-green" if rate >= 0.95 else ("rate-yellow" if rate >= 0.80 else "rate-red") %}
-{% set aw15 = m.get("away_over_15_count", 0) %}
-{% set early = m.get("early_leave_minutes", 0) %}
-{% set abs_min = m.get("absent_minutes", 0) %}
-{% set online_m = m.get("shift_online_minutes", 0) %}
-{% set sessions = m.get("sessions", 0) %}
-{% set grp = m.get("group_name", "") %}
-<tr class="member-row"
-    data-name="{{ m.get("standard_name","")|lower }}"
-    data-group="{{ grp }}"
-    data-status="{{ m.get("status","offline") }}">
+{% set st = m.get('status','offline') %}
+<tr class="live-row"
+    data-name="{{ m.get('standard_name','')|lower }}"
+    data-group="{{ m.get('group_name','') }}"
+    data-status="{{ st }}">
   <td>
     <div class="user-cell-name">
       <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:50%">
-        {{ m.get("standard_name","?")[:2]|upper }}
+        {{ m.get('standard_name','?')[:2]|upper }}
       </div>
       <div class="name-text">
-        <span class="primary">{{ m.get("standard_name","") }}</span>
+        <span class="primary">{{ m.get('standard_name','') }}</span>
       </div>
     </div>
   </td>
   <td>
-    {% set st = m.get('status','offline') %}
     {% if st == 'online' %}
-    <span class="status-dot online" title="在线"></span>
-    {% elif st == 'offline' %}
-    <span class="status-dot offline" title="离线（本班次有记录）"></span>
+    <span class="status-dot online" title="当前在线"></span>
     {% else %}
-    <span class="status-dot absent" title="未到岗（本班次无记录）" style="background:var(--text-muted);opacity:0.35"></span>
+    <span class="status-dot offline" title="离线"></span>
     {% endif %}
   </td>
-  <td class="td-mono">{{ grp }}</td>
-  <td class="td-name">{{ online_m // 60 }}h{{ "%02d"|format(online_m % 60) }}m</td>
-  <td>
-    <span class="rate-badge {{ rate_cls }}">{{ rate_pct }}%</span>
-  </td>
-  <td class="absent-num">{{ abs_min // 60 }}h{{ "%02d"|format(abs_min % 60) }}m</td>
-  <td>
-    {% if aw15 > 0 %}
-    <span class="away-badge away-warn">⚠ {{ aw15 }}次</span>
-    {% else %}
-    <span class="away-badge away-ok">—</span>
-    {% endif %}
-  </td>
-  <td class="td-mono">{% set maxa = m.get("max_away_minutes", 0) %}{% if maxa > 0 %}{{ maxa // 60 }}h{{ "%02d"|format(maxa % 60) }}m{% else %}—{% endif %}</td>
-  <td>{% set early = m.get('early_leave_minutes', 0) %}{% set s = m.get('sessions', 0) %}{% if s > 0 and early > 0 %}<span class="early-leave">☰ {{ early // 60 }}h{{ '%02d'|format(early % 60) }}m</span>{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
-  <td class="td-mono">{{ sessions }}次</td>
+  <td class="td-mono">{{ m.get('group_name','') }}</td>
+  <td class="td-name">{{ (m.get('shift_online_minutes',0) // 60) }}h{{ '%02d'|format(m.get('shift_online_minutes',0) % 60) }}m</td>
+  <td class="td-mono">{{ m.get('sessions', 0) }}次</td>
   <td class="td-mono" style="white-space:nowrap">
-    {% set m_act = m.get("last_activity", "") %}
-    {% if m_act %}{{ m_act[:16].replace("T"," ") }}{% else %}—{% endif %}
+    {% set m_act = m.get('last_activity','') %}
+    {% if m_act %}{{ m_act[:16].replace('T',' ') }}{% else %}—{% endif %}
+  </td>
+</tr>
+{% else %}
+<tr>
+  <td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px">
+    暂无数据
   </td>
 </tr>
 {% endfor %}
@@ -211,20 +204,16 @@
 </table>
 </div>
 
-</div>
-
 <script>
 (function() {
-  var searchInput = document.getElementById('searchInput');
-  var groupFilter = document.getElementById('groupFilter');
-  var statusFilter = document.getElementById('statusFilter');
-  var rows = document.querySelectorAll('.member-row');
-
-  function filterTable() {
+  var searchInput = document.getElementById('liveSearchInput');
+  var groupFilter = document.getElementById('liveGroupFilter');
+  var statusFilter = document.getElementById('liveStatusFilter');
+  var rows = document.querySelectorAll('.live-row');
+  function filterLiveTable() {
     var q = searchInput.value.toLowerCase().trim();
     var g = groupFilter.value;
     var s = statusFilter.value;
-
     rows.forEach(function(row) {
       var name = row.getAttribute('data-name') || '';
       var grp = row.getAttribute('data-group') || '';
@@ -236,10 +225,415 @@
       row.style.display = show ? '' : 'none';
     });
   }
-
-  searchInput.addEventListener('input', filterTable);
-  groupFilter.addEventListener('change', filterTable);
-  statusFilter.addEventListener('change', filterTable);
+  searchInput.addEventListener('input', filterLiveTable);
+  groupFilter.addEventListener('change', filterLiveTable);
+  statusFilter.addEventListener('change', filterLiveTable);
 })();
 </script>
+
+</div>
+
+{# ══════════════════════════════════════════════════════════ #}
+{# Tab 2: 班次统计 #}
+{# ══════════════════════════════════════════════════════════ #}
+<div class="tab-content" id="panelShift">
+
+{# ── 批量登记结果提示 ── #}
+{% set batch_result = request.query_params.get('batch_result', '') %}
+{% if batch_result %}
+{% set parts = batch_result.split('+') %}
+{% set batch_ok = parts[0]|int if parts|length > 0 else 0 %}
+{% set batch_fail = parts[1]|int if parts|length > 1 else 0 %}
+<div class="batch-result-toast">
+  ✅ 批量登记完成：成功 <strong>{{ batch_ok }}</strong> 条{% if batch_fail > 0 %}，<strong style="color:#f87171">{{ batch_fail }}</strong> 条重复跳过{% endif %}
+</div>
+{% endif %}
+
+{% set error = request.query_params.get('error', '') %}
+{% if error %}
+<div class="batch-result-toast" style="border-color:#f87171;color:#f87171">
+  ⚠️ {{ error }}
+</div>
+{% endif %}
+
+{# ── 空状态 ── #}
+{% if shift_stats|length == 0 %}
+
+<div class="panel" style="padding:60px 20px;text-align:center">
+  <div style="font-size:48px;margin-bottom:12px">📋</div>
+  <p style="color:var(--text-muted);font-size:14px;margin:0 0 20px">
+    暂无班次登记，请新增或批量登记
+  </p>
+  <div style="display:flex;gap:10px;justify-content:center">
+    <button class="btn-shift btn-primary" onclick="openShiftModal('new')">+ 新增班次</button>
+    <button class="btn-shift btn-secondary" onclick="openShiftModal('batch')">+ 批量登记</button>
+  </div>
+</div>
+
+{% else %}
+
+{# ── 班次汇总 ── #}
+<div class="shift-summary-card">
+  <div class="shift-summary-item">
+    <div class="label">已登记</div>
+    <div class="value">{{ shift_stats|length }} <small>人</small></div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">在线</div>
+    <div class="value" style="color:#22c55e">{{ shift_online }} <small>人</small></div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">离线</div>
+    <div class="value" style="color:#eab308">{{ shift_offline }} <small>人</small></div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">缺勤</div>
+    <div class="value" style="color:#94a3b8">{{ absent_count }} <small>人</small></div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">提前离场</div>
+    <div class="value" style="color:#f87171">{{ early_count }} <small>人</small></div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">平均出勤率</div>
+    <div class="value" style="color:#60a5fa">{{ (avg_rate * 100)|int }}%</div>
+  </div>
+  <div class="shift-summary-item">
+    <div class="label">有效应出勤</div>
+    <div class="value">{{ shift_summary.get('required_minutes', 0) // 60 }}h <small>{{ shift_summary.get('required_minutes', 0) % 60 }}m</small></div>
+  </div>
+</div>
+
+{# ── 会议晚开提示 ── #}
+{% set mnot = shift_summary.get('meeting_not_open_minutes', 0) %}
+{% if mnot > 0 %}
+<div class="meeting-not-open" style="background:#1e3a5f;border:1px solid #3b82f6;border-radius:8px;padding:10px 16px;margin-bottom:16px;display:flex;align-items:center;gap:8px;color:#93c5fd;font-size:13px">
+  ℹ️ 会议延迟 <strong>{{ mnot // 60 }}h{% if mnot % 60 %}{{ mnot % 60 }}m{% endif %}</strong> 开启 —— 此期间不计入员工缺勤。
+</div>
+{% endif %}
+
+{# ── 筛选器 + 操作按钮 ── #}
+<div class="shift-filter-bar">
+  <input type="date" id="dateFilter" value="{{ shift_date }}" style="max-width:160px">
+  <input type="text" id="searchInput" placeholder="搜索成员..." style="max-width:180px">
+  <div class="action-btns">
+    <button class="btn-shift btn-primary" onclick="openShiftModal('batch')">+ 批量登记</button>
+    <button class="btn-shift btn-secondary" onclick="openShiftModal('new')">+ 新增班次</button>
+  </div>
+</div>
+
+{# ── 班次统计表格 ── #}
+<div class="panel" style="padding:0;overflow:visible">
+<table class="data-table">
+<thead>
+<tr>
+  <th>成员</th>
+  <th style="width:60px">状态</th>
+  <th>分组</th>
+  <th>班次</th>
+  <th>班次在线</th>
+  <th>出勤率</th>
+  <th>缺勤</th>
+  <th>中途离开>15m</th>
+  <th>最大离开</th>
+  <th>提前离场</th>
+  <th>进入/离开</th>
+  <th style="width:40px"></th>
+</tr>
+</thead>
+<tbody id="shiftTable">
+{% for s in shift_stats %}
+{% set rate = s.get("attendance_rate", 0) %}
+{% set rate_pct = (rate * 100)|int %}
+{% set rate_cls = "rate-green" if rate >= 0.95 else ("rate-yellow" if rate >= 0.80 else "rate-red") %}
+{% set aw15 = s.get("away_over_15_count", 0) %}
+{% set online_m = s.get("shift_online_minutes", 0) %}
+{% set sessions = s.get("sessions", 0) %}
+{% set grp = s.get("group_name", "") %}
+{% set maxa = s.get("max_away_minutes", 0) %}
+{% set st = s.get("status", "offline") %}
+{% set sname = s.get("shift_name", current_shift_type) %}
+{% set abs_min = s.get("absent_minutes", 0) %}
+{% set early_min = s.get("early_leave_minutes", 0) %}
+<tr class="member-row" data-name="{{ s.get("standard_name","")|lower }}">
+  <td>
+    <div class="user-cell-name">
+      <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:50%">
+        {{ s.get("standard_name","?")[:2]|upper }}
+      </div>
+      <div class="name-text">
+        <span class="primary">{{ s.get("standard_name","") }}</span>
+      </div>
+    </div>
+  </td>
+  <td>
+    {% if st == 'online' %}
+    <span class="status-dot online" title="在线"></span>
+    {% elif st == 'offline' %}
+    <span class="status-dot offline" title="离线"></span>
+    {% else %}
+    <span class="status-dot absent" title="未到岗" style="background:var(--text-muted);opacity:0.35"></span>
+    {% endif %}
+  </td>
+  <td class="td-mono">{{ grp }}</td>
+  <td class="td-mono"><span style="color:#60a5fa;font-size:12px">{{ sname }}</span></td>
+  <td class="td-name">{{ online_m // 60 }}h{{ "%02d"|format(online_m % 60) }}m</td>
+  <td><span class="rate-badge {{ rate_cls }}">{{ rate_pct }}%</span></td>
+  <td class="absent-num">{{ abs_min // 60 }}h{{ "%02d"|format(abs_min % 60) }}m</td>
+  <td>
+    {% if aw15 > 0 %}
+    <span class="away-badge away-warn">⚠ {{ aw15 }}次</span>
+    {% else %}
+    <span class="away-badge away-ok">—</span>
+    {% endif %}
+  </td>
+  <td class="td-mono">{% if maxa > 0 %}{{ maxa // 60 }}h{{ "%02d"|format(maxa % 60) }}m{% else %}—{% endif %}</td>
+  <td>{% if sessions > 0 and early_min > 0 %}<span class="early-leave">☰ {{ early_min // 60 }}h{{ "%02d"|format(early_min % 60) }}m</span>{% else %}<span style="color:var(--text-muted)">—</span>{% endif %}</td>
+  <td class="td-mono">{{ sessions }}次</td>
+  <td>
+    <form method="post" action="/dashboard/shifts/delete" onsubmit="return confirm('确定删除该成员班次？')" style="display:inline">
+      <input type="hidden" name="assignment_id" value="{{ s.get('assignment_id', 0) }}">
+      <input type="hidden" name="shift_date" value="{{ shift_date }}">
+      <button type="submit" class="btn-shift btn-danger" style="padding:2px 6px;font-size:11px">×</button>
+    </form>
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+{% endif %}
+
+{# ── 新增班次 Modal ── #}
+<div class="modal-overlay" id="newShiftModal">
+<div class="modal-box">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <h3>新增班次登记</h3>
+    <button onclick="closeShiftModal('new')" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer">×</button>
+  </div>
+  <form method="post" action="/dashboard/shifts/new">
+    <div style="margin-bottom:12px">
+      <label>成员名称</label>
+      <input type="text" name="member_name" required list="memberList"
+             style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px">
+      <datalist id="memberList"></datalist>
+    </div>
+    <div style="margin-bottom:12px">
+      <label>班次类型</label>
+      <select name="shift_name" required style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px" onchange="updateShiftTime('new')">
+        <option value="早班">早班 07:00-19:00</option>
+        <option value="夜班">夜班 19:00-次日07:00</option>
+        <option value="自定义">自定义</option>
+      </select>
+    </div>
+    <div id="customTimeFields_new" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div>
+          <label>开始时间</label>
+          <input type="datetime-local" name="shift_start" style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px">
+        </div>
+        <div>
+          <label>结束时间</label>
+          <input type="datetime-local" name="shift_end" style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px">
+        </div>
+      </div>
+    </div>
+    <input type="hidden" name="shift_date" value="{{ shift_date }}">
+    <input type="hidden" name="shift_start" value="{{ default_shift_start }}">
+    <input type="hidden" name="shift_end" value="{{ default_shift_end }}">
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button type="button" onclick="closeShiftModal('new')" class="btn-shift btn-secondary">取消</button>
+      <button type="submit" class="btn-shift btn-primary">保存</button>
+    </div>
+  </form>
+</div>
+</div>
+
+{# ── 批量登记 Modal ── #}
+<div class="modal-overlay" id="batchShiftModal">
+<div class="modal-box wide">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <h3>批量登记班次</h3>
+    <button onclick="closeShiftModal('batch')" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer">×</button>
+  </div>
+  <form method="post" action="/dashboard/shifts/batch">
+    <div style="margin-bottom:12px">
+      <label>按分组筛选</label>
+      <select id="batchGroupFilter" style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px" onchange="loadGroupMembers()">
+        <option value="">所有成员</option>
+        {% for g in groups %}
+        <option value="{{ g.id }}">{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <label>班次类型</label>
+      <select name="shift_name" required style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px" onchange="updateShiftTime('batch')">
+        <option value="早班">早班 07:00-19:00</option>
+        <option value="夜班">夜班 19:00-次日07:00</option>
+        <option value="自定义">自定义</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <label>成员（多选）</label>
+      <div id="batchMemberCheckboxes" style="max-height:250px;overflow-y:auto;border:1px solid #334155;border-radius:6px;padding:8px;background:#0f172a">
+        <div style="text-align:center;color:var(--text-muted);padding:20px">加载中...</div>
+      </div>
+    </div>
+    <div id="customTimeFields_batch" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+        <div>
+          <label>开始时间</label>
+          <input type="datetime-local" name="batch_shift_start" style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px">
+        </div>
+        <div>
+          <label>结束时间</label>
+          <input type="datetime-local" name="batch_shift_end" style="width:100%;padding:8px 10px;background:#0f172a;border:1px solid #334155;border-radius:6px;color:#f1f5f9;font-size:13px">
+        </div>
+      </div>
+    </div>
+    <input type="hidden" name="shift_date" value="{{ shift_date }}">
+    <input type="hidden" name="shift_start" value="{{ default_shift_start }}">
+    <input type="hidden" name="shift_end" value="{{ default_shift_end }}">
+    <input type="hidden" name="member_names" id="batchMemberNames">
+    <div style="margin-top:16px;display:flex;gap:8px;justify-content:space-between;align-items:center">
+      <span id="batchCount" style="color:var(--text-muted);font-size:12px">已选 0 人</span>
+      <div style="display:flex;gap:8px">
+        <button type="button" onclick="closeShiftModal('batch')" class="btn-shift btn-secondary">取消</button>
+        <button type="submit" class="btn-shift btn-primary" onclick="return prepareBatchSubmit()">批量登记</button>
+      </div>
+    </div>
+  </form>
+</div>
+</div>
+
+</div> {# panelShift end #}
+</div> {# main-container end #}
+
+<script>
+// ── Tab 切换 ──
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(p) { p.classList.remove('active'); });
+  document.getElementById('tab' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+  document.getElementById('panel' + name.charAt(0).toUpperCase() + name.slice(1)).classList.add('active');
+}
+
+// ── Modal ──
+function openShiftModal(type) {
+  document.getElementById(type + 'ShiftModal').style.display = 'flex';
+  if (type === 'new') loadMemberList();
+  if (type === 'batch') loadGroupMembers();
+}
+function closeShiftModal(type) {
+  document.getElementById(type + 'ShiftModal').style.display = 'none';
+}
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('modal-overlay')) {
+    e.target.style.display = 'none';
+  }
+});
+
+// ── 成员下拉 ──
+function loadMemberList() {
+  fetch('/dashboard/shifts/members')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var dl = document.getElementById('memberList');
+      dl.innerHTML = '';
+      data.members.forEach(function(name) {
+        var opt = document.createElement('option');
+        opt.value = name;
+        dl.appendChild(opt);
+      });
+    });
+}
+
+// ── 班次时间联动 ──
+function updateShiftTime(prefix) {
+  var sel = document.querySelector('#' + prefix + 'ShiftModal select[name="shift_name"]');
+  if (!sel) sel = document.querySelector('#' + prefix + 'ShiftModal [name="shift_name"]');
+  if (!sel) return;
+  var custom = document.getElementById('customTimeFields_' + prefix);
+  var startInput = document.querySelector('#' + prefix + 'ShiftModal [name="shift_start"]');
+  var endInput = document.querySelector('#' + prefix + 'ShiftModal [name="shift_end"]');
+  var date = '{{ shift_date }}';
+  if (!sel || !custom) return;
+  if (sel.value === '早班') {
+    custom.style.display = 'none';
+    if (startInput) startInput.value = date + 'T07:00';
+    if (endInput) endInput.value = date + 'T19:00';
+  } else if (sel.value === '夜班') {
+    custom.style.display = 'none';
+    if (startInput) startInput.value = date + 'T19:00';
+    if (endInput) {
+      var nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + 1);
+      endInput.value = nextDate.toISOString().slice(0,10) + 'T07:00';
+    }
+  } else {
+    custom.style.display = 'block';
+    if (startInput) startInput.value = '';
+    if (endInput) endInput.value = '';
+  }
+}
+
+// ── 批量登记 ──
+function loadGroupMembers() {
+  var groupId = document.getElementById('batchGroupFilter').value;
+  var url = groupId ? '/dashboard/shifts/members?group_id=' + groupId : '/dashboard/shifts/members';
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var container = document.getElementById('batchMemberCheckboxes');
+      container.innerHTML = '';
+      data.members.forEach(function(name) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 6px;cursor:pointer;font-size:13px;color:#f1f5f9';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = name;
+        cb.style.cssText = 'accent-color:#3b82f6';
+        cb.addEventListener('change', updateBatchCount);
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(name));
+        container.appendChild(label);
+      });
+      updateBatchCount();
+    });
+}
+function updateBatchCount() {
+  var checks = document.querySelectorAll('#batchMemberCheckboxes input[type="checkbox"]:checked');
+  document.getElementById('batchCount').textContent = '已选 ' + checks.length + ' 人';
+}
+function prepareBatchSubmit() {
+  var checks = document.querySelectorAll('#batchMemberCheckboxes input[type="checkbox"]:checked');
+  var names = Array.from(checks).map(function(c) { return c.value; });
+  if (names.length === 0) {
+    alert('请至少选择一名成员');
+    return false;
+  }
+  document.getElementById('batchMemberNames').value = names.join(',');
+  return true;
+}
+
+// ── 日期筛选 ──
+document.getElementById('dateFilter') && document.getElementById('dateFilter').addEventListener('change', function() {
+  var params = new URLSearchParams(window.location.search);
+  params.set('date', this.value);
+  window.location.search = params.toString();
+});
+
+// ── 搜索 ──
+document.getElementById('searchInput') && document.getElementById('searchInput').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    var params = new URLSearchParams(window.location.search);
+    if (this.value) params.set('q', this.value);
+    else params.delete('q');
+    window.location.search = params.toString();
+  }
+});
+</script>
+
 {% endblock %}
