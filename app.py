@@ -1,6 +1,6 @@
 import os
 """
-app.py — Zoom 参会监控统一入口
+app.py - Zoom 参会监控统一入口
 Modes:
   python app.py api       → FastAPI dashboard on port 8000
   python app.py webhook   → FastAPI webhook receiver on port 9000
@@ -31,7 +31,7 @@ PERF_WARN_MS = 1000
 # ── 统一获取客户端真实 IP ──
 
 def get_client_ip(request) -> str:
-    """按优先级获取客户端真实 IP：CF-Connecting-IP > X-Forwarded-For > X-Real-IP > request.client.host"""
+    """按优先级获取客户端真实 IP:CF-Connecting-IP > X-Forwarded-For > X-Real-IP > request.client.host"""
     cf = request.headers.get("cf-connecting-ip")
     if cf:
         return cf.strip()
@@ -143,10 +143,10 @@ def parse_utc_iso(s: str) -> datetime | None:
 def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
     """UTC ISO → MYT 显示字符串"""
     if not s:
-        return "—"
+        return "-"
     dt = parse_utc_iso(s)
     if dt is None:
-        return s[:16] if s else "—"
+        return s[:16] if s else "-"
     return dt.astimezone(MYT).strftime(fmt)
 
 
@@ -155,7 +155,7 @@ def iso_to_myt_str(s: str, fmt: str = "%m-%d %H:%M:%S") -> str:
 WEEKDAY_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
 def fmt_myt(dt_str: str | None) -> str:
-    """统一 MYT 格式：MM-DD HH:mm:ss"""
+    """统一 MYT 格式:MM-DD HH:mm:ss"""
     return iso_to_myt_str(dt_str)
 
 
@@ -184,7 +184,7 @@ with open(BASE_DIR / "brand.json") as _f:
 _app = None
 DB_INITED = False
 
-# ── Demo 数据函数（惰性导入）────────────────────────────────────────────────
+# ── Demo 数据函数(惰性导入)────────────────────────────────────────────────
 _DEMO_MODULE = None
 
 
@@ -197,7 +197,7 @@ def _ensure_demo():
 
 
 def resolve_member(raw_name: str, tenant_id: str = None) -> dict:
-    """解析原始 Zoom 用户名：返回标准名、分组和是否经过映射"""
+    """解析原始 Zoom 用户名:返回标准名、分组和是否经过映射"""
     resolved = db.resolve_display_name(raw_name)
     standard = resolved["display_name"]
     group_name = db.get_member_group(standard, tenant_id) or db.get_member_group(raw_name, tenant_id)
@@ -225,7 +225,7 @@ def _validate_group_tenant(group_id: int | None, member_tenant_id: str | None) -
 
 
 def build_app() -> "FastAPI":
-    """创建并配置完整的 FastAPI 应用（只在 api/webhook 模式下调用）"""
+    """创建并配置完整的 FastAPI 应用(只在 api/webhook 模式下调用)"""
     global _app
     if _app is not None:
         return _app
@@ -245,13 +245,13 @@ def build_app() -> "FastAPI":
     # ── 全局 state 初始化 ────────────────────────────────────────────────────
     app.state._2fa_pending = {}
 
-    # ── 认证中间件（必须注册在 SessionMiddleware 之前，使其成为 innermost） ─────
+    # ── 认证中间件(必须注册在 SessionMiddleware 之前，使其成为 innermost) ─────
     @app.middleware("http")
     async def _auth_middleware(request: Request, call_next):
-        """全局认证中间件 — 未登录用户重定向到 /login"""
+        """全局认证中间件 - 未登录用户重定向到 /login"""
         path = request.url.path
 
-        # 白名单：这些路径不需要认证
+        # 白名单:这些路径不需要认证
         public_paths = [
             "/login", "/logout",
             "/privacy", "/terms",
@@ -320,18 +320,18 @@ def build_app() -> "FastAPI":
                 db.init_db()
             DB_INITED = True
         response = await call_next(request)
-        # 强制不缓存所有页面（避免 Cloudflare/CDN 缓存 stale HTML）
+        # 强制不缓存所有页面(避免 Cloudflare/CDN 缓存 stale HTML)
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, proxy-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
         return response
 
-    # ── 政策页面（用于 Zoom Marketplace 审核） ────────────────────────────────
+    # ── 政策页面(用于 Zoom Marketplace 审核) ────────────────────────────────
     @app.get("/privacy", response_class=HTMLResponse)
     async def privacy_page():
         return HTMLResponse("""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Privacy Policy — Zoom Attendance Monitor</title>
+<title>Privacy Policy - Zoom Attendance Monitor</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#334;background:#fafafa}h1{color:#1a1a2e;border-bottom:2px solid #e2e8f0;padding-bottom:12px}h2{color:#1a1a2e;margin-top:32px}p{color:#475569}footer{margin-top:48px;font-size:14px;color:#94a3b8}</style></head><body>
 <h1>Privacy Policy</h1>
 <p><strong>Last updated:</strong> June 2026</p>
@@ -346,14 +346,14 @@ def build_app() -> "FastAPI":
 <p>We do not share personal data with third parties. Data is accessible only to the account owner who authorized the app and their designated team members.</p>
 <h2>Contact</h2>
 <p>For privacy inquiries or data deletion requests: support@dhbwang.xyz</p>
-<footer>Zoom Attendance Monitor — dhbwang.xyz</footer>
+<footer>Zoom Attendance Monitor - dhbwang.xyz</footer>
 </body></html>""")
 
     @app.get("/terms", response_class=HTMLResponse)
     async def terms_page():
         return HTMLResponse("""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Terms of Service — Zoom Attendance Monitor</title>
+<title>Terms of Service - Zoom Attendance Monitor</title>
 <style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;line-height:1.7;color:#334;background:#fafafa}h1{color:#1a1a2e;border-bottom:2px solid #e2e8f0;padding-bottom:12px}h2{color:#1a1a2e;margin-top:32px}p{color:#475569}footer{margin-top:48px;font-size:14px;color:#94a3b8}</style></head><body>
 <h1>Terms of Service</h1>
 <p><strong>Last updated:</strong> June 2026</p>
@@ -369,16 +369,16 @@ def build_app() -> "FastAPI":
 <p>You may revoke access at any time via Zoom Marketplace. We may terminate service for violation of these terms.</p>
 <h2>Contact</h2>
 <p>support@dhbwang.xyz</p>
-<footer>Zoom Attendance Monitor — dhbwang.xyz</footer>
+<footer>Zoom Attendance Monitor - dhbwang.xyz</footer>
 </body></html>""")
 
     # ── 多租户 ZoomMetrics 辅助函数 ──────────────────────────────────────────
     def _get_tenant_zoom_metrics(request: Request) -> tuple:
         """根据当前会话的 tenant_id 获取对应的 ZoomMetrics 实例。
 
-        规则：严格数据隔离。
-        - 当前租户有活跃 zoom_account → 用它的（自有 S2S 专属视图）
-        - 没有 → 返回 None（不跨租户 fallback）
+        规则:严格数据隔离。
+        - 当前租户有活跃 zoom_account → 用它的(自有 S2S 专属视图)
+        - 没有 → 返回 None(不跨租户 fallback)
         - 无 tenant 上下文 → 用全局 .env
 
         Returns:
@@ -388,7 +388,7 @@ def build_app() -> "FastAPI":
 
         tenant_id = request.app.state.get_effective_tenant_id(request)
 
-        # 1) 当前 tenant 的 zoom_account（如果有，就是专属视图）
+        # 1) 当前 tenant 的 zoom_account(如果有，就是专属视图)
         if tenant_id:
             accounts = db.get_zoom_accounts(tenant_id)
             active = next(
@@ -398,11 +398,11 @@ def build_app() -> "FastAPI":
             if active:
                 return ZoomMetrics(active), tenant_id
 
-        # 2) 没有自己的账号 → 无数据（不跨租户 fallback，严格隔离）
+        # 2) 没有自己的账号 → 无数据(不跨租户 fallback，严格隔离)
         if tenant_id:
             return None, tenant_id
 
-        # 3) 无 tenant 上下文（未登录）→ 用全局 .env
+        # 3) 无 tenant 上下文(未登录)→ 用全局 .env
         return ZoomMetrics(), None
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
@@ -443,11 +443,11 @@ def build_app() -> "FastAPI":
 
     @app.get("/", response_class=RedirectResponse)
     async def landing(request: Request):
-        """Landing Page — 重定向到数据看板"""
+        """Landing Page - 重定向到数据看板"""
         return RedirectResponse(url="/dashboard")
 
     async def _compute_kpi_data(tid: str) -> dict:
-        """Compute KPI data for tenant dashboard — all queries tenant-isolated.
+        """Compute KPI data for tenant dashboard - all queries tenant-isolated.
            Uses Webhook reconstruction as base, Metrics API as Business enhancement."""
         t_kpi = _t_ms()
         t0 = _t_ms()
@@ -455,7 +455,7 @@ def build_app() -> "FastAPI":
         _log_perf("kpi_today_participants", _t_ms() - t0)
         t_db = _t_ms()
         
-        # ── Online — Single Source of Truth ──
+        # ── Online - Single Source of Truth ──
         online_data = db.get_current_online(tid)
         current_online = online_data["online_count"]
         active_meetings = online_data["active_meetings"]
@@ -499,8 +499,8 @@ def build_app() -> "FastAPI":
                                 "total_online": current_online,
                                 "meetings": active_meetings,
                             })
-                            # 补充 today_participants：当 webhook 数据缺失(0)时，
-                            # 用 participants_summary 长度作为下限（当前在线人数即今日参与者）
+                            # 补充 today_participants:当 webhook 数据缺失(0)时，
+                            # 用 participants_summary 长度作为下限(当前在线人数即今日参与者)
                             if today_participants == 0:
                                 ps = live_data.get("participants_summary", [])
                                 if ps:
@@ -508,7 +508,7 @@ def build_app() -> "FastAPI":
                         except (asyncio.TimeoutError, asyncio.CancelledError):
                             _log_perf("zoom_live_timeout", _t_ms() - t0)
             except Exception:
-                pass  # Metrics failed — webhook data remains
+                pass  # Metrics failed - webhook data remains
         conn = db._get_conn()
         today_myt = datetime.now(MYT).strftime("%Y-%m-%d")
         myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -534,7 +534,7 @@ def build_app() -> "FastAPI":
         _log_perf("kpi_push", _t_ms() - t_push)
         t_part = _t_ms()
         participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
-        # ── 按 name 去重，取每个人最新一条（dashboard 最近活跃成员用） ──
+        # ── 按 name 去重，取每个人最新一条(dashboard 最近活跃成员用) ──
         seen = {}
         for p in participants:
             name = p.get("name") or p.get("user_name", "")
@@ -657,11 +657,11 @@ def build_app() -> "FastAPI":
         if not checks["oauth"] and checks["zoom_account"]:
             next_steps.append("完成 OAuth 授权验证")
         if not checks["webhook"]:
-            next_steps.append("配置 Webhook（接收实时事件）")
+            next_steps.append("配置 Webhook(接收实时事件)")
         if not checks["telegram"]:
             next_steps.append("创建推送频道")
         if isinstance(checks["member_mapping"], (int, float)) and checks["member_mapping"] < 0.8:
-            next_steps.append("完成成员映射（当前 {}%）".format(int(checks["member_mapping"] * 100)))
+            next_steps.append("完成成员映射(当前 {}%)".format(int(checks["member_mapping"] * 100)))
         return {
             "score": score,
             "status": status_label,
@@ -671,7 +671,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page(request: Request):
-        # Redirect to admin_router's dashboard — the real handler lives there.
+        # Redirect to admin_router's dashboard - the real handler lives there.
         from starlette.responses import RedirectResponse
         target = request.url_for("dashboard_index")
         return RedirectResponse(url=str(target), status_code=302)
@@ -679,7 +679,7 @@ def build_app() -> "FastAPI":
     # ── Demo ──────────────────────────────────────────────────────────────────
     @app.get("/demo", response_class=HTMLResponse)
     async def demo_page(request: Request, tab: str = "overview"):
-        """Demo 模式 — 免 Zoom 账号完整体验"""
+        """Demo 模式 - 免 Zoom 账号完整体验"""
         demo = _ensure_demo()
         demo.seed_demo_data()
         stats = demo.get_demo_stats()
@@ -716,7 +716,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/dashboard/data")
     async def dashboard_data_api(request: Request):
-        """JSON endpoint for dashboard JS polling — tenant-scoped."""
+        """JSON endpoint for dashboard JS polling - tenant-scoped."""
         t_total = time.monotonic()
 
         if settings.demo_mode:
@@ -782,7 +782,7 @@ def build_app() -> "FastAPI":
         else:
             conn = db._get_conn()
             tenant_id = request.app.state.get_effective_tenant_id(request)
-            # 今日统计（MYT 边界）
+            # 今日统计(MYT 边界)
             rs_utc, re_utc = myt_day_range_to_utc()
             today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             if tenant_id:
@@ -837,7 +837,7 @@ def build_app() -> "FastAPI":
         return tmpl.TemplateResponse(request, "attendance.html", {"brand": BRAND})
 
     # ── 设置 ────────────────────────────────────────────────────────────────
-    # 旧路由重定向（向后兼容）
+    # 旧路由重定向(向后兼容)
     @app.get("/settings/zoom", response_class=HTMLResponse)
     @app.get("/settings/telegram", response_class=HTMLResponse)
     async def settings_old_redirect():
@@ -926,7 +926,7 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/member-groups")
     async def api_v3_create_member_group(request: Request):
-        """创建成员分组——super_admin 可在任意租户创建"""
+        """创建成员分组--super_admin 可在任意租户创建"""
         role = request.session.get("role", "tenant")
         if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
@@ -1021,7 +1021,7 @@ def build_app() -> "FastAPI":
             except:
                 docker_status[name] = "unknown"
 
-        zoom_status = {"webhook_delay_text": "—", "meeting_count": 0, "online_count": 0, "sharing_count": 0}
+        zoom_status = {"webhook_delay_text": "-", "meeting_count": 0, "online_count": 0, "sharing_count": 0}
         try:
             conn = db._get_conn()
             last_wh = conn.execute("SELECT MAX(created_at) FROM zoom_events").fetchone()[0]
@@ -1040,7 +1040,7 @@ def build_app() -> "FastAPI":
         except:
             pass
 
-        # Zoom 凭证数据（原 settings_zoom_page）
+        # Zoom 凭证数据(原 settings_zoom_page)
         conn = db._get_conn()
         tokens = []
         try:
@@ -1054,7 +1054,7 @@ def build_app() -> "FastAPI":
             webhook_status = "运行中" if h.status_code == 200 else "异常"
         except: webhook_status = "未启动"
 
-        # Telegram Bot 数据（原 settings_telegram_page）
+        # Telegram Bot 数据(原 settings_telegram_page)
         bot_ok = False
         bot_username = ""
         try:
@@ -1208,7 +1208,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/report-data")
     async def api_report_data(days: int = 7):
-        """报表数据：趋势 + 排行"""
+        """报表数据:趋势 + 排行"""
         import sqlite3 as _sql
         _conn = _sql.connect("/app/data/tracking.db")
         now = datetime.now(timezone.utc)
@@ -1301,9 +1301,9 @@ def build_app() -> "FastAPI":
         sys.stdout.write(f"[WEBHOOK] Body preview: {body[:300].decode()}\n")
         sys.stdout.flush()
 
-        # ── URL Challenge（验证端点）支持 per-account webhook_secret ──
+        # ── URL Challenge(验证端点)支持 per-account webhook_secret ──
         if event_type == "endpoint.url_validation":
-            # 废弃 tenant（如 wangtest）的 Challenge 必须被明确拒绝
+            # 废弃 tenant(如 wangtest)的 Challenge 必须被明确拒绝
             if tenant_id:
                 _tenant_accts = db.get_zoom_accounts(tenant_id)
                 _tenant_active = next((a for a in _tenant_accts if a.get("is_active")), None)
@@ -1321,7 +1321,7 @@ def build_app() -> "FastAPI":
                     _secret = _active["webhook_secret"]
                     sys.stdout.write(f"[WEBHOOK:{tenant_id}] Using per-account webhook_secret\n")
             else:
-                # 无 tenant_id：从所有活跃账号中取第一个有 webhook_secret 的
+                # 无 tenant_id:从所有活跃账号中取第一个有 webhook_secret 的
                 try:
                     # db.py 中没有 get_all_active_zoom_accounts 的公开导出
                     # 直接从 tenant_users 反查所有活跃租户
@@ -1343,7 +1343,7 @@ def build_app() -> "FastAPI":
         # 放在签名验证之前，因为每个 Zoom App 有自己的 webhook_secret
         _sig_account_id = payload.get("payload", {}).get("account_id", "") or payload.get("account_id", "")
         # 当 tenant_id 路径参数存在时，不允许 fallback 到全局 secret
-        # 废弃 tenant（如 wangtest）的 webhook 请求必须被明确拒绝
+        # 废弃 tenant(如 wangtest)的 webhook 请求必须被明确拒绝
         if tenant_id:
             _tenant_accts = db.get_zoom_accounts(tenant_id)
             _tenant_active = next((a for a in _tenant_accts if a.get("is_active")), None)
@@ -1428,7 +1428,7 @@ def build_app() -> "FastAPI":
             conn = db._get_conn()
             wtid = webhook_tenant_id  # 当前租户
             if "sharing_started" in event_type:
-                # 去重：先关闭同租户、同 meeting、同 user_id 的旧 active 记录
+                # 去重:先关闭同租户、同 meeting、同 user_id 的旧 active 记录
                 if wtid:
                     conn.execute("UPDATE sharing_live SET is_active=0, end_time=?, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?", (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id, wtid))
                 conn.execute(
@@ -1461,7 +1461,7 @@ def build_app() -> "FastAPI":
                 now_utc = _dt.datetime.now(_dt.timezone.utc)
                 now_myt_str = now_utc.astimezone(MYT).strftime("%m-%d %H:%M:%S")
 
-                # 查租户级 bot_token（优先于全局）
+                # 查租户级 bot_token(优先于全局)
                 _bot_token = ""
                 if webhook_tenant_id:
                     _row = p_conn.execute(
@@ -1563,7 +1563,7 @@ def build_app() -> "FastAPI":
                             content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
                             extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
                             text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + standard_name + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                            # 解析 target channel(s) – 从 tenant_channels 读取
+                            # 解析 target channel(s) - 从 tenant_channels 读取
                             _targets = []
                             try:
                                 _wtid = webhook_tenant_id or ""
@@ -1719,7 +1719,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/member-aliases/discover")
     async def api_v3_member_aliases_discover_alias(request: Request):
-        """别名：/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
+        """别名:/api/v3/member-aliases/discover -> 同 /api/v3/aliases/discover"""
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
         from datetime import datetime, timezone, timedelta
@@ -1761,7 +1761,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/member-names")
     async def api_v3_member_names(request: Request):
-        """返回当前租户的历史用户名（去重）"""
+        """返回当前租户的历史用户名(去重)"""
         tenant_id = request.app.state.get_effective_tenant_id(request)
         conn = db._get_conn()
         if tenant_id:
@@ -1809,13 +1809,13 @@ def build_app() -> "FastAPI":
             ORDER BY cnt DESC
         """, (cutoff, now_str)).fetchall()
         
-        # 加载已配置的别名（来自 member_aliases 表）
+        # 加载已配置的别名(来自 member_aliases 表)
         alias_rows = conn.execute("SELECT alias_name FROM member_aliases").fetchall()
         configured_aliases = set()
         for (alias_name,) in alias_rows:
             configured_aliases.add(alias_name.strip().lower().replace(" ", ""))
         
-        # 补充：也排除 member_display 中 aliases JSON 字段里的别名
+        # 补充:也排除 member_display 中 aliases JSON 字段里的别名
         md_rows = conn.execute("SELECT aliases FROM member_display").fetchall()
         for (aliases_json,) in md_rows:
             if not aliases_json:
@@ -1829,11 +1829,11 @@ def build_app() -> "FastAPI":
             except:
                 pass
         
-        # 当前在线（来自 v3）
+        # 当前在线(来自 v3)
         unmapped_set = set()
         zm, _ = _get_tenant_zoom_metrics(request)
         live_data = await zm.get_live() if zm else {"meetings": []}
-        # 补充来源：所有 zoom_participants 中出现过的用户名（按 tenant 隔离）
+        # 补充来源:所有 zoom_participants 中出现过的用户名(按 tenant 隔离)
         if tenant_id:
             _all_names = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE tenant_id=? ORDER BY name", (tenant_id,)).fetchall()
         else:
@@ -1868,7 +1868,7 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/aliases/map")
     async def api_v3_map_alias(request: Request):
-        """一键映射：将 Zoom 用户名映射到标准成员名"""
+        """一键映射:将 Zoom 用户名映射到标准成员名"""
         data = await request.json()
         zoom_name = data.get("zoom_name", "").strip()
         canonical_name = data.get("canonical_name", "").strip()
@@ -1901,7 +1901,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/aliases/duplicates")
     async def api_v3_aliases_duplicates(request: Request):
-        """发现疑似重复的 Zoom 用户名（去空格 / 大小写 / 前4词）"""
+        """发现疑似重复的 Zoom 用户名(去空格 / 大小写 / 前4词)"""
         import re
         from datetime import datetime, timezone, timedelta
         from collections import defaultdict
@@ -1947,7 +1947,7 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/aliases/merge")
     async def api_v3_aliases_merge(request: Request):
-        """批量合并：将一组别名合并到标准名"""
+        """批量合并:将一组别名合并到标准名"""
         data = await request.json()
         canonical = (data.get("canonical", "") or "").strip()
         aliases = data.get("aliases", [])
@@ -1974,7 +1974,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live(request: Request):
-        """共享状态：合并 Metrics API + sharing_live 表 + webhook 事件——按当前租户 Zoom 账号查询"""
+        """共享状态:合并 Metrics API + sharing_live 表 + webhook 事件--按当前租户 Zoom 账号查询"""
         import httpx
         import json as _json
         from datetime import datetime, timezone, timedelta
@@ -2015,7 +2015,7 @@ def build_app() -> "FastAPI":
         sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
         tenant_id = request.app.state.get_effective_tenant_id(request)
         
-        # Source 1: ZoomMetrics API — only for Business tenants with metrics_available
+        # Source 1: ZoomMetrics API - only for Business tenants with metrics_available
         _tenant_for_sharing = db.get_tenant(tenant_id) if tenant_id else None
         _metrics_ok = _tenant_for_sharing and _tenant_for_sharing.get("metrics_available", 0)
         if _metrics_ok:
@@ -2046,7 +2046,7 @@ def build_app() -> "FastAPI":
             except Exception:
                 pass
         
-        # Source 2: sharing_live table — tenant 过滤 (is_active=1, not stale)
+        # Source 2: sharing_live table - tenant 过滤 (is_active=1, not stale)
         live_rows = conn.execute(
             "SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=? ORDER BY start_time DESC",
             (tenant_id,)
@@ -2091,7 +2091,7 @@ def build_app() -> "FastAPI":
                                    "group_id": _g["group_id"], "group_name": _g["group_name"]}
                     sources["sharing_live"] += 1
         
-        # Source 3: webhook events — recovery from last 2 hours (no ended received)
+        # Source 3: webhook events - recovery from last 2 hours (no ended received)
         cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
         events = conn.execute(
             "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC",
@@ -2153,8 +2153,8 @@ def build_app() -> "FastAPI":
                 sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
         
         # ── 从 sharing_live 表统计每个人今日累计共享时长 ──
-        # 查全部记录，duration只计当日（MYT）部分
-        # 跨天会议室：共享从昨天开始到今天结束，只算今天这一段
+        # 查全部记录，duration只计当日(MYT)部分
+        # 跨天会议室:共享从昨天开始到今天结束，只算今天这一段
         all_share = conn.execute(
             "SELECT user_name, start_time, end_time, is_active FROM sharing_live WHERE tenant_id=? ORDER BY user_name, start_time",
             (tenant_id,)
@@ -2216,7 +2216,7 @@ def build_app() -> "FastAPI":
                 "metrics_available": _tenant.get("metrics_available", 0),
             }
         
-        # 构建分组统计：遍历 active + recent 统计每组人数
+        # 构建分组统计:遍历 active + recent 统计每组人数
         groups_stats = {}
         for entry in [*active, *recent]:
             gid = entry.get("group_id", "")
@@ -2226,7 +2226,7 @@ def build_app() -> "FastAPI":
                 if key not in groups_stats:
                     groups_stats[key] = {"group_id": gid, "group_name": gname, "count": 0}
                 groups_stats[key]["count"] += 1
-        # 获取所有启用分组（包括共享人数为0的）
+        # 获取所有启用分组(包括共享人数为0的)
         all_groups = conn.execute(
             "SELECT id, name FROM member_groups WHERE tenant_id=? ORDER BY id",
             (tenant_id,)
@@ -2275,7 +2275,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/sharing-debug")
     async def api_v3_sharing_debug(request: Request):
-        """调试：最近 sharing 事件 + 当前 sharing_live 表（按当前 session 租户过滤）"""
+        """调试:最近 sharing 事件 + 当前 sharing_live 表(按当前 session 租户过滤)"""
         conn = db._get_conn()
         from datetime import datetime, timezone, timedelta
         now_utc = datetime.now(timezone.utc)
@@ -2411,9 +2411,9 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/members")
     async def api_v3_members_alias(request: Request):
-        """别名：/api/v3/members -> 同 /api/v3/member-display（按 tenant 隔离）
+        """别名:/api/v3/members -> 同 /api/v3/member-display(按 tenant 隔离)
 
-        排序：在线优先 → 今日时长高到低 → 最近活跃新到旧
+        排序:在线优先 → 今日时长高到低 → 最近活跃新到旧
         """
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
@@ -2456,93 +2456,18 @@ def build_app() -> "FastAPI":
         is_realtime = data_source == "metrics"
         metrics_online = bool(online_names)
 
-        # 获取每个成员今天最早进入时间（first_join）
+        # 获取每个成员今天最早进入时间(first_join)
         first_join_map = {}
         try:
             for r in conn.execute("""
                 SELECT name, MIN(action_time) as first_time
                 FROM zoom_participants
-                WHERE action_time >= ? AND action = 'enter'
+                WHERE action_time >= ? AND action IN ('enter','joined','breakout_enter')
                 GROUP BY name
             """, (today_start_utc,)).fetchall():
                 first_join_map[r["name"]] = r["first_time"] or ""
         except:
             pass
-
-        # 获取今日累计时长
-        today_secs = {}
-        last_seen = {}
-        today_secs_source = "unknown"
-        try:
-            session_rows = conn.execute("""
-                SELECT user_name, SUM(duration_seconds) as total, MAX(COALESCE(leave_time_utc, join_time_utc)) as recent
-                FROM participant_sessions
-                WHERE created_at >= ?
-                GROUP BY user_name
-            """, (today_start_utc,)).fetchall()
-            for r in session_rows:
-                nm = r["user_name"]
-                today_secs[nm] = r["total"] or 0
-                last_seen[nm] = r["recent"] or ""
-            today_secs_source = "participant_sessions"
-        except:
-            today_secs_source = "participant_sessions_error"
-
-        # fallback: participant_sessions 为空 → 从 zoom_participants enter/leave 流计算
-        now_utc_dt = datetime.now(timezone.utc)
-        if not today_secs:
-            today_secs_source = "zoom_participants_stream"
-            try:
-                now_utc_dt = datetime.now(timezone.utc)
-                ENTER_ACTIONS = ("enter", "joined", "breakout_enter")
-                LEAVE_ACTIONS = ("leave", "left", "breakout_leave")
-                # 获取今天所有 enter/leave 事件，按 name, action_time 排序
-                events = conn.execute("""
-                    SELECT name, action, action_time
-                    FROM zoom_participants
-                    WHERE action_time >= ?
-                      AND action IN ('enter','leave','joined','left','breakout_enter','breakout_leave')
-                    ORDER BY name, action_time
-                """, (today_start_utc,)).fetchall()
-                # 按 name 分组，计算累计时长
-                name_events = {}
-                for e in events:
-                    name_events.setdefault(e["name"], []).append((e["action"], e["action_time"]))
-                for nm, evts in name_events.items():
-                    total_s = 0
-                    enter_time = None
-                    for action, at in evts:
-                        if action in ENTER_ACTIONS:
-                            if enter_time is None:
-                                enter_time = at
-                        elif action in LEAVE_ACTIONS and enter_time is not None:
-                            try:
-                                total_s += (datetime.fromisoformat(at) - datetime.fromisoformat(enter_time)).total_seconds()
-                            except:
-                                pass
-                            enter_time = None
-                    # 如果最后一条是 enter（当前在线），累计到 now
-                    if enter_time is not None:
-                        try:
-                            total_s += (now_utc_dt - datetime.fromisoformat(enter_time)).total_seconds()
-                        except:
-                            pass
-                    today_secs[nm] = int(total_s)
-            except:
-                pass
-
-        # 从 zoom_participants 获取 last_activity（排序用）
-        if not last_seen:
-            try:
-                for r in conn.execute("""
-                    SELECT name, MAX(action_time) as last_time
-                    FROM zoom_participants
-                    WHERE action_time >= ?
-                    GROUP BY name
-                """, (today_start_utc,)).fetchall():
-                    last_seen[r["name"]] = r["last_time"] or ""
-            except:
-                pass
 
         def ts(v):
             if not v:
@@ -2552,6 +2477,65 @@ def build_app() -> "FastAPI":
             except:
                 return 0
 
+        # 统一今日累计计算(不再依赖 participant_sessions)
+        now_utc_dt = datetime.now(timezone.utc)
+        today_secs = {}
+        last_activity_map = {}
+        today_secs_source = "zoom_participants_stream"
+        try:
+            ENTER_ACTIONS = ("enter", "joined", "breakout_enter")
+            LEAVE_ACTIONS = ("leave", "left", "breakout_leave")
+            events = conn.execute("""
+                SELECT name, action, action_time
+                FROM zoom_participants
+                WHERE action_time >= ?
+                  AND action IN ('enter','leave','joined','left','breakout_enter','breakout_leave')
+                ORDER BY name, action_time
+            """, (today_start_utc,)).fetchall()
+            name_events = {}
+            for e in events:
+                name_events.setdefault(e["name"], []).append((e["action"], e["action_time"]))
+            # last_activity 也一并查出
+            last_activity_map = {}
+            try:
+                for r in conn.execute("""
+                    SELECT name, MAX(action_time) as last_time
+                    FROM zoom_participants
+                    WHERE action_time >= ?
+                    GROUP BY name
+                """, (today_start_utc,)).fetchall():
+                    last_activity_map[r["name"]] = r["last_time"] or ""
+            except:
+                pass
+            for nm, evts in name_events.items():
+                total_s = 0
+                enter_time = None
+                for action, at in evts:
+                    if action in ENTER_ACTIONS:
+                        if enter_time is None:
+                            enter_time = at
+                    elif action in LEAVE_ACTIONS and enter_time is not None:
+                        try:
+                            total_s += (datetime.fromisoformat(at) - datetime.fromisoformat(enter_time)).total_seconds()
+                        except:
+                            pass
+                        enter_time = None
+                # 最后一条是 enter(当前在线)，累计到 now
+                if enter_time is not None:
+                    try:
+                        total_s += (now_utc_dt - datetime.fromisoformat(enter_time)).total_seconds()
+                    except:
+                        pass
+                today_secs[nm] = int(total_s)
+        except:
+            pass
+
+        def fmt_seconds(s):
+            s = int(s or 0)
+            h = s // 3600
+            m = (s % 3600) // 60
+            return f"{h}h{m}m" if h else f"{m}m"
+
         # 为每个成员计算排序字段
         for m in items:
             nm = m["display_name"]
@@ -2560,32 +2544,24 @@ def build_app() -> "FastAPI":
             )
             total_sec = 0
             latest = ""
-            for alias in [m["raw_name"]] + (m.get("aliases") or []):
+            aliases_list = [m["raw_name"]] + (m.get("aliases") or [])
+            for alias in aliases_list:
                 total_sec += today_secs.get(alias, 0)
-                als = last_seen.get(alias, "")
+                als = last_activity_map.get(alias, "")
                 if als and als > latest:
                     latest = als
-            m["today_seconds"] = total_sec
-            def fmt_seconds(s):
-                s = int(s or 0)
-                h = s // 3600
-                m = (s % 3600) // 60
-                return f"{h}h{m}m" if h else f"{m}m"
-            m["today_total_duration"] = fmt_seconds(m["today_seconds"])
-            m["last_activity"] = latest
-            # 补充 first_join（取所有别名中最小的 enter 时间）
+            # 在线兜底:如果 first_join 早于事件流累计，用 now - first_join
             fj = ""
-            for alias in [m["raw_name"]] + (m.get("aliases") or []):
+            for alias in aliases_list:
                 afj = first_join_map.get(alias, "")
                 if not afj:
-                    # 反向查 member_aliases：别名 → canonical → 所有其他别名
                     try:
                         cn = conn.execute("SELECT canonical_name FROM member_aliases WHERE alias_name=?", (alias,)).fetchone()
                         if cn:
                             search_names = [cn[0]]
                             search_names += [r[0] for r in conn.execute("SELECT alias_name FROM member_aliases WHERE canonical_name=?", (cn[0],)).fetchall()]
                             for sn in search_names:
-                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action='enter'", (today_start_utc, sn)).fetchone()
+                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action IN ('enter','joined','breakout_enter')", (today_start_utc, sn)).fetchone()
                                 if sub_fj and sub_fj[0]:
                                     afj = sub_fj[0]
                                     break
@@ -2594,19 +2570,20 @@ def build_app() -> "FastAPI":
                 if afj and (not fj or afj < fj):
                     fj = afj
             m["first_join"] = fj
-            # 在线成员：如果 first_join 早于事件流累计，用 now - first_join 兜底
-            try:
-                if m.get("is_online") and m.get("first_join"):
-                    first_dt = datetime.fromisoformat(str(m["first_join"]).replace("Z", "+00:00"))
+            if m.get("is_online") and fj:
+                try:
+                    first_dt = datetime.fromisoformat(str(fj).replace("Z", "+00:00"))
                     if first_dt.tzinfo is None:
                         first_dt = first_dt.replace(tzinfo=timezone.utc)
                     online_sec = int((now_utc_dt - first_dt).total_seconds())
-                    if online_sec > m.get("today_seconds", 0):
-                        m["today_seconds"] = online_sec
-                        m["today_total_duration"] = fmt_seconds(online_sec)
+                    if online_sec > total_sec:
+                        total_sec = online_sec
                         today_secs_source = "zoom_participants_stream_plus_online_first_join"
-            except Exception:
-                pass
+                except:
+                    pass
+            m["today_seconds"] = total_sec
+            m["today_total_duration"] = fmt_seconds(total_sec)
+            m["last_activity"] = latest
             # 保证 last_activity >= first_join
             if fj and (not latest or fj > latest):
                 m["last_activity"] = fj
@@ -2629,7 +2606,7 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/members")
     async def api_v3_members_add(request: Request):
-        """POST /api/v3/members — 创建/更新成员（前端JS调用）"""
+        """POST /api/v3/members - 创建/更新成员(前端JS调用)"""
         data = await request.json()
         raw_name = data.get("raw_name", "").strip()
         display_name = data.get("display_name", "").strip()
@@ -2675,7 +2652,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/member-display")
     async def api_v3_member_display_list(request: Request):
-        """所有显示名映射（按 tenant 隔离）"""
+        """所有显示名映射(按 tenant 隔离)"""
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
@@ -2761,7 +2738,7 @@ def build_app() -> "FastAPI":
 
     @app.delete("/api/v3/members/{display_name}")
     async def api_v3_members_del_by_name(display_name: str, request: Request):
-        """按 display_name 删除成员映射（JS 前端调用）"""
+        """按 display_name 删除成员映射(JS 前端调用)"""
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
@@ -2784,9 +2761,9 @@ def build_app() -> "FastAPI":
         from telegram_push import send_message
         result = send_message(
             "⚠️ *共享超时告警测试*\n\n"
-            "成员：Dino Jun\n"
-            "会议：tuijin's Zoom Meeting\n"
-            "共享时长：32 分钟\n\n"
+            "成员:Dino Jun\n"
+            "会议:tuijin's Zoom Meeting\n"
+            "共享时长:32 分钟\n\n"
         )
         return result
 
@@ -2821,7 +2798,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/auth/login")
     async def auth_login(request: Request):
-        """生成 Zoom OAuth 授权链接，支持 Web 和 Mobile（Zoom App）两种方式"""
+        """生成 Zoom OAuth 授权链接，支持 Web 和 Mobile(Zoom App)两种方式"""
         state = secrets.token_urlsafe(16)
         conn = db._get_conn()
         conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("oauth_state", state))
@@ -2848,7 +2825,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/auth/callback")
     async def auth_callback(code: str = "", state: str = "", error: str = ""):
-        """Zoom OAuth 回调 — 用户授权后跳回这里"""
+        """Zoom OAuth 回调 - 用户授权后跳回这里"""
         if error:
             return {"ok": False, "error": f"用户拒绝了授权: {error}"}
         if not code:
@@ -2880,7 +2857,7 @@ def build_app() -> "FastAPI":
         conn.execute("INSERT OR REPLACE INTO zoom_oauth_tokens (account_id, email, access_token, refresh_token, scope, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (account_id, email, d["access_token"], d.get("refresh_token", ""), d.get("scope", ""), expires_at, datetime.now(timezone.utc).isoformat()))
         conn.commit()
-        # 返回成功提示（用一个简单的页面）
+        # 返回成功提示(用一个简单的页面)
         return HTMLResponse("<html><body style='font-family:sans-serif;background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh'><div style='text-align:center'><h1>✅ Zoom 授权成功</h1><p>你可以关闭此页面了</p></div></body></html>")
 
     @app.get("/api/v2/auth/status")
@@ -2918,10 +2895,10 @@ def build_app() -> "FastAPI":
     # ── 汇总分析 ────────────────────────────────────────────────────────────
     @app.get("/api/v2/summary")
     async def api_summary():
-        """参会汇总统计：在线时长、迟到早退、会议室维度
+        """参会汇总统计:在线时长、迟到早退、会议室维度
 
-        分层设计：
-          - 配对窗口: 最近 7 天（确保跨 UTC 日 enter/leave 能被配对）
+        分层设计:
+          - 配对窗口: 最近 7 天(确保跨 UTC 日 enter/leave 能被配对)
           - 统计窗口: MYT 今日 00:00~24:00
           - 输出: 只在统计窗口内有活动的人
         """
@@ -2951,7 +2928,7 @@ def build_app() -> "FastAPI":
         for r in rows:
             record = dict(zip(cols, r))
             name = record.get("name", "?")
-            # 统一显示名（alias 归并）
+            # 统一显示名(alias 归并)
             _rm = resolve_member(name)
             name = _rm["standard_name"]
             mid = record.get("meeting_id", "?")
@@ -2991,7 +2968,7 @@ def build_app() -> "FastAPI":
                 except:
                     pass
 
-            # 未配对的 enter（仍在线），只算今日窗口内时长
+            # 未配对的 enter(仍在线)，只算今日窗口内时长
             if len(enters) > len(leaves):
                 try:
                     et_raw = datetime.fromisoformat(enters[-1])
@@ -3060,7 +3037,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/live")
     async def api_v3_live(request: Request):
-        """Business Metrics API 实时在线数据（去重）—— 按当前租户 Zoom 账号查询"""
+        """Business Metrics API 实时在线数据(去重)-- 按当前租户 Zoom 账号查询"""
         zm, _ = _get_tenant_zoom_metrics(request)
         if zm is None:
             return {"ok": True, "data": {"meetings": [], "online_list": [], "total_online": 0}}
@@ -3069,10 +3046,10 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/dashboard")
     async def api_v3_dashboard(request: Request):
-        """Dashboard 概览（兼容前端 /api/v3/dashboard 请求）
+        """Dashboard 概览(兼容前端 /api/v3/dashboard 请求)
         
-        主数据源：Zoom Metrics API（与 /api/v3/live 一致）
-        备选回退：sharing_live / zoom_participants（当 API 不可用时）
+        主数据源:Zoom Metrics API(与 /api/v3/live 一致)
+        备选回退:sharing_live / zoom_participants(当 API 不可用时)
         
         按当前租户的 Zoom 账号查询。
         """
@@ -3087,7 +3064,7 @@ def build_app() -> "FastAPI":
         join_count = 0
         leave_count = 0
 
-        # ── 主源：Zoom Metrics API ──
+        # ── 主源:Zoom Metrics API ──
         try:
             zm, _ = _get_tenant_zoom_metrics(request)
             live_data = await zm.get_live() if zm else {"meetings": [], "online_list": [], "total_online": 0}
@@ -3139,7 +3116,7 @@ def build_app() -> "FastAPI":
             participant_count = len(participants)
 
             # Sharing count from Metrics API (is_sharing flag on each participant)
-            # Dedup by name — same person across multiple meetings counted once
+            # Dedup by name - same person across multiple meetings counted once
             # NOT using sharing_live table as override: stale active entries inflate count
             unique_sharing = {p.get("name", "") for p in live_data.get("online_list", []) if p.get("is_sharing")}
             sharing_count = len(unique_sharing)
@@ -3210,11 +3187,11 @@ def build_app() -> "FastAPI":
             "meetings": meetings,
         }
 
-    # ── 多租户总览（super_admin 专用） ────────────────────────────────────
+    # ── 多租户总览(super_admin 专用) ────────────────────────────────────
 
     @app.get("/api/v3/overview")
     async def api_v3_overview(request: Request):
-        """跨租户总览：每个租户的在线人数、成员数、账号状态"""
+        """跨租户总览:每个租户的在线人数、成员数、账号状态"""
         role = request.session.get("role", "")
         if role != "super_admin":
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
@@ -3369,7 +3346,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/live")
     async def api_live():
-        """当前在线列表：谁在会议室、在线时长、会议进行状态"""
+        """当前在线列表:谁在会议室、在线时长、会议进行状态"""
         # Business Metrics API 优先
         import httpx
         try:
@@ -3391,7 +3368,7 @@ def build_app() -> "FastAPI":
         now_utc = datetime.now(timezone.utc)
         rs_utc, re_utc = myt_day_range_to_utc()
 
-        # 找所有今天有 enter 但没有对应 leave 的记录（即还在线上）
+        # 找所有今天有 enter 但没有对应 leave 的记录(即还在线上)
         rows = conn.execute("""
             SELECT p1.* FROM zoom_participants p1
             WHERE p1.action_time >= ? AND p1.action = 'enter'
@@ -3421,7 +3398,7 @@ def build_app() -> "FastAPI":
                 "online_minutes": duration, "online_display": f"{duration//60}h{duration%60:02d}" if duration >= 60 else f"{duration}分钟",
             })
 
-        # 会议维度：当前有多少会开着
+        # 会议维度:当前有多少会开着
         meetings_online = {}
         for o in online:
             mid = o["meeting_id"]
@@ -3459,7 +3436,7 @@ def build_app() -> "FastAPI":
         # 最活跃成员
         top_active = conn.execute("SELECT name, COUNT(*) as c FROM zoom_participants WHERE action_time >= ? AND action_time < ? GROUP BY name ORDER BY c DESC LIMIT 3", (rs_utc, re_utc)).fetchall()
 
-        # 参与者汇总（去重后每人统计，含异常检测）
+        # 参与者汇总(去重后每人统计，含异常检测)
         participants_summary = []
         anomalies = []  # 异常成员列表
         unique_names_rows = conn.execute("SELECT DISTINCT name FROM zoom_participants WHERE action_time >= ? AND action_time < ?", (rs_utc, re_utc)).fetchall()
@@ -3482,7 +3459,7 @@ def build_app() -> "FastAPI":
                 except:
                     pass
 
-            # 在线时长（前30对进出配对）
+            # 在线时长(前30对进出配对)
             pairs = conn.execute("""
                 SELECT e.action_time, l.action_time FROM zoom_participants e
                 LEFT JOIN zoom_participants l ON e.rowid < l.rowid AND e.name = l.name AND e.meeting_id = l.meeting_id
@@ -3524,7 +3501,7 @@ def build_app() -> "FastAPI":
             if flags:
                 anomalies.append({"name": name, "flags": flags, "actions": total_actions})
 
-        # 排序：异常优先，再按时长
+        # 排序:异常优先，再按时长
         participants_summary.sort(key=lambda x: (-len(x["flags"]), -x["total_duration_min"]))
 
         # 健康度
@@ -3544,7 +3521,7 @@ def build_app() -> "FastAPI":
                 ai_summary_parts.append(f"{top_anomaly['name']} 出现 {top_anomaly['actions']} 次进出，疑似网络不稳定。")
             for a in anomalies[1:2]:
                 ai_summary_parts.append(f"{a['name']} {'、'.join(a['flags'])}。")
-            ai_summary_parts.append("建议关注：" + "、".join(a["name"] for a in anomalies[:3]))
+            ai_summary_parts.append("建议关注:" + "、".join(a["name"] for a in anomalies[:3]))
         else:
             ai_summary_parts.append("整体情况正常。")
         ai_summary = "".join(ai_summary_parts)
@@ -3560,7 +3537,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/attendance")
     async def api_attendance(period: str = "week"):
-        """签到统计：周/月维度出勤报表"""
+        """签到统计:周/月维度出勤报表"""
         conn = db._get_conn()
         now = datetime.now(timezone.utc)
 
@@ -3640,7 +3617,7 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/leave-analysis")
     async def api_leave_analysis():
-        """离开时长分析：中途离场统计"""
+        """离开时长分析:中途离场统计"""
         conn = db._get_conn()
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
@@ -3696,8 +3673,8 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v2/meetings-auto")
     async def api_meetings_auto():
-        """多会议室自动发现：查已安排的会议（非 PMI）"""
-        # 先从 zoom_oauth_tokens 找可用的 token（你自己的 Server-to-Server 也行）
+        """多会议室自动发现:查已安排的会议(非 PMI)"""
+        # 先从 zoom_oauth_tokens 找可用的 token(你自己的 Server-to-Server 也行)
         conn = db._get_conn()
         tokens = conn.execute("SELECT access_token FROM zoom_oauth_tokens ORDER BY id DESC LIMIT 1").fetchone()
 
@@ -3731,8 +3708,8 @@ def build_app() -> "FastAPI":
 
     def _effective_tenant_id(request):
         """统一获取当前请求的有效租户 ID
-        super_admin: 走 selected_tenant（可切换）→ 默认 default
-        tenant/viewer: 走 tenant_id（绑定固定）
+        super_admin: 走 selected_tenant(可切换)→ 默认 default
+        tenant/viewer: 走 tenant_id(绑定固定)
         """
         if request.session.get("role") == "super_admin":
             return request.session.get("selected_tenant", "default")
@@ -3835,10 +3812,10 @@ def build_app() -> "FastAPI":
                     _ua_short = ua[:60] + "…" if len(ua) > 60 else ua
                     msg = (
                         f"🔐 新 IP 登录通知\n\n"
-                        f"账号：{user['username']}\n"
-                        f"IP：{client_ip}\n"
-                        f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                        f"设备：{_ua_short}"
+                        f"账号:{user['username']}\n"
+                        f"IP:{client_ip}\n"
+                        f"时间:{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"设备:{_ua_short}"
                     )
                     telegram_push.send_message(msg, chat_id)
                     db.log_security_event("new_ip_login_notice", user_id=user["id"],
@@ -3904,7 +3881,7 @@ def build_app() -> "FastAPI":
                                    tenant_id: str = Form(...),
                                    next: str = Form("")):
         """super_admin 切换当前管理的租户
-        校验：仅 super_admin 可调用，tenant_id 必须存在于 tenants 表
+        校验:仅 super_admin 可调用，tenant_id 必须存在于 tenants 表
         """
         role = request.session.get("role", "tenant")
         if role != "super_admin":
@@ -3956,7 +3933,7 @@ def build_app() -> "FastAPI":
                 })
 
             # ── 验证成功 → 删除 TG 消息 → 建立 session ──
-            # 先删消息（防止 verify_2fa_code pop 后丢失 entry），再 verify
+            # 先删消息(防止 verify_2fa_code pop 后丢失 entry)，再 verify
             _chat_id = pending.get("chat_id", "")
             _msg_id = pending.get("message_id")
             if _chat_id and _msg_id is not None:
@@ -3974,10 +3951,10 @@ def build_app() -> "FastAPI":
                     if _chat:
                         _msg = (
                             f"🔐 新 IP 登录通知\n\n"
-                            f"账号：{pending['username']}\n"
-                            f"IP：{client_ip}\n"
-                            f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"设备：{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
+                            f"账号:{pending['username']}\n"
+                            f"IP:{client_ip}\n"
+                            f"时间:{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"设备:{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
                         )
                         telegram_push.send_message(_msg, _chat)
                         db.log_security_event("new_ip_login_notice", user_id=pending["user_id"],
@@ -4013,7 +3990,7 @@ def build_app() -> "FastAPI":
         uid_int = int(uid) if uid and uid.isdigit() else 0
         if uid_int and db.verify_backup_code(uid_int, backup_code):
             user = db.get_user_by_id(uid_int)
-            # 删除之前发送的验证码消息（如果有）
+            # 删除之前发送的验证码消息(如果有)
             telegram_push.delete_2fa_message(uid_int)
             if not user:
                 return RedirectResponse(url="/login?error=用户不存在", status_code=303)
@@ -4029,10 +4006,10 @@ def build_app() -> "FastAPI":
                     if _chat:
                         _msg = (
                             f"🔐 新 IP 登录通知\n\n"
-                            f"账号：{user['username']}\n"
-                            f"IP：{client_ip}\n"
-                            f"时间：{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                            f"设备：{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
+                            f"账号:{user['username']}\n"
+                            f"IP:{client_ip}\n"
+                            f"时间:{__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                            f"设备:{user_agent[:60] + '…' if len(user_agent) > 60 else user_agent}"
                         )
                         telegram_push.send_message(_msg, _chat)
                         db.log_security_event("new_ip_login_notice", user_id=user["id"],
@@ -4095,14 +4072,14 @@ def start_api():
     settings.validate_required()
     app = build_app()
     if settings.demo_mode:
-        print("[API] DEMO MODE — 无 Zoom/Telegram 凭据要求")
+        print("[API] DEMO MODE - 无 Zoom/Telegram 凭据要求")
     uvicorn.run(app, host=settings.api_host, port=settings.api_port, log_level="info")
 
 
 def start_webhook():
     import uvicorn
     if settings.demo_mode:
-        print("[WEBHOOK] DEMO MODE — Webhook 不处理真实事件，返回 OK")
+        print("[WEBHOOK] DEMO MODE - Webhook 不处理真实事件，返回 OK")
         settings.validate_required()
         app = build_app()
         uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
@@ -4114,7 +4091,7 @@ def start_webhook():
 
 def start_monitor():
     if settings.demo_mode:
-        print("[MONITOR] DEMO MODE — 跳过 Monitor（无真实 Zoom API 可轮询）")
+        print("[MONITOR] DEMO MODE - 跳过 Monitor(无真实 Zoom API 可轮询)")
         import time
         while True:
             time.sleep(60)
@@ -4129,7 +4106,7 @@ def start_monitor():
 
 def start_command():
     if settings.demo_mode:
-        print("[COMMAND] DEMO MODE — 跳过 Telegram CommandBot（无真实 Bot Token）")
+        print("[COMMAND] DEMO MODE - 跳过 Telegram CommandBot(无真实 Bot Token)")
         import time
         while True:
             time.sleep(60)
@@ -4155,7 +4132,7 @@ if __name__ == "__main__":
     elif mode == "command":
         start_command()
     elif mode == "demo":
-        # Demo 模式：启动 api（dashboard） + webhook（mock），不启动 monitor/command
+        # Demo 模式:启动 api(dashboard) + webhook(mock)，不启动 monitor/command
         import os
         os.environ["DEMO_MODE"] = "true"
         settings.demo_mode = True
