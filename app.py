@@ -2494,12 +2494,14 @@ def build_app() -> "FastAPI":
             today_secs_source = "zoom_participants_stream"
             try:
                 now_utc_dt = datetime.now(timezone.utc)
+                ENTER_ACTIONS = ("enter", "joined", "breakout_enter")
+                LEAVE_ACTIONS = ("leave", "left", "breakout_leave")
                 # 获取今天所有 enter/leave 事件，按 name, action_time 排序
                 events = conn.execute("""
                     SELECT name, action, action_time
                     FROM zoom_participants
                     WHERE action_time >= ?
-                      AND action IN ('enter','leave')
+                      AND action IN ('enter','leave','joined','left','breakout_enter','breakout_leave')
                     ORDER BY name, action_time
                 """, (today_start_utc,)).fetchall()
                 # 按 name 分组，计算累计时长
@@ -2510,9 +2512,10 @@ def build_app() -> "FastAPI":
                     total_s = 0
                     enter_time = None
                     for action, at in evts:
-                        if action == "enter":
-                            enter_time = at
-                        elif action == "leave" and enter_time is not None:
+                        if action in ENTER_ACTIONS:
+                            if enter_time is None:
+                                enter_time = at
+                        elif action in LEAVE_ACTIONS and enter_time is not None:
                             try:
                                 total_s += (datetime.fromisoformat(at) - datetime.fromisoformat(enter_time)).total_seconds()
                             except:
