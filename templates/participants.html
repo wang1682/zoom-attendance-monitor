@@ -6,6 +6,11 @@
 
 <div class="main-container" style="max-width:1400px;margin:0 auto">
 
+<style>
+.group-select{font-size:12px;padding:3px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer;max-width:140px}
+.group-select:focus{outline:none;border-color:var(--pr)}
+</style>
+
   {# ── 标题 ── #}
   <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0 0 16px 0">成员中心</h2>
 
@@ -23,6 +28,7 @@
       <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
       <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
     </select>
+    <button class="bt bt-s" onclick="switchTab('groups')" style="font-size:12px;padding:5px 10px;margin-left:8px">📂 分组管理</button>
     <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
       <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
       <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
@@ -80,7 +86,15 @@
       <span class="status-dot offline" title="离线"></span>
       {% endif %}
     </td>
-    <td class="td-mono">{{ grp }}</td>
+    <td class="td-group">
+      <select class="group-select" data-display="{{ m.get('standard_name','') }}"
+              onchange="changeMemberGroup(this)">
+        <option value="">无分组</option>
+        {% for g in groups %}
+        <option value="{{ g.id }}" {{ 'selected' if m.get('group_id') == g.id }}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+    </td>
     <td class="td-mono">{{ join_c }} / {{ leave_c }}</td>
     <td class="td-mono">{{ dur if dur else '—' }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
@@ -95,6 +109,42 @@
 </div>
 
 <script>
+var groupsData = {{ groups|tojson }};
+var groupMap = {};
+if (groupsData) groupsData.forEach(function(g){ groupMap[g.id] = g.name; });
+
+function changeMemberGroup(sel) {
+  var displayName = sel.getAttribute('data-display');
+  var groupId = sel.value ? parseInt(sel.value) : null;
+  var prevOpt = sel.querySelector('[selected]');
+  var prevVal = prevOpt ? prevOpt.value : '';
+
+  fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({group_id: groupId})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) {
+      // 更新 data-group 属性（供筛选器用）
+      var row = sel.closest('.member-row');
+      if (row) {
+        var gname = groupId ? (groupMap[groupId] || '') : '';
+        row.setAttribute('data-group', gname);
+      }
+    } else {
+      sel.value = prevVal;
+    }
+  }).catch(function(){
+    sel.value = prevVal;
+  });
+}
+
+function switchTab(tab) {
+  // 跳转到 settings_members 页面（分组管理全功能在 settings_members.html 的 groups tab）
+  window.location.href = '/dashboard/settings#groups';
+}
+
+// ── 原有的筛选逻辑 ──
 (function() {
   var searchInput = document.getElementById('searchInput');
   var groupFilter = document.getElementById('groupFilter');
@@ -144,7 +194,7 @@
       if (!api) return;
       var sec = api.today_seconds || 0;
       var dur = api.today_total_duration || fmtDuration(sec);
-      var td = row.querySelector('td:nth-child(5)');
+      var td = row.querySelector('td:nth-child(6)');
       if (td) td.textContent = dur;
     });
   }).catch(function(){});
