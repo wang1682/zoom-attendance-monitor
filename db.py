@@ -418,6 +418,13 @@ def init_db(readonly: bool = False):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_action ON security_audit_logs(action)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_security_audit_created ON security_audit_logs(created_at)")
 
+    # ip_cache table for geo-location
+    conn.execute("CREATE TABLE IF NOT EXISTS ip_cache ("
+        "  ip TEXT PRIMARY KEY,"
+        "  location TEXT NOT NULL DEFAULT '',"
+        "  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+        ")")
+
 
 # ── zoom_events ──────────────────────────────────────────────────────────────
 
@@ -1605,6 +1612,61 @@ def audit_log_action(tenant_id: str = "default", action: str = "",
     conn.commit()
 
 
+def resolve_ip_location(ip: str) -> str:
+    """查 IP 地区（中文），走 ip_cache，未命中则查 ipapi.co"""
+    if not ip:
+        return ""
+    # 内网/本地
+    if ip in ("127.0.0.1", "::1", "localhost") or ip.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.",
+        "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
+        "172.27.", "172.28.", "172.29.", "172.30.", "172.31.", "192.168.")):
+        return "内网"
+    conn = _get_conn()
+    row = conn.execute("SELECT location FROM ip_cache WHERE ip=?", (ip,)).fetchone()
+    if row and row[0]:
+        return row[0]
+    try:
+        import urllib.request, json
+        # ipapi.co — 返回中文国家/地区字段
+        req = urllib.request.urlopen(f"https://ipapi.co/{ip}/json/", timeout=5)
+        data = json.loads(req.read().decode())
+        if data.get("error"):
+            conn.execute("INSERT OR REPLACE INTO ip_cache (ip, location, updated_at) VALUES (?, '未知', datetime('now'))", (ip,))
+            conn.commit()
+            return "未知"
+        parts = [data.get("country_name", "")]
+        region = data.get("region", "")
+        city = data.get("city", "")
+        if region and region != data.get("country_name", ""):
+            parts.append(region)
+        if city and city != region:
+            parts.append(city)
+        location = " ".join(p for p in parts if p)
+        conn.execute(
+            "INSERT OR REPLACE INTO ip_cache (ip, location, updated_at) VALUES (?, ?, datetime('now'))",
+            (ip, location))
+        conn.commit()
+        return location
+    except Exception as e:
+        # fallback to ipinfo.io
+        try:
+            import urllib.request, json
+            req = urllib.request.urlopen(f"https://ipinfo.io/{ip}/json", timeout=5)
+            data = json.loads(req.read().decode())
+            loc = data.get("country", "")
+            region = data.get("region", "")
+            city = data.get("city", "")
+            parts = [p for p in [loc, region, city] if p]
+            location = " ".join(parts)
+            conn.execute(
+                "INSERT OR REPLACE INTO ip_cache (ip, location, updated_at) VALUES (?, ?, datetime('now'))",
+                (ip, location))
+            conn.commit()
+            return location
+        except Exception:
+            return ""
+
+
 def get_security_audit_logs(limit: int = 50) -> list[dict]:
     """获取最近的登录审计记录"""
     conn = _get_conn()
@@ -1616,6 +1678,7 @@ def get_security_audit_logs(limit: int = 50) -> list[dict]:
     for r in rows:
         d = dict(r)
         d["created_at_display"] = to_myt_str(d.get("created_at", ""))
+        d["ip_location"] = resolve_ip_location(d.get("ip", ""))
         result.append(d)
     return result
 

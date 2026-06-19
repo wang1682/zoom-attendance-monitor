@@ -25,6 +25,7 @@
               <th>时间</th>
               <th>用户名</th>
               <th>IP</th>
+              <th>地区</th>
               <th>User-Agent</th>
               <th>结果</th>
               <th>详情</th>
@@ -36,6 +37,7 @@
             <td class="td-mono">{{ log.created_at_display }}</td>
             <td>{{ log.username }}</td>
             <td class="td-mono">{{ log.ip }}</td>
+            <td>{{ log.ip_location }}</td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ log.user_agent }}">{{ log.user_agent[:40] }}{% if log.user_agent|length > 40 %}…{% endif %}</td>
             <td>
               {% if log.result == 'success' %}
