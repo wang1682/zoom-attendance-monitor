@@ -1303,6 +1303,15 @@ def build_app() -> "FastAPI":
 
         # ── URL Challenge（验证端点）支持 per-account webhook_secret ──
         if event_type == "endpoint.url_validation":
+            # 废弃 tenant（如 wangtest）的 Challenge 必须被明确拒绝
+            if tenant_id:
+                _tenant_accts = db.get_zoom_accounts(tenant_id)
+                _tenant_active = next((a for a in _tenant_accts if a.get("is_active")), None)
+                if not _tenant_active or not _tenant_active.get("webhook_secret"):
+                    sys.stderr.write(f"[WEBHOOK] unknown tenant webhook path: {tenant_id} "
+                                     f"(rejected at url_validation)\n")
+                    sys.stderr.flush()
+                    raise HTTPException(403, "unknown tenant")
             plain_token = payload.get("payload", {}).get("plainToken", "")
             _secret = settings.zoom_webhook_secret
             if tenant_id:
