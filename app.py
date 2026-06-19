@@ -1643,7 +1643,12 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/members", response_class=HTMLResponse)
     async def settings_members_page(request: Request):
-        return tmpl.TemplateResponse(request, "settings_members.html", {"brand": BRAND})
+        user_id = request.session.get("user_id")
+        user = db.get_user_by_id(user_id) if user_id else None
+        return tmpl.TemplateResponse(request, "settings_members.html", {
+            "brand": BRAND,
+            "current_user": user,
+        })
 
     @app.get("/api/v3/telegram-channels")
     async def api_v3_get_telegram_channels():
