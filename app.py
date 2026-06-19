@@ -2552,7 +2552,9 @@ def build_app() -> "FastAPI":
         # 为每个成员计算排序字段
         for m in items:
             nm = m["display_name"]
-            m["is_online"] = nm in online_names
+            m["is_online"] = nm in online_names or any(
+                a in online_names for a in (m.get("aliases") or [])
+            )
             total_sec = 0
             latest = ""
             for alias in [m["raw_name"]] + (m.get("aliases") or []):
