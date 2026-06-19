@@ -122,5 +122,32 @@
   groupFilter.addEventListener('change', filterTable);
   statusFilter.addEventListener('change', filterTable);
 })();
+
+// ── API 增强渲染：从 /api/v3/members 覆盖今日累计等字段 ──
+(function(){
+  function fmtDuration(sec) {
+    sec = parseInt(sec) || 0;
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    return h ? h + 'h' + m + 'm' : m + 'm';
+  }
+  fetch('/api/v3/members').then(function(r){ return r.json(); }).then(function(data){
+    if (!data || !data.items) return;
+    var map = {};
+    data.items.forEach(function(m){
+      var key = (m.display_name || m.standard_name || '').toLowerCase();
+      if (key) map[key] = m;
+    });
+    document.querySelectorAll('.member-row').forEach(function(row){
+      var name = (row.getAttribute('data-name') || '').toLowerCase();
+      var api = map[name];
+      if (!api) return;
+      var sec = api.today_seconds || 0;
+      var dur = api.today_total_duration || fmtDuration(sec);
+      var td = row.querySelector('td:nth-child(5)');
+      if (td) td.textContent = dur;
+    });
+  }).catch(function(){});
+})();
 </script>
 {% endblock %}
