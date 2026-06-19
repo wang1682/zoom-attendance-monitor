@@ -2462,9 +2462,9 @@ def build_app() -> "FastAPI":
             for r in conn.execute("""
                 SELECT name, MIN(action_time) as first_time
                 FROM zoom_participants
-                WHERE action_time >= ? AND action IN ('enter','joined','breakout_enter')
+                WHERE action_time >= ? AND action IN ('enter','joined','breakout_enter') AND tenant_id=?
                 GROUP BY name
-            """, (today_start_utc,)).fetchall():
+            """, (today_start_utc, tenant_id)).fetchall():
                 first_join_map[r["name"]] = r["first_time"] or ""
         except:
             pass
@@ -2490,8 +2490,9 @@ def build_app() -> "FastAPI":
                 FROM zoom_participants
                 WHERE action_time >= ?
                   AND action IN ('enter','leave','joined','left','breakout_enter','breakout_leave')
+                  AND tenant_id=?
                 ORDER BY name, action_time
-            """, (today_start_utc,)).fetchall()
+            """, (today_start_utc, tenant_id)).fetchall()
             name_events = {}
             for e in events:
                 name_events.setdefault(e["name"], []).append((e["action"], e["action_time"]))
@@ -2501,9 +2502,9 @@ def build_app() -> "FastAPI":
                 for r in conn.execute("""
                     SELECT name, MAX(action_time) as last_time
                     FROM zoom_participants
-                    WHERE action_time >= ?
+                    WHERE action_time >= ? AND tenant_id=?
                     GROUP BY name
-                """, (today_start_utc,)).fetchall():
+                """, (today_start_utc, tenant_id)).fetchall():
                     last_activity_map[r["name"]] = r["last_time"] or ""
             except:
                 pass
@@ -2561,7 +2562,7 @@ def build_app() -> "FastAPI":
                             search_names = [cn[0]]
                             search_names += [r[0] for r in conn.execute("SELECT alias_name FROM member_aliases WHERE canonical_name=?", (cn[0],)).fetchall()]
                             for sn in search_names:
-                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action IN ('enter','joined','breakout_enter')", (today_start_utc, sn)).fetchone()
+                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action IN ('enter','joined','breakout_enter') AND tenant_id=?", (today_start_utc, sn, tenant_id)).fetchone()
                                 if sub_fj and sub_fj[0]:
                                     afj = sub_fj[0]
                                     break
