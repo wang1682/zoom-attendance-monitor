@@ -25,369 +25,359 @@
 .cred-fields.open { display: block; }
 .cred-toggle { cursor: pointer; color: #818cf8; font-size: 0.75rem; user-select: none; }
 .cred-toggle:hover { text-decoration: underline; }
-
-/* State cards */
-.state-card { display: flex; align-items: center; gap: 12px; padding: 16px; background: #151525; border-radius: 8px; margin: 12px 0; }
-.state-card.error { border-left: 3px solid #ef4444; }
-.state-card.success { border-left: 3px solid #22c55e; }
-.state-card.warning { border-left: 3px solid #f59e0b; }
-
-/* Loading overlay */
-#loading-overlay { display: flex; align-items: center; justify-content: center; padding: 4rem; }
-#page-content { display: none; }
 </style>
 
-<div class="flex items-center justify-between mb-6">
-    <div>
-        <h1 class="text-2xl font-bold">Zoom 账号配置</h1>
-        <p class="text-sm text-gray-400 mt-1">
-            当前租户: <strong>{{ current_user.get("tenant_id","default") }}</strong>
-        </p>
-    </div>
-    <div class="flex gap-3">
-        <a href="/dashboard/admin/tenants" class="btn btn-ghost">客户管理</a>
-        <a href="/dashboard/admin/users" class="btn btn-ghost">后台用户</a>
-        <a href="/dashboard/admin/channels" class="btn btn-ghost">推送频道</a>
-    </div>
-</div>
-
 <!-- Loading skeleton (hidden after page load) -->
-<div id="loading-overlay">
-    <div style="width:100%;">
-        <div class="skeleton" style="height:60px; margin-bottom:16px;"></div>
-        <div class="skeleton" style="height:200px; margin-bottom:16px;"></div>
-        <div class="skeleton" style="height:200px;"></div>
-    </div>
+<div id="loading-overlay" style="display:flex; align-items:center; justify-content:center; padding:4rem;">
+  <div style="width:100%;">
+    <div class="skeleton" style="height:60px; margin-bottom:16px;"></div>
+    <div class="skeleton" style="height:200px; margin-bottom:16px;"></div>
+    <div class="skeleton" style="height:200px;"></div>
+  </div>
 </div>
 
-<div id="page-content">
+<div id="page-content" style="display:none">
 
-<!-- Stats Row -->
-<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; margin-bottom:1.5rem;">
-    <div class="card" style="padding:1rem;">
-        <div style="font-size:0.75rem; color:#64748b;">账号总数</div>
-        <div style="font-size:1.5rem; font-weight:700; color:#e2e8f0;">{{ accounts|length }}</div>
-    </div>
-    <div class="card" style="padding:1rem;">
-        <div style="font-size:0.75rem; color:#64748b;">已激活</div>
-        <div style="font-size:1.5rem; font-weight:700; color:#22c55e;">{{ accounts|selectattr('status','equalto','active')|list|length }}</div>
-    </div>
-    <div class="card" style="padding:1rem;">
-        <div style="font-size:0.75rem; color:#64748b;">异常</div>
-        <div style="font-size:1.5rem; font-weight:700; color:#ef4444;">{{ accounts|selectattr('status','equalto','error')|list|length }}</div>
-    </div>
-    <div class="card" style="padding:1rem;">
-        <div style="font-size:0.75rem; color:#64748b;">未配置</div>
-        <div style="font-size:1.5rem; font-weight:700; color:#94a3b8;">{{ accounts|selectattr('status','equalto','inactive')|list|length }}</div>
-    </div>
+{# ── 顶部标题区 ── #}
+<div class="flex items-center justify-between mb-p">
+  <div>
+    <h1 style="font-size:20px;font-weight:600;color:var(--text);margin:0">Zoom 账号管理</h1>
+    <p style="font-size:13px;color:var(--text-muted);margin:4px 0 0 0">管理当前租户的 Zoom OAuth 账号与被监控会议室</p>
+  </div>
+  <div class="flex gap-2">
+    <button onclick="document.getElementById('accModal').classList.add('active')" class="btn btn-primary">+ 添加账号</button>
+    <button onclick="document.getElementById('mtgModal').classList.add('active')" class="btn btn-primary">+ 添加会议室</button>
+  </div>
 </div>
 
-<!-- Zoom Accounts -->
-<div class="card mb-6">
-    <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold">绑定账号</h2>
-        <button onclick="document.getElementById('accModal').classList.add('active')" class="btn btn-primary">+ 添加账号</button>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th>备注</th>
-                <th>Zoom 邮箱</th>
-                <th>状态</th>
-                <th>最后同步</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for a in accounts %}
-            <tr>
-                <td><strong>{{ a.label or '(未命名)' }}</strong></td>
-                <td>{{ a.host_email or '-' }}</td>
-                <td>
-                    {% if a.status == 'active' %}
-                    <span class="badge badge-active">🟢 正常</span>
-                    {% elif a.status == 'error' %}
-                    <span class="badge badge-inactive">🔴 异常</span>
-                    {% elif a.status == 'verifying' %}
-                    <span class="badge" style="background:#713f12; color:#fbbf24;">⏳ 检测中</span>
-                    {% else %}
-                    <span class="badge" style="background:#374151; color:#9ca3af;">⚪ 未配置</span>
-                    {% endif %}
-                </td>
-                <td style="font-size:0.8rem; color:#94a3b8;">
-                    {% if a.last_sync %}
-                    {{ a.last_sync[:19] }}
-                    <br><small>{{ a.last_sync_result[:60] if a.last_sync_result else '' }}</small>
-                    {% else %}
-                    -
-                    {% endif %}
-                </td>
-                <td>
-                    <div class="flex gap-2">
-                        <span class="toggle-arrow" id="arrow-{{ a.id }}" onclick="toggleTestResult({{ a.id }})">▶</span>
-                        <button onclick="testConnection({{ a.id }}, this)" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">测试连接</button>
-                        <button onclick="editAccount({{ a.id }}, '{{ a.label|e }}', '{{ a.host_email|e }}', '{{ a.webhook_secret|e }}', '{{ a.client_id|e }}', {{ a.is_active }})" class="btn btn-ghost" style="padding:2px 10px; font-size:0.75rem;">编辑</button>
-                        <form method="post" action="/dashboard/admin/accounts/{{ a.id }}/delete" style="display:inline"
-                              onsubmit="return confirm('确认删除此账号？\n所有关联的会议室也将被移除。\n此操作不可撤销。')">
-                            <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
-                        </form>
-                    </div>
-                </td>
-            </tr>
-            <!-- Test result row (collapsible) -->
-            <tr id="test-result-{{ a.id }}" class="collapse-row">
-                <td colspan="5" style="padding:8px 12px; background:#151525;">
-                    <div id="test-content-{{ a.id }}" style="font-size:0.8rem; color:#94a3b8;">
-                        <span style="color:#64748b;">点击「测试连接」查看诊断结果</span>
-                    </div>
-                </td>
-            </tr>
-            <!-- Webhook status row -->
-            {% if a.webhook_last_event or a.webhook_last_time %}
-            <tr style="background:#151525;">
-                <td colspan="5" style="padding:6px 12px; font-size:0.75rem; color:#64748b;">
-                    <span class="badge badge-active" style="font-size:0.7rem;">🔄 Webhook</span>
-                    最后事件 <strong>{{ a.webhook_last_event[:30] }}{{ '…' if a.webhook_last_event and a.webhook_last_event|length > 30 }}</strong>
-                    · 收到时间 <strong>{{ a.webhook_last_time[:19] if a.webhook_last_time else '-' }}</strong>
-                    <span class="badge badge-active" style="margin-left:8px; font-size:0.65rem;">🟢 正常</span>
-                </td>
-            </tr>
-            {% endif %}
-            {% else %}
-            <tr><td colspan="5" style="text-align:center; color:#64748b; padding:3rem;">
-                <div style="font-size:2rem; margin-bottom:8px;">📭</div>
-                暂无 Zoom 账号配置
-                <br>
-                <small style="color:#475569;">点击上方「添加账号」开始接入你的第一个 Zoom 账号</small>
-            </td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
+{# ── 顶部统计卡 ── #}
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+  <div class="stat-card">
+    <div class="stat-label">账号总数</div>
+    <div class="stat-value" style="color:var(--text)">{{ accounts|length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">已激活</div>
+    <div class="stat-value success">{{ accounts|selectattr('status','equalto','active')|list|length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">异常</div>
+    <div class="stat-value danger">{{ accounts|selectattr('status','equalto','error')|list|length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">未配置</div>
+    {% set inactive_count = accounts|rejectattr('status','equalto','active')|rejectattr('status','equalto','error')|list|length %}
+    <div class="stat-value" style="color:var(--text-muted)">{{ inactive_count }}</div>
+  </div>
 </div>
 
-<!-- Meetings -->
-<div class="card">
-    <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold">被监控的会议室</h2>
-        <button onclick="document.getElementById('mtgModal').classList.add('active')" class="btn btn-primary">添加会议室</button>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th>会议号</th>
-                <th>备注</th>
-                <th>类型</th>
-                <th>状态</th>
-                <th>操作</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for m in meetings %}
-            <tr>
-                <td style="font-family:monospace;">{{ m.meeting_id }}</td>
-                <td>{{ m.label }}</td>
-                <td><span class="badge" style="background:#1e3a5f; color:#60a5fa;">{{ m.meeting_type }}</span></td>
-                <td>
-                    <span class="badge {{ 'badge-active' if m.active == 'true' else 'badge-inactive' }}">
-                        {{ '启用' if m.active == 'true' else '停用' }}
-                    </span>
-                </td>
-                <td>
-                    <form method="post" action="/dashboard/admin/meetings/{{ m.id }}/delete" style="display:inline"
-                          onsubmit="return confirm('确认删除此会议室？')">
-                        <button type="submit" class="btn btn-danger" style="padding:2px 10px; font-size:0.75rem;">删除</button>
-                    </form>
-                </td>
-            </tr>
-            {% else %}
-            <tr><td colspan="5" style="text-align:center; color:#64748b; padding:2rem;">暂无监控会议室<br><small style="color:#475569;">添加 Zoom 账号后，可在 Zoom 后台将会议号填入此处</small></td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+{# ── Zoom 账号列表 ── #}
+<div class="panel mb-p" style="padding:0;overflow:visible">
+  <div class="panel-header" style="padding:12px 16px">
+    <h2 style="font-size:15px;font-weight:600;color:var(--text);margin:0">绑定账号</h2>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>备注</th>
+        <th>Zoom 邮箱</th>
+        <th>状态</th>
+        <th>最后同步</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for a in accounts %}
+      <tr>
+        <td><strong>{{ a.label or '(未命名)' }}</strong></td>
+        <td style="color:var(--text-secondary)">{{ a.host_email or '-' }}</td>
+        <td>
+          {% if a.status == 'active' %}
+          <span class="badge badge-active">正常</span>
+          {% elif a.status == 'error' %}
+          <span class="badge badge-inactive">异常</span>
+          {% elif a.status == 'verifying' %}
+          <span class="badge" style="background:#713f12;color:#fbbf24">检测中</span>
+          {% else %}
+          <span class="badge" style="background:var(--bg4);color:var(--text-muted)">未配置</span>
+          {% endif %}
+        </td>
+        <td style="font-size:0.8rem;color:var(--text-muted)">
+          {% if a.last_sync %}
+          {{ a.last_sync[:19] }}
+          <br><small>{{ a.last_sync_result[:60] if a.last_sync_result else '' }}</small>
+          {% else %}
+          -
+          {% endif %}
+        </td>
+        <td>
+          <div class="flex gap-2" style="align-items:center">
+            <span class="toggle-arrow" id="arrow-{{ a.id }}" onclick="toggleTestResult({{ a.id }})">▶</span>
+            <button onclick="testConnection({{ a.id }}, this)" class="btn btn-ghost" style="padding:2px 10px;font-size:0.75rem">测试连接</button>
+            <button onclick="editAccount({{ a.id }}, '{{ a.label|e }}', '{{ a.host_email|e }}', '{{ a.webhook_secret|e }}', '{{ a.client_id|e }}', {{ a.is_active }})" class="btn btn-ghost" style="padding:2px 10px;font-size:0.75rem">编辑</button>
+            <form method="post" action="/dashboard/admin/accounts/{{ a.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('确认删除此账号？\n所有关联的会议室也将被移除。\n此操作不可撤销。')">
+              <button type="submit" class="btn btn-danger" style="padding:2px 10px;font-size:0.75rem">删除</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      <!-- Test result row (collapsible) -->
+      <tr id="test-result-{{ a.id }}" class="collapse-row">
+        <td colspan="5" style="padding:8px 12px;background:var(--bg3)">
+          <div id="test-content-{{ a.id }}" style="font-size:0.8rem;color:var(--text-muted)">
+            <span style="color:var(--text-muted)">点击「测试连接」查看诊断结果</span>
+          </div>
+        </td>
+      </tr>
+      <!-- Webhook status row -->
+      {% if a.webhook_last_event or a.webhook_last_time %}
+      <tr style="background:var(--bg2)">
+        <td colspan="5" style="padding:6px 12px;font-size:0.75rem;color:var(--text-muted)">
+          <span class="badge badge-active" style="font-size:0.7rem">Webhook</span>
+          最后事件 <strong>{{ a.webhook_last_event[:30] }}{{ '…' if a.webhook_last_event and a.webhook_last_event|length > 30 }}</strong>
+          · 收到时间 <strong>{{ a.webhook_last_time[:19] if a.webhook_last_time else '-' }}</strong>
+          <span class="badge badge-active" style="margin-left:8px;font-size:0.65rem">正常</span>
+        </td>
+      </tr>
+      {% endif %}
+      {% else %}
+      <tr>
+        <td colspan="5" class="empty-state">
+          <div style="font-size:2rem;margin-bottom:8px">📭</div>
+          暂无 Zoom 账号配置
+          <br>
+          <small style="color:var(--text-muted)">点击上方「添加账号」开始接入你的第一个 Zoom 账号</small>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </div>
 
-<!-- Account create modal -->
+{# ── 被监控会议室列表 ── #}
+<div class="panel" style="padding:0;overflow:visible">
+  <div class="panel-header" style="padding:12px 16px">
+    <h2 style="font-size:15px;font-weight:600;color:var(--text);margin:0">被监控会议室</h2>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>会议号</th>
+        <th>备注</th>
+        <th>类型</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in meetings %}
+      <tr>
+        <td style="font-family:var(--mono)">{{ m.meeting_id }}</td>
+        <td>{{ m.label }}</td>
+        <td><span class="badge" style="background:var(--accent-dim);color:var(--accent)">{{ m.meeting_type }}</span></td>
+        <td>
+          <span class="badge {{ 'badge-active' if m.active == 'true' else 'badge-inactive' }}">
+            {{ '启用' if m.active == 'true' else '停用' }}
+          </span>
+        </td>
+        <td>
+          <form method="post" action="/dashboard/admin/meetings/{{ m.id }}/delete" style="display:inline"
+                onsubmit="return confirm('确认删除此会议室？')">
+            <button type="submit" class="btn btn-danger" style="padding:2px 10px;font-size:0.75rem">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5" class="empty-state">
+          <div style="font-size:2rem;margin-bottom:8px">📡</div>
+          暂无监控会议室
+          <br>
+          <small style="color:var(--text-muted)">添加 Zoom 账号后，可在 Zoom 后台将会议导入此处</small>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+</div><!-- /page-content -->
+
+<!-- ── Add account modal ── -->
 <div id="accModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
-    <div class="modal-content" style="max-width:560px;">
-        <h2 class="text-xl font-bold mb-4">添加 Zoom 账号</h2>
-        <p style="font-size:0.8rem; color:#94a3b8; margin-bottom:1rem;">
-            需要先在 Zoom Marketplace 创建 Server-to-Server OAuth App，
-            <a href="https://developers.zoom.us/docs/internal-apps/s2s-oauth/" target="_blank" style="color:#818cf8;">查看教程</a>
-        </p>
-        <form method="post" action="/dashboard/admin/accounts/create">
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
-                <input type="text" name="label" placeholder="例如: 主账号 / 销售部" required>
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Account ID <span style="color:#ef4444;">*</span></label>
-                <input type="text" name="account_id" required placeholder="Zoom App Credentials 中的 Account ID">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Client ID <span style="color:#ef4444;">*</span></label>
-                <input type="text" name="client_id" required placeholder="Zoom App Credentials 中的 Client ID">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Client Secret <span style="color:#ef4444;">*</span></label>
-                <input type="password" name="client_secret" required placeholder="Zoom App Credentials 中的 Client Secret">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Zoom 邮箱</label>
-                <input type="email" name="host_email" placeholder="admin@example.com (辅助识别)">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Webhook Secret Token</label>
-                <input type="password" name="webhook_secret" placeholder="可选，配置 Webhook 时使用">
-            </div>
-            {% if error %}
-            <div class="state-card error">
-                <span>❌</span>
-                <span style="font-size:0.8rem;">{{ error }}</span>
-            </div>
-            {% endif %}
-            <div class="flex gap-3 justify-end">
-                <button type="button" class="btn btn-ghost" onclick="document.getElementById('accModal').classList.remove('active')">取消</button>
-                <button type="submit" class="btn btn-primary">保存并激活</button>
-            </div>
-        </form>
-    </div>
+  <div class="modal-content" style="max-width:560px">
+    <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 16px 0">添加 Zoom 账号</h2>
+    <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1rem">
+      需要先在 Zoom Marketplace 创建 Server-to-Server OAuth App，
+      <a href="https://developers.zoom.us/docs/internal-apps/s2s-oauth/" target="_blank" style="color:var(--accent)">查看教程</a>
+    </p>
+    <form method="post" action="/dashboard/admin/accounts/create">
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">备注</label>
+        <input type="text" name="label" placeholder="例如: 主账号 / 销售部" required>
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Account ID <span style="color:var(--danger)">*</span></label>
+        <input type="text" name="account_id" required placeholder="Zoom App Credentials 中的 Account ID">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Client ID <span style="color:var(--danger)">*</span></label>
+        <input type="text" name="client_id" required placeholder="Zoom App Credentials 中的 Client ID">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Client Secret <span style="color:var(--danger)">*</span></label>
+        <input type="password" name="client_secret" required placeholder="Zoom App Credentials 中的 Client Secret">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Zoom 邮箱</label>
+        <input type="email" name="host_email" placeholder="admin@example.com (辅助识别)">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Webhook Secret Token</label>
+        <input type="password" name="webhook_secret" placeholder="可选，配置 Webhook 时使用">
+      </div>
+      {% if error %}
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg4);border-left:3px solid var(--danger);border-radius:6px;margin-bottom:12px">
+        <span>❌</span>
+        <span style="font-size:0.8rem;color:var(--danger)">{{ error }}</span>
+      </div>
+      {% endif %}
+      <div class="flex gap-3 justify-end" style="margin-top:16px">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('accModal').classList.remove('active')">取消</button>
+        <button type="submit" class="btn btn-primary">保存并激活</button>
+      </div>
+    </form>
+  </div>
 </div>
 
-<!-- Account edit modal -->
+<!-- ── Edit account modal ── -->
 <div id="editModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
-    <div class="modal-content" style="max-width:560px;">
-        <h2 class="text-xl font-bold mb-4">编辑 Zoom 账号</h2>
-        <form id="editForm" method="post">
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
-                <input type="text" name="label" id="edit-label">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Zoom 邮箱</label>
-                <input type="email" name="host_email" id="edit-email">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">Webhook Secret Token</label>
-                <input type="password" name="webhook_secret" id="edit-webhook-secret" placeholder="留空不修改">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">状态</label>
-                <select name="is_active" id="edit-active">
-                    <option value="1">启用</option>
-                    <option value="0">停用</option>
-                </select>
-            </div>
-            <!-- Credential update toggle -->
-            <div class="mb-3">
-                <span class="cred-toggle" onclick="toggleCredFields()">🔑 更新 OAuth 凭证</span>
-                <div id="cred-fields" class="cred-fields">
-                    <div class="mb-3">
-                        <label class="block text-sm mb-1" style="color:#94a3b8;">Client ID</label>
-                        <input type="text" name="client_id" id="edit-client-id" placeholder="留空不修改">
-                    </div>
-                    <div class="mb-3">
-                        <label class="block text-sm mb-1" style="color:#94a3b8;">Client Secret</label>
-                        <input type="password" name="client_secret" id="edit-client-secret" placeholder="留空不修改">
-                    </div>
-                    <p style="font-size:0.7rem; color:#ef4444;">⚠️ 更新凭证后，请重新测试连接以确认生效</p>
-                </div>
-            </div>
-            <div class="flex gap-3 justify-end">
-                <button type="button" class="btn btn-ghost" onclick="document.getElementById('editModal').classList.remove('active')">取消</button>
-                <button type="submit" class="btn btn-primary">保存</button>
-            </div>
-        </form>
-    </div>
+  <div class="modal-content" style="max-width:560px">
+    <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 16px 0">编辑 Zoom 账号</h2>
+    <form id="editForm" method="post">
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">备注</label>
+        <input type="text" name="label" id="edit-label">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Zoom 邮箱</label>
+        <input type="email" name="host_email" id="edit-email">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">Webhook Secret Token</label>
+        <input type="password" name="webhook_secret" id="edit-webhook-secret" placeholder="留空不修改">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">状态</label>
+        <select name="is_active" id="edit-active">
+          <option value="1">启用</option>
+          <option value="0">停用</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <span class="cred-toggle" onclick="toggleCredFields()">🔑 更新 OAuth 凭证</span>
+        <div id="cred-fields" class="cred-fields">
+          <div class="mb-3">
+            <label class="block text-sm mb-1" style="color:var(--text-muted)">Client ID</label>
+            <input type="text" name="client_id" id="edit-client-id" placeholder="留空不修改">
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm mb-1" style="color:var(--text-muted)">Client Secret</label>
+            <input type="password" name="client_secret" id="edit-client-secret" placeholder="留空不修改">
+          </div>
+          <p style="font-size:0.7rem;color:var(--danger)">⚠️ 更新凭证后，请重新测试连接以确认生效</p>
+        </div>
+      </div>
+      <div class="flex gap-3 justify-end" style="margin-top:16px">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('editModal').classList.remove('active')">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
 </div>
 
-<!-- Meeting create modal -->
+<!-- ── Meeting create modal ── -->
 <div id="mtgModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('active')">
-    <div class="modal-content">
-        <h2 class="text-xl font-bold mb-4">添加会议室</h2>
-        <form method="post" action="/dashboard/admin/meetings/create">
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">会议号 <span style="color:#ef4444;">*</span></label>
-                <input type="text" name="meeting_id" required placeholder="例如: 123456789">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">备注</label>
-                <input type="text" name="label" placeholder="自习室/周会">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm mb-1" style="color:#94a3b8;">类型</label>
-                <select name="meeting_type">
-                    <option value="pmi">PMI 个人会议号</option>
-                    <option value="scheduled">定时会议</option>
-                    <option value="recurring">重复会议</option>
-                </select>
-            </div>
-            <div class="flex gap-3 justify-end">
-                <button type="button" class="btn btn-ghost" onclick="document.getElementById('mtgModal').classList.remove('active')">取消</button>
-                <button type="submit" class="btn btn-primary">添加</button>
-            </div>
-        </form>
-    </div>
+  <div class="modal-content">
+    <h2 style="font-size:18px;font-weight:600;color:var(--text);margin:0 0 16px 0">添加会议室</h2>
+    <form method="post" action="/dashboard/admin/meetings/create">
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">会议号 <span style="color:var(--danger)">*</span></label>
+        <input type="text" name="meeting_id" required placeholder="例如: 123456789">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">备注</label>
+        <input type="text" name="label" placeholder="自习室/周会">
+      </div>
+      <div class="mb-3">
+        <label class="block text-sm mb-1" style="color:var(--text-muted)">类型</label>
+        <select name="meeting_type">
+          <option value="pmi">PMI 个人会议号</option>
+          <option value="scheduled">定时会议</option>
+          <option value="recurring">重复会议</option>
+        </select>
+      </div>
+      <div class="flex gap-3 justify-end" style="margin-top:16px">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('mtgModal').classList.remove('active')">取消</button>
+        <button type="submit" class="btn btn-primary">添加</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <script>
-// ── Page load ──────────────────────────────────────────────────────────
+// ── Page load ──
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('loading-overlay').style.display = 'none';
     document.getElementById('page-content').style.display = 'block';
 });
 
-// ── Test connection ────────────────────────────────────────────────────
+// ── Test connection ──
 async function testConnection(id, btn) {
     const row = document.getElementById('test-result-' + id);
     const content = document.getElementById('test-content-' + id);
-
-    // Show the row
     row.classList.add('open');
     const arrow = document.getElementById('arrow-' + id);
     if (arrow) arrow.classList.add('expanded');
-
     content.innerHTML = '<span style="color:#fbbf24;">⏳ 正在测试连接...</span>';
     btn.disabled = true;
     btn.textContent = '检测中...';
-
     try {
         const resp = await fetch('/dashboard/admin/accounts/' + id + '/test', { method: 'POST' });
         const data = await resp.json();
         const r = data.result || {};
-
         let html = '';
         if (r.ok) {
             const u = r.user || {};
-            html = '<div class="state-card success" style="margin:0; font-size:0.8rem;">'
+            html = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg4);border-left:3px solid var(--success);border-radius:6px;font-size:0.8rem">'
                 + '<span>✅</span>'
-                + '<div><strong style="color:#22c55e;">连接成功</strong><br>'
-                + '<span style="color:#94a3b8;">' + (u.display_name || '?') + ' (' + (u.email || '?') + ')</span>'
-                + ' · 账号: <code style="color:#60a5fa;">' + (u.account_id || '').slice(0,16) + '…</code>'
+                + '<div><strong style="color:var(--success)">连接成功</strong><br>'
+                + '<span style="color:var(--text-muted)">' + (u.display_name || '?') + ' (' + (u.email || '?') + ')</span>'
+                + ' · 账号: <code style="color:var(--accent)">' + (u.account_id || '').slice(0,16) + '…</code>'
                 + ' · 计划: ' + (u.plan_type || '-')
                 + '</div></div>';
             if (r.meetings) {
-                html += '<div style="margin-top:6px; display:flex; gap:12px; flex-wrap:wrap; font-size:0.75rem;">'
-                    + '<span style="color:#64748b;">📅 待开会议: ' + r.meetings.scheduled + '</span>'
-                    + '<span style="color:#64748b;">📋 已结束: ' + r.meetings.recent + '</span>'
-                    + '<span style="color:#64748b;">👥 参会记录: ' + (r.participants_ok ? '<span style="color:#22c55e;">✅ 可读</span>' : '<span style="color:#f59e0b;">⚠️ 无数据（新账号）</span>') + '</span>'
+                html += '<div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;font-size:0.75rem">'
+                    + '<span style="color:var(--text-muted)">📅 待开会议: ' + r.meetings.scheduled + '</span>'
+                    + '<span style="color:var(--text-muted)">📋 已结束: ' + r.meetings.recent + '</span>'
+                    + '<span style="color:var(--text-muted)">👥 参会记录: ' + (r.participants_ok ? '<span style="color:var(--success)">✅ 可读</span>' : '<span style="color:var(--warning)">⚠️ 无数据（新账号）</span>') + '</span>'
                     + '</div>';
             }
         } else {
-            html = '<div class="state-card error" style="margin:0; font-size:0.8rem;">'
+            html = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg4);border-left:3px solid var(--danger);border-radius:6px;font-size:0.8rem">'
                 + '<span>❌</span>'
-                + '<div><strong style="color:#ef4444;">连接失败</strong><br>'
-                + '<span style="color:#94a3b8; word-break:break-all;">' + (r.error || '未知错误') + '</span>'
+                + '<div><strong style="color:var(--danger)">连接失败</strong><br>'
+                + '<span style="color:var(--text-muted);word-break:break-all">' + (r.error || '未知错误') + '</span>'
                 + '</div></div>';
         }
         content.innerHTML = html;
-        // Auto refresh page status after 3s
         setTimeout(() => location.reload(), 3000);
     } catch (e) {
-        content.innerHTML = '<div class="state-card error" style="margin:0; font-size:0.8rem;">'
+        content.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg4);border-left:3px solid var(--danger);border-radius:6px;font-size:0.8rem">'
             + '<span>❌</span>'
-            + '<div><strong style="color:#ef4444;">请求失败</strong><br>'
-            + '<span style="color:#94a3b8;">' + e.message + '</span>'
+            + '<div><strong style="color:var(--danger)">请求失败</strong><br>'
+            + '<span style="color:var(--text-muted)">' + e.message + '</span>'
             + '</div></div>';
     } finally {
         btn.disabled = false;
@@ -395,7 +385,7 @@ async function testConnection(id, btn) {
     }
 }
 
-// ── Toggle test result row ─────────────────────────────────────────────
+// ── Toggle test result row ──
 function toggleTestResult(id) {
     const row = document.getElementById('test-result-' + id);
     const arrow = document.getElementById('arrow-' + id);
@@ -408,21 +398,20 @@ function toggleTestResult(id) {
     }
 }
 
-// ── Edit account modal ─────────────────────────────────────────────────
+// ── Edit account modal ──
 function editAccount(id, label, email, webhookSecret, clientId, isActive) {
     document.getElementById('editForm').action = '/dashboard/admin/accounts/' + id + '/edit';
     document.getElementById('edit-label').value = label;
     document.getElementById('edit-email').value = email;
     document.getElementById('edit-webhook-secret').value = webhookSecret;
     document.getElementById('edit-active').value = isActive.toString();
-    // Reset credential fields
     document.getElementById('edit-client-id').value = '';
     document.getElementById('edit-client-secret').value = '';
     document.getElementById('cred-fields').classList.remove('open');
     document.getElementById('editModal').classList.add('active');
 }
 
-// ── Toggle credential fields ───────────────────────────────────────────
+// ── Toggle credential fields ──
 function toggleCredFields() {
     const fields = document.getElementById('cred-fields');
     fields.classList.toggle('open');
