@@ -1588,7 +1588,18 @@ def build_app() -> "FastAPI":
                             if result.get("ok"):
                                 p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
                                     (dedup_key, "webhook_event_push", now_utc.isoformat()))
+                                # alert_sent 先 commit，避免后续 alerts 字符错误影响去重记录
+                                p_conn.commit()
                                 # 同时写入 alerts 表 → 页面「最近告警」展示
+                                # 清洗非法 surrogate 字符，防止 sqlite/日志编码异常
+                                def _safe_text(v):
+                                    if v is None:
+                                        return ""
+                                    return str(v).encode("utf-8", "ignore").decode("utf-8", "ignore")
+                                safe_title = _safe_text(push_title)
+                                safe_text = _safe_text(text)
+                                safe_name = _safe_text(standard_name)
+                                safe_event = _safe_text(push_event)
                                 p_conn.execute("""INSERT INTO alerts (
                                     alert_type, severity, title, message, related_name,
                                     success, created_at, tenant_id, event_type,
@@ -1596,13 +1607,13 @@ def build_app() -> "FastAPI":
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
                                     "webhook_push",
                                     "info",
-                                    push_title,
-                                    text,
-                                    standard_name,
+                                    safe_title,
+                                    safe_text,
+                                    safe_name,
                                     1,
                                     now_utc.isoformat(),
                                     webhook_tenant_id or "default",
-                                    push_event,
+                                    safe_event,
                                     0,
                                     "",
                                     "sent",
