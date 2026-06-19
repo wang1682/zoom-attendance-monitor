@@ -2472,6 +2472,7 @@ def build_app() -> "FastAPI":
         # 获取今日累计时长
         today_secs = {}
         last_seen = {}
+        today_secs_source = "unknown"
         try:
             session_rows = conn.execute("""
                 SELECT user_name, SUM(duration_seconds) as total, MAX(COALESCE(leave_time_utc, join_time_utc)) as recent
@@ -2483,10 +2484,50 @@ def build_app() -> "FastAPI":
                 nm = r["user_name"]
                 today_secs[nm] = r["total"] or 0
                 last_seen[nm] = r["recent"] or ""
+            today_secs_source = "participant_sessions"
         except:
-            pass
+            today_secs_source = "participant_sessions_error"
 
-        # fallback: 从 zoom_participants 获取 last_activity（仅用于排序）
+        # fallback: participant_sessions 为空 → 从 zoom_participants enter/leave 流计算
+        if not today_secs:
+            today_secs_source = "zoom_participants_stream"
+            try:
+                now_utc_dt = datetime.now(timezone.utc)
+                # 获取今天所有 enter/leave 事件，按 name, action_time 排序
+                events = conn.execute("""
+                    SELECT name, action, action_time
+                    FROM zoom_participants
+                    WHERE action_time >= ?
+                      AND action IN ('enter','leave')
+                    ORDER BY name, action_time
+                """, (today_start_utc,)).fetchall()
+                # 按 name 分组，计算累计时长
+                name_events = {}
+                for e in events:
+                    name_events.setdefault(e["name"], []).append((e["action"], e["action_time"]))
+                for nm, evts in name_events.items():
+                    total_s = 0
+                    enter_time = None
+                    for action, at in evts:
+                        if action == "enter":
+                            enter_time = at
+                        elif action == "leave" and enter_time is not None:
+                            try:
+                                total_s += (datetime.fromisoformat(at) - datetime.fromisoformat(enter_time)).total_seconds()
+                            except:
+                                pass
+                            enter_time = None
+                    # 如果最后一条是 enter（当前在线），累计到 now
+                    if enter_time is not None:
+                        try:
+                            total_s += (now_utc_dt - datetime.fromisoformat(enter_time)).total_seconds()
+                        except:
+                            pass
+                    today_secs[nm] = int(total_s)
+            except:
+                pass
+
+        # 从 zoom_participants 获取 last_activity（排序用）
         if not last_seen:
             try:
                 for r in conn.execute("""
@@ -2541,7 +2582,7 @@ def build_app() -> "FastAPI":
         return {
             "ok": True,
             "items": items,
-            "today_seconds_source": "participant_sessions_empty",
+            "today_seconds_source": today_secs_source,
             "data_source": data_source,
             "is_realtime": is_realtime,
             "metrics_online": metrics_online,
