@@ -290,14 +290,16 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                 sn = resolved["display_name"]
                 key = sn.strip().lower().replace(" ", "")
                 grp_name = group_lookup.get(key, "")
+                # Metrics 最近活跃时间：join_time > last_activity > last_time
+                metrics_last = p.get("join_time", "") or p.get("last_activity", "") or p.get("last_time", "")
                 members.append({
                     "standard_name": sn,
                     "raw_name": pname,
                     "status": "online",
                     "group_name": grp_name,
                     "group_id": None,
-                    "first_join": "",
-                    "last_activity": p.get("join_time", ""),
+                    "first_join": "—",
+                    "last_activity": metrics_last or "—",
                     "today_total_duration": "",
                     "join_count": 0,
                     "leave_count": 0,
@@ -307,19 +309,49 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         data_source = "metrics"
 
     # ── 合并 live 数据：在线成员状态用实时数据标记 ──
+    # 注意：不覆盖 first_join / last_activity，它们来自 DB 今日事件
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    def _fmt_myt(utc_str: str) -> str:
+        """Format UTC ISO string to MM-DD HH:mm:ss MYT"""
+        if not utc_str or utc_str == "—":
+            return "—"
+        try:
+            s = utc_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+        except:
+            return utc_str[:16].replace("T", " ")
+
     for m in members:
         sn = m.get("standard_name", "")
         lp = live_map.get(sn)
         if lp:
             m["status"] = "online"
-            jt = lp.get("join_time", "")
-            if jt:
-                m["last_activity"] = jt
         else:
             m["status"] = "offline"
 
-    # 排序：在线优先
-    members.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m.get("join_count", 0) or 0)))
+    # ── 格式化时间显示 ──
+    for m in members:
+        m["first_join_display"] = _fmt_myt(m.get("first_join", ""))
+        m["last_activity_display"] = _fmt_myt(m.get("last_activity", ""))
+
+    # ── 排序辅助 ──
+    def _last_activity_sort_key(val: str) -> int:
+        """返回 timestamp 用于排序，无时间则返回 0 排最后"""
+        if not val or val == "—":
+            return 0
+        try:
+            s = val.replace("Z", "+00:00")
+            return int(datetime.fromisoformat(s).timestamp())
+        except:
+            return 0
+
+    # 排序：在线优先 → 最近活动降序 → 没有最近活动的排最后
+    members.sort(key=lambda m: (
+        0 if m["status"] == "online" else 1,
+        -_last_activity_sort_key(m.get("last_activity", "")),
+    ))
     live_online = sum(1 for m in members if m.get("status") == "online")
     live_offline = len(members) - live_online
 

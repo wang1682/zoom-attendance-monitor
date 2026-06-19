@@ -82,12 +82,8 @@
     <td class="td-mono">{{ grp }}</td>
     <td class="td-mono">{{ dur if dur else '—' }}</td>
     <td class="td-mono">{{ join_c }} / {{ leave_c }}</td>
-    <td class="td-mono" style="white-space:nowrap">
-      {% if first_j %}{{ first_j[:16].replace("T"," ") }}{% else %}—{% endif %}
-    </td>
-    <td class="td-mono" style="white-space:nowrap">
-      {% if last_a %}{{ last_a[:16].replace("T"," ") }}{% else %}—{% endif %}
-    </td>
+    <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
+    <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
   </tr>
   {% endfor %}
   </tbody>
