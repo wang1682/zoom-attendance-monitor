@@ -2568,6 +2568,20 @@ def build_app() -> "FastAPI":
             fj = ""
             for alias in [m["raw_name"]] + (m.get("aliases") or []):
                 afj = first_join_map.get(alias, "")
+                if not afj:
+                    # 反向查 member_aliases：别名 → canonical → 所有其他别名
+                    try:
+                        cn = conn.execute("SELECT canonical_name FROM member_aliases WHERE alias_name=?", (alias,)).fetchone()
+                        if cn:
+                            search_names = [cn[0]]
+                            search_names += [r[0] for r in conn.execute("SELECT alias_name FROM member_aliases WHERE canonical_name=?", (cn[0],)).fetchall()]
+                            for sn in search_names:
+                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action='enter'", (today_start_utc, sn)).fetchone()
+                                if sub_fj and sub_fj[0]:
+                                    afj = sub_fj[0]
+                                    break
+                    except:
+                        pass
                 if afj and (not fj or afj < fj):
                     fj = afj
             m["first_join"] = fj
