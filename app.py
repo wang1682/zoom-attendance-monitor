@@ -2566,6 +2566,12 @@ def build_app() -> "FastAPI":
                 if als and als > latest:
                     latest = als
             m["today_seconds"] = total_sec
+            def fmt_seconds(s):
+                s = int(s or 0)
+                h = s // 3600
+                m = (s % 3600) // 60
+                return f"{h}h{m}m" if h else f"{m}m"
+            m["today_total_duration"] = fmt_seconds(m["today_seconds"])
             m["last_activity"] = latest
             # 补充 first_join（取所有别名中最小的 enter 时间）
             fj = ""
@@ -2597,6 +2603,7 @@ def build_app() -> "FastAPI":
                     online_sec = int((now_utc_dt - first_dt).total_seconds())
                     if online_sec > m.get("today_seconds", 0):
                         m["today_seconds"] = online_sec
+                        m["today_total_duration"] = fmt_seconds(online_sec)
                         today_secs_source = "zoom_participants_stream_plus_online_first_join"
             except Exception:
                 pass
