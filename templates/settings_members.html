@@ -126,6 +126,8 @@
 .gm-member-row .gm-raw{font-size:11px;color:var(--ts);flex-shrink:0}
 .gm-add-row{display:flex;gap:8px;align-items:center;margin-bottom:12px}
 .gm-add-row select{flex:1;padding:6px 10px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px}
+.group-select{font-size:12px;padding:3px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer;max-width:140px}
+.group-select:focus{outline:none;border-color:var(--pr)}
 </style>
 {% endblock %}
 {% block content %}
@@ -157,6 +159,7 @@
         <option value="offline">离线</option>
       </select>
       <span class="mc-badge" id="memberCount">0</span>
+      <button class="bt bt-s" onclick="switchTab('groups')" style="font-size:12px;padding:5px 10px">📂 分组管理</button>
     </div>
     <div style="overflow-x:auto">
       <table class="data-table" style="width:100%">
@@ -331,14 +334,15 @@ let quickMapName = "";
 
 // ── Load ──
 async function loadAll(){
+  // 先加载分组数据，再加载成员
+  await loadGroups();
   const m = await fetch("/api/v3/members").then(r=>r.json());
   if(!m.ok) return;
   membersData = m.items || [];
-  await populateGroupFilter();
+  populateGroupFilter();
   renderMembersTable(membersData);
   loadDiscover();
   loadDuplicates();
-  loadGroups();
 }
 
 // ── Duplicates Tab ──
@@ -463,6 +467,31 @@ function ignoreDuplicate(gid){
   renderDuplicates();
 }
 
+// ── 成员分组切换 ──
+async function changeMemberGroup(displayName, groupId){
+  if(!displayName) return;
+  try {
+    const r = await fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({group_id: groupId ? parseInt(groupId) : null})
+    });
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || '操作失败');
+    // 更新本地数据
+    const m = membersData.find(x => x.display_name === displayName);
+    if(m) m.group_id = groupId ? parseInt(groupId) : null;
+  } catch(e){
+    alert('分组修改失败: ' + e.message);
+    // 恢复下拉框
+    const sel = document.querySelector('select.group-select[data-display="' + displayName.replace(/"/g, '&quot;') + '"]');
+    if(sel){
+      const orig = membersData.find(x => x.display_name === displayName);
+      sel.value = orig && orig.group_id ? String(orig.group_id) : '';
+    }
+  }
+}
+
 // ── Members Tab: Table Render + Search/Filter ──
 let onlineNames = [];
 
@@ -485,10 +514,18 @@ function renderMembersTable(members){
       `<span class="alias-tag">${a}</span>`
     ).join("");
     const groupName = m.group_id ? (groupMap[m.group_id] || '—') : '—';
+    const groupOpts = (groupsData || []).map(g =>
+      `<option value="${g.id}" ${m.group_id === g.id ? 'selected' : ''}>${esc(g.name)}</option>`
+    ).join('');
     return `<tr class="member-row">
       <td><strong>${esc(m.display_name)}</strong></td>
       <td>${esc(m.raw_name)}${aliasTags ? '<br><span class="alias-tags">' + aliasTags + '</span>' : ''}</td>
-      <td>${groupName !== '—' ? '<span class="group-badge">' + esc(groupName) + '</span>' : '—'}</td>
+      <td>
+        <select class="group-select" data-display="${esc(m.display_name)}" onchange="changeMemberGroup('${esc(m.display_name)}', this.value)">
+          <option value="">无分组</option>
+          ${groupOpts}
+        </select>
+      </td>
       <td><span class="online-dot" style="background:${dotColor};display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px"></span>${statusText}</td>
       <td>
         <button class="act-btn" onclick="editMember('${esc(m.display_name)}')">编辑</button>
