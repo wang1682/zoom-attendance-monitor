@@ -2489,6 +2489,7 @@ def build_app() -> "FastAPI":
             today_secs_source = "participant_sessions_error"
 
         # fallback: participant_sessions 为空 → 从 zoom_participants enter/leave 流计算
+        now_utc_dt = datetime.now(timezone.utc)
         if not today_secs:
             today_secs_source = "zoom_participants_stream"
             try:
@@ -2568,16 +2569,18 @@ def build_app() -> "FastAPI":
                 if afj and (not fj or afj < fj):
                     fj = afj
             m["first_join"] = fj
-            # 在线成员：今日累计至少覆盖从 first_join 到 now 的整段在线时长
-            if m["is_online"] and fj:
-                try:
-                    now_ts = datetime.now(timezone.utc).timestamp()
-                    fj_ts = datetime.fromisoformat(fj).timestamp()
-                    online_min = int(now_ts - fj_ts)
-                    if online_min > m["today_seconds"]:
-                        m["today_seconds"] = online_min
-                except:
-                    pass
+            # 在线成员：如果 first_join 早于事件流累计，用 now - first_join 兜底
+            try:
+                if m.get("is_online") and m.get("first_join"):
+                    first_dt = datetime.fromisoformat(str(m["first_join"]).replace("Z", "+00:00"))
+                    if first_dt.tzinfo is None:
+                        first_dt = first_dt.replace(tzinfo=timezone.utc)
+                    online_sec = int((now_utc_dt - first_dt).total_seconds())
+                    if online_sec > m.get("today_seconds", 0):
+                        m["today_seconds"] = online_sec
+                        today_secs_source = "zoom_participants_stream_plus_online_first_join"
+            except Exception:
+                pass
             # 保证 last_activity >= first_join
             if fj and (not latest or fj > latest):
                 m["last_activity"] = fj
