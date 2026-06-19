@@ -2568,6 +2568,16 @@ def build_app() -> "FastAPI":
                 if afj and (not fj or afj < fj):
                     fj = afj
             m["first_join"] = fj
+            # 在线成员：今日累计至少覆盖从 first_join 到 now 的整段在线时长
+            if m["is_online"] and fj:
+                try:
+                    now_ts = datetime.now(timezone.utc).timestamp()
+                    fj_ts = datetime.fromisoformat(fj).timestamp()
+                    online_min = int(now_ts - fj_ts)
+                    if online_min > m["today_seconds"]:
+                        m["today_seconds"] = online_min
+                except:
+                    pass
             # 保证 last_activity >= first_join
             if fj and (not latest or fj > latest):
                 m["last_activity"] = fj
