@@ -1333,14 +1333,27 @@ def build_app() -> "FastAPI":
         # ── 从 payload 中提取 account_id → 反查 per-account secret ──
         # 放在签名验证之前，因为每个 Zoom App 有自己的 webhook_secret
         _sig_account_id = payload.get("payload", {}).get("account_id", "") or payload.get("account_id", "")
-        _sig_secret = settings.zoom_webhook_secret
-        if _sig_account_id:
-            _sig_tenant = db.get_tenant_id_by_zoom_account(_sig_account_id)
-            if _sig_tenant:
-                _accts = db.get_zoom_accounts(_sig_tenant)
-                _active = next((a for a in _accts if a.get("is_active") and a.get("account_id") == _sig_account_id), None)
-                if _active and _active.get("webhook_secret"):
-                    _sig_secret = _active["webhook_secret"]
+        # 当 tenant_id 路径参数存在时，不允许 fallback 到全局 secret
+        # 废弃 tenant（如 wangtest）的 webhook 请求必须被明确拒绝
+        if tenant_id:
+            _tenant_accts = db.get_zoom_accounts(tenant_id)
+            _tenant_active = next((a for a in _tenant_accts if a.get("is_active")), None)
+            if not _tenant_active or not _tenant_active.get("webhook_secret"):
+                sys.stderr.write(f"[WEBHOOK] unknown tenant webhook path: {tenant_id} "
+                                 f"(no active zoom_account with webhook_secret)\n"
+                                 f"account_id={_sig_account_id[:30] if _sig_account_id else 'none'}\n")
+                sys.stderr.flush()
+                raise HTTPException(403, "unknown tenant")
+            _sig_secret = _tenant_active["webhook_secret"]
+        else:
+            _sig_secret = settings.zoom_webhook_secret
+            if _sig_account_id:
+                _sig_tenant = db.get_tenant_id_by_zoom_account(_sig_account_id)
+                if _sig_tenant:
+                    _accts = db.get_zoom_accounts(_sig_tenant)
+                    _active = next((a for a in _accts if a.get("is_active") and a.get("account_id") == _sig_account_id), None)
+                    if _active and _active.get("webhook_secret"):
+                        _sig_secret = _active["webhook_secret"]
 
         signature = request.headers.get("x-zm-signature", "")
         ts = request.headers.get("x-zm-request-timestamp", "")
