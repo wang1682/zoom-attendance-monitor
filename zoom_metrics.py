@@ -8,6 +8,7 @@ import re
 import time
 from datetime import datetime, timezone
 
+import asyncio
 import httpx
 from config import settings
 import db as _db
@@ -76,10 +77,17 @@ class ZoomMetrics:
         all_canonical = set()
         enabled_count = 0
 
-        for m in meetings_list:
+        # ── Parallel fetch participants for all live meetings ──
+        async def _fetch_and_build(m):
             mid = str(m.get("id", ""))
             topic = m.get("topic", mid)
             raw_participants = await self._get_participants(mid)
+            return mid, topic, raw_participants
+
+        meeting_tasks = [_fetch_and_build(m) for m in meetings_list]
+        fetched = await asyncio.gather(*meeting_tasks)
+
+        for mid, topic, raw_participants in fetched:
 
             seen = {}
             for p in raw_participants:

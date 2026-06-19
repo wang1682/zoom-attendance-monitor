@@ -46,8 +46,8 @@ def get_client_ip(request) -> str:
 # ── Zoom live data cache ──
 _zoom_live_cache: dict = {}
 _zoom_live_cache_time: dict = {}
-ZOOM_LIVE_CACHE_TTL = 30  # seconds
-ZOOM_LIVE_FALLBACK_TTL = 90  # use stale cache up to 90s if Zoom API fails
+ZOOM_LIVE_CACHE_TTL = 120  # seconds (was 30)
+ZOOM_LIVE_FALLBACK_TTL = 240  # use stale cache up to 240s if Zoom API fails (was 90)
 
 def _get_cached_zoom_live(tid: str) -> dict | None:
     cached = _zoom_live_cache.get(tid)
@@ -720,14 +720,20 @@ def build_app() -> "FastAPI":
         t_total = time.monotonic()
 
         if settings.demo_mode:
-            return {
-                "kpi": {"today_participants": 12, "online_now": 5, "today_events": 47, "today_alerts": 3},
-                "active_meetings": [{"id": "123", "topic": "Demo Meeting", "participant_count": 5, "start_time": datetime.now(timezone.utc).isoformat()}],
-                "recent_events": [],
-                "participants": [],
-            }
+            ...
+
         tid = request.app.state.get_effective_tenant_id(request)
-        kpi = await _compute_kpi_data(tid)
+        now = time.monotonic()
+
+        # ── KPI 级别缓存 ──
+        cached = _dash_cache.get(tid)
+        if cached and (now - _dash_cache_time.get(tid, 0)) < DASH_CACHE_TTL:
+            kpi = cached
+        else:
+            kpi = await _compute_kpi_data(tid)
+            _dash_cache[tid] = kpi
+            _dash_cache_time[tid] = now
+
         _log_perf("dashboard_total", (time.monotonic() - t_total) * 1000)
         return {
             "kpi": {

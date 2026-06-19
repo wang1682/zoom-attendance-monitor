@@ -364,7 +364,7 @@ async def monitor_loop():
                     _report_text = "\n".join(_lines)
                     sys.stdout.write(f"[PERIODIC REPORT] 推送至 {_ch.get('label','?')} tenant={_tid} chat_id={_cp_chat_id} ({len(_v2_participants)}人)\n")
                     sys.stdout.flush()
-                    _cp_tg = TelegramNotifier(bot_token=_cp_bot_token)
+                    _cp_tg = TelegramNotifier(token=_cp_bot_token)
                     await _cp_tg.send(_report_text, chat_id=_cp_chat_id)
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
