@@ -46,8 +46,8 @@
     <th>今日累计</th>
     <th>进入/离开次数</th>
     <th>首次进入</th>
-    <th>离开时间</th>
     <th>最近活动</th>
+    <th>离开时间</th>
   </tr>
   </thead>
   <tbody id="memberTable">
@@ -84,8 +84,8 @@
     <td class="td-mono">{{ dur if dur else '—' }}</td>
     <td class="td-mono">{{ join_c }} / {{ leave_c }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
-    <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
+    <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
   </tr>
   {% endfor %}
   </tbody>
