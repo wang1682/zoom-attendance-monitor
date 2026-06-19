@@ -1588,8 +1588,28 @@ def build_app() -> "FastAPI":
                             if result.get("ok"):
                                 p_conn.execute("INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
                                     (dedup_key, "webhook_event_push", now_utc.isoformat()))
+                                # 同时写入 alerts 表 → 页面「最近告警」展示
+                                p_conn.execute("""INSERT INTO alerts (
+                                    alert_type, severity, title, message, related_name,
+                                    success, created_at, tenant_id, event_type,
+                                    target_channel_id, telegram_chat_id, status, error_message
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
+                                    "webhook_push",
+                                    "info",
+                                    push_title,
+                                    text,
+                                    standard_name,
+                                    1,
+                                    now_utc.isoformat(),
+                                    webhook_tenant_id or "default",
+                                    push_event,
+                                    0,
+                                    "",
+                                    "sent",
+                                    "",
+                                ))
                                 p_conn.commit()
-                                sys.stderr.write("[PUSH] inserted alert_sent\n")
+                                sys.stderr.write("[PUSH] inserted alert_sent + alerts\n")
                                 sys.stderr.flush()
                             else:
                                 sys.stderr.write("[PUSH] send failed: " + str(result.get("error", "")) + "\n")
