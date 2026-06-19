@@ -299,6 +299,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     "group_name": grp_name,
                     "group_id": None,
                     "first_join": "—",
+                    "last_leave_time": None,
                     "last_activity": metrics_last or "—",
                     "today_total_duration": "",
                     "join_count": 0,
@@ -334,6 +335,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 格式化时间显示 ──
     for m in members:
         m["first_join_display"] = _fmt_myt(m.get("first_join", ""))
+        # 在线成员离开时间显示 —（不管 DB 有没有离开记录）
+        if m.get("status") == "online":
+            m["last_leave_time_display"] = "—"
+        else:
+            m["last_leave_time_display"] = _fmt_myt(m.get("last_leave_time", ""))
         m["last_activity_display"] = _fmt_myt(m.get("last_activity", ""))
 
     # ── 排序辅助 ──

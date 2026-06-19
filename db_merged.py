@@ -539,6 +539,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 "join_count": 0,
                 "leave_count": 0,
                 "last_activity": None,
+                "last_leave_time": None,
                 "last_action": None,
                 "email": "",
                 "raw_events": [],
@@ -555,6 +556,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         elif action in ("leave", "left"):
             m["leave_count"] += 1
             m["last_action"] = "leave"
+            m["last_leave_time"] = at
 
         # ── 更新 email：用今天数据里最新一条（按 action_time） ──
         m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": e.get("email", "")})
