@@ -28,7 +28,7 @@
       <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
       <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
     </select>
-    <button class="bt bt-s" onclick="switchTab('groups')" style="font-size:12px;padding:5px 10px;margin-left:8px">📂 分组管理</button>
+    <button class="bt bt-s" onclick="openGroupManage()" style="font-size:12px;padding:5px 10px;margin-left:8px">📂 分组管理</button>
     <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
       <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
       <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
@@ -172,14 +172,8 @@ function switchTab(tab) {
   statusFilter.addEventListener('change', filterTable);
 })();
 
-// ── API 增强渲染：从 /api/v3/members 覆盖今日累计等字段 ──
+// ── API 增强渲染：从 /api/v3/members 覆盖字段 ──
 (function(){
-  function fmtDuration(sec) {
-    sec = parseInt(sec) || 0;
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    return h ? h + 'h' + m + 'm' : m + 'm';
-  }
   fetch('/api/v3/members').then(function(r){ return r.json(); }).then(function(data){
     if (!data || !data.items) return;
     var map = {};
@@ -191,12 +185,80 @@ function switchTab(tab) {
       var name = (row.getAttribute('data-name') || '').toLowerCase();
       var api = map[name];
       if (!api) return;
-      var sec = api.today_seconds || 0;
-      var dur = api.today_total_duration || fmtDuration(sec);
-      var td = row.querySelector('td:nth-child(6)');
-      if (td) td.textContent = dur;
+      // 今日累计 — 用后端渲染值
+      var tdDur = row.querySelector('td:nth-child(5)');
+      if (tdDur) tdDur.textContent = api.today_total_duration || '—';
+      // 首次进入 — 用后端时间格式
+      var tdFirst = row.querySelector('td:nth-child(6)');
+      if (tdFirst) tdFirst.textContent = api.first_join_display || '—';
+      // 最近活动
+      var tdLast = row.querySelector('td:nth-child(7)');
+      if (tdLast) tdLast.textContent = api.last_activity_display || '—';
+      // 离开时间
+      var tdLeave = row.querySelector('td:nth-child(8)');
+      if (tdLeave) tdLeave.textContent = api.last_leave_time_display || '—';
     });
   }).catch(function(){});
 })();
+
+// ── 分组管理 Modal ──
+var groupModalOverlay = document.createElement('div');
+groupModalOverlay.id = 'groupManageModal';
+groupModalOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:none;justify-content:center;align-items:center;';
+groupModalOverlay.innerHTML = '<div class="modal" style="width:640px;max-width:90vw;max-height:85vh;overflow-y:auto;background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px"><div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--cb)"><h3 style="margin:0;font-size:16px">分组管理</h3><span class="modal-close" onclick="closeGroupManage()" style="cursor:pointer;color:var(--tm);font-size:20px;line-height:1">&times;</span></div><div id="groupManageBody">加载中...</div></div>';
+document.body.appendChild(groupModalOverlay);
+
+function openGroupManage() {
+  var container = document.getElementById('groupManageBody');
+  container.innerHTML = '加载中...';
+  document.getElementById('groupManageModal').style.display = 'flex';
+  fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(data){
+    if (!data || !data.groups) { container.innerHTML = '暂无分组数据'; return; }
+    var html = '<style>.gm-row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--cb)}.gm-row:last-child{border:none}.gm-name{flex:1;font-size:13px}.gm-count{color:var(--tm);font-size:12px;margin-right:12px}.gm-actions{display:flex;gap:6px}</style>';
+    data.groups.forEach(function(g){
+      html += '<div class="gm-row">'
+        + '<div class="gm-name"><strong>' + escHtml(g.name) + '</strong>'
+        + (g.description ? '<br><span style="font-size:11px;color:var(--tm)">' + escHtml(g.description) + '</span>' : '')
+        + '</div>'
+        + '<span class="gm-count">' + ((g.members && g.members.length) || 0) + '人</span>'
+        + '<div class="gm-actions">'
+        + '<button class="bt bt-s" onclick="deleteGroup(' + g.id + ',\'' + escAttr(g.name) + '\')" style="color:#ef4444">删除</button>'
+        + '</div></div>';
+    });
+    html += '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--cb)">'
+      + '<input id="newGroupName" class="ipt" placeholder="新分组名称" style="width:200px;margin-right:8px">'
+      + '<input id="newGroupDesc" class="ipt" placeholder="描述（可选）" style="width:240px;margin-right:8px">'
+      + '<button class="bt" onclick="createGroup()">创建</button>'
+      + '</div>';
+    container.innerHTML = html;
+  }).catch(function(){ container.innerHTML = '加载失败'; });
+}
+
+function closeGroupManage() {
+  document.getElementById('groupManageModal').style.display = 'none';
+}
+
+function createGroup() {
+  var name = document.getElementById('newGroupName').value.trim();
+  if (!name) return alert('请输入分组名称');
+  var desc = document.getElementById('newGroupDesc').value.trim();
+  fetch('/api/v3/member-groups', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name, description: desc})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { openGroupManage(); } else { alert(j.error || '创建失败'); }
+  }).catch(function(){ alert('请求失败'); });
+}
+
+function deleteGroup(id, name) {
+  if (!confirm('确定删除分组「' + name + '」？不会删除成员。')) return;
+  fetch('/api/v3/member-groups/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { openGroupManage(); location.reload(); } else { alert(j.error || '删除失败'); }
+  }).catch(function(){ alert('请求失败'); });
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 </script>
 {% endblock %}

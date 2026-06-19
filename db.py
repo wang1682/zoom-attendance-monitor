@@ -646,7 +646,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
     # ── 按 resolve_display_name 分组 ──
     members = OrderedDict()
     for e in raw:
-        resolved = resolve_display_name(e["name"])
+        resolved = resolve_display_name(e["name"], tenant_id)
         display_name = resolved["display_name"]
 
         if display_name not in members:
@@ -705,37 +705,28 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
     # ── 计算时长 & 状态 ──
     for m in members.values():
         m["raw_events"].sort(key=lambda x: x["action_time"])
-        deduped = []
-        for ev in m["raw_events"]:
-            if deduped and deduped[-1]["action"] in ("enter", "joined", "leave", "left") \
-               and deduped[-1]["action"] == ev["action"]:
-                continue
-            deduped.append(ev)
-
+        # ── 用栈配对：只处理 enter/leave ──
         total_seconds = 0
-        i = 0
-        while i < len(deduped):
-            ev = deduped[i]
+        enter_stack = []  # store (enter_dt, index) for pairing
+        for ev in m["raw_events"]:
+            try:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+            except:
+                at_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if at_dt.tzinfo is None:
+                at_dt = at_dt.replace(tzinfo=timezone.utc)
             if ev["action"] in ("enter", "joined"):
-                enter_dt = datetime.fromisoformat(ev["action_time"])
-                if enter_dt.tzinfo is None:
-                    enter_dt = enter_dt.replace(tzinfo=timezone.utc)
-                # 只算今日 MYT 范围内的时长
-                if enter_dt < today_start_utc:
-                    enter_dt = today_start_utc
-                leave_dt = None
-                for j in range(i + 1, len(deduped)):
-                    if deduped[j]["action"] in ("leave", "left"):
-                        leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
-                        if leave_dt is not None and leave_dt.tzinfo is None:
-                            leave_dt = leave_dt.replace(tzinfo=timezone.utc)
-                        i = j
-                        break
-                end_dt = leave_dt or now_utc
-                dur = (end_dt - enter_dt).total_seconds()
-                if 0 < dur < 86400:
-                    total_seconds += dur
-            i += 1
+                enter_stack.append(at_dt)
+            elif ev["action"] in ("leave", "left"):
+                if enter_stack:
+                    enter_dt = enter_stack.pop(0)  # FIFO: first enter pairs with first leave
+                    if enter_dt < today_start_utc:
+                        enter_dt = today_start_utc
+                    end_dt = at_dt
+                    dur = (end_dt - enter_dt).total_seconds()
+                    if 0 < dur < 86400:
+                        total_seconds += dur
+                # 没有未配对 enter 的 leave 直接丢弃（不异常）
 
         m["today_total_seconds"] = int(total_seconds)
         m["today_total_duration"] = _fmt_dur(int(total_seconds))

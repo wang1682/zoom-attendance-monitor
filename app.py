@@ -925,9 +925,10 @@ def build_app() -> "FastAPI":
     # ── Member Groups API ─────────────────────────────────────────────────
 
     @app.get("/api/v3/member-groups")
-    async def api_v3_get_member_groups():
-        """获取所有成员分组"""
-        groups = db.get_all_groups()
+    async def api_v3_get_member_groups(request: Request):
+        """获取当前租户的所有成员分组"""
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        groups = db.get_all_groups(tenant_id=tenant_id)
         return {"ok": True, "groups": groups}
 
     @app.post("/api/v3/member-groups")
@@ -941,11 +942,12 @@ def build_app() -> "FastAPI":
         description = data.get("description", "").strip()
         if not name:
             return {"ok": False, "error": "name is required"}
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         conn = db._get_conn()
         now = datetime.now(timezone.utc).isoformat()
         cur = conn.execute(
-            "INSERT INTO member_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (name, description, now, now),
+            "INSERT INTO member_groups (tenant_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (tenant_id, name, description, now, now),
         )
         conn.commit()
         return {"ok": True, "id": cur.lastrowid}
@@ -970,8 +972,11 @@ def build_app() -> "FastAPI":
         role = request.session.get("role", "tenant")
         if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
-        ok = db.delete_member_group(group_id)
-        return {"ok": ok}
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        conn = db._get_conn()
+        cur = conn.execute("DELETE FROM member_groups WHERE id = ? AND tenant_id = ?", (group_id, tenant_id))
+        conn.commit()
+        return {"ok": cur.rowcount > 0}
 
     @app.post("/api/v3/member-groups/{group_id}/members")
     async def api_v3_add_member(group_id: int, request: Request):
@@ -980,7 +985,7 @@ def build_app() -> "FastAPI":
         member_name = data.get("member_name", "").strip()
         if not member_name:
             return {"ok": False, "error": "member_name is required"}
-        tenant_id = request.session.get("tenant_id", "")
+        tenant_id = request.app.state.get_effective_tenant_id(request)
         ok = db.add_member_to_group(group_id, member_name, tenant_id)
         return {"ok": ok}
 
@@ -1410,7 +1415,19 @@ def build_app() -> "FastAPI":
             action = "breakout_enter" if "breakout" in event_type and "joined" in event_type else \
                      "breakout_leave" if "breakout" in event_type and "left" in event_type else \
                      "enter" if "joined" in event_type else "leave"
-            action_time = datetime.now(timezone.utc)
+            raw_time = (
+                participant.get("join_time")
+                or participant.get("leave_time")
+                or participant.get("date_time")
+                or ""
+            )
+            if raw_time:
+                try:
+                    action_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                except:
+                    action_time = datetime.now(timezone.utc)
+            else:
+                action_time = datetime.now(timezone.utc)
             if name and action:
                 db.save_participant(meeting_id, name, email, action, action_time,
                                     source="webhook", tenant_id=webhook_tenant_id or "unknown")
@@ -2599,6 +2616,27 @@ def build_app() -> "FastAPI":
                 if afj and (not fj or afj < fj):
                     fj = afj
             m["first_join"] = fj
+            # 格式化显示字段
+            def _fmt_myt_display(raw):
+                if not raw:
+                    return ""
+                try:
+                    from datetime import timedelta
+                    d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                    if d.tzinfo is None:
+                        d = d.replace(tzinfo=timezone.utc)
+                    d_myt = d + timedelta(hours=8)
+                    return d_myt.strftime("%m-%d %H:%M")
+                except:
+                    return ""
+            m["first_join_display"] = _fmt_myt_display(fj)
+            m["last_activity_display"] = _fmt_myt_display(latest)
+            # last_leave_time_display: 从 DB 查最近一条 leave
+            leave_row = conn.execute(
+                "SELECT action_time FROM zoom_participants WHERE tenant_id=? AND action IN ('leave','left','breakout_leave') AND name=? ORDER BY action_time DESC LIMIT 1",
+                (tenant_id, nm),
+            ).fetchone()
+            m["last_leave_time_display"] = _fmt_myt_display(leave_row[0] if leave_row else "")
             if m.get("is_online") and fj:
                 try:
                     first_dt = datetime.fromisoformat(str(fj).replace("Z", "+00:00"))
