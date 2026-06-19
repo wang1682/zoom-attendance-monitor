@@ -2593,6 +2593,8 @@ def build_app() -> "FastAPI":
                     latest = als
             # 在线兜底:如果 first_join 早于事件流累计，用 now - first_join
             fj = ""
+            # 如果今天完全没有这个成员的 event，skip 在线兜底（不把昨天 first_join 拉到今天）
+            has_today_event = any(today_secs.get(alias, 0) > 0 for alias in aliases_list)
             for alias in aliases_list:
                 afj = first_join_map.get(alias, "")
                 if not afj:
@@ -2637,7 +2639,7 @@ def build_app() -> "FastAPI":
                 (tenant_id, nm),
             ).fetchone()
             m["last_leave_time_display"] = _fmt_myt_display(leave_row[0] if leave_row else "")
-            if m.get("is_online") and fj:
+            if m.get("is_online") and fj and has_today_event:
                 try:
                     first_dt = datetime.fromisoformat(str(fj).replace("Z", "+00:00"))
                     if first_dt.tzinfo is None:
