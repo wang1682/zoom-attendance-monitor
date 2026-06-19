@@ -2438,7 +2438,8 @@ def build_app() -> "FastAPI":
         # 获取今日时长与在线状态
         from datetime import datetime, timezone, timedelta
         myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
-        today_start_utc = (myt_now - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        myt_midnight = myt_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = (myt_midnight - timedelta(hours=8)).isoformat()
 
         # 在线名单
         online_names = set()
@@ -2548,7 +2549,18 @@ def build_app() -> "FastAPI":
             aliases_list = [m["raw_name"]] + (m.get("aliases") or [])
             for alias in aliases_list:
                 total_sec += today_secs.get(alias, 0)
+                if not total_sec:
+                    # fallback: case-insensitive match
+                    for k, v in today_secs.items():
+                        if k.lower() == alias.lower():
+                            total_sec += v
+                            break
                 als = last_activity_map.get(alias, "")
+                if not als:
+                    for k, v in last_activity_map.items():
+                        if k.lower() == alias.lower() and v:
+                            als = v
+                            break
                 if als and als > latest:
                     latest = als
             # 在线兜底:如果 first_join 早于事件流累计，用 now - first_join
@@ -2556,6 +2568,11 @@ def build_app() -> "FastAPI":
             for alias in aliases_list:
                 afj = first_join_map.get(alias, "")
                 if not afj:
+                    # case-insensitive fallback
+                    for k, v in first_join_map.items():
+                        if k.lower() == alias.lower() and v:
+                            afj = v
+                            break
                     try:
                         cn = conn.execute("SELECT canonical_name FROM member_aliases WHERE alias_name=?", (alias,)).fetchone()
                         if cn:
