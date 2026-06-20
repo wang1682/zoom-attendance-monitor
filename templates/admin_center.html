@@ -42,7 +42,7 @@
     <div class="admin-card-icon">⚙️</div>
     <div class="admin-card-body">
       <div class="admin-card-title">系统设置</div>
-      <div class="admin-card-desc">全局站点、安全、Zoom、Telegram 配置</div>
+      <div class="admin-card-desc">全局站点、安全、Zoom、Telegram、验证 Bot / 2FA 配置</div>
     </div>
   </a>
   {% endif %}
@@ -91,18 +91,7 @@
   </a>
   {% endif %}
 
-  <!-- ⑧ Telegram 配置 — super_admin only → 跳转到系统设置 -->
-  {% if is_super_admin %}
-  <a href="/dashboard/settings#telegram" class="admin-card">
-    <div class="admin-card-icon">🤖</div>
-    <div class="admin-card-body">
-      <div class="admin-card-title">Telegram</div>
-      <div class="admin-card-desc">配置 Telegram / 2FA / Bot 等系统通知</div>
-    </div>
-  </a>
-  {% endif %}
-
-  <!-- ⑨ 账号管理 — super_admin / admin / tenant_admin -->
+  <!-- ⑧ 账号管理 — super_admin / admin / tenant_admin -->
   {% if is_admin or is_tenant_admin %}
   <a href="/dashboard/tenant/accounts" class="admin-card">
     <div class="admin-card-icon">📹</div>
