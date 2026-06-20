@@ -1100,7 +1100,6 @@ async def dashboard_settings_test_telegram(request: Request, user: dict = Depend
             # Get the user's chat_id from session
             chat_id = request.session.get("user_chat_id", "")
             if not chat_id:
-                # Try to find the user's telegram_chat_id from DB
                 fresh_user = db.get_user_by_id(user["id"])
                 chat_id = fresh_user.get("telegram_chat_id", "") if fresh_user else ""
 
@@ -1109,24 +1108,23 @@ async def dashboard_settings_test_telegram(request: Request, user: dict = Depend
                     "ok": False, "message": "当前用户未绑定 Telegram。请先在安全中心绑定 Telegram 后再测试。"
                 })
 
-            # Send test message
+            # Send test message via TelegramService
             msg = (
                 "🧪 *Zoom Monitor 测试推送*\n\n"
                 "这是一条来自系统设置的测试消息。\n"
                 f"发送时间: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
                 f"Bot: @{bot_username}"
             )
-            pr = await cl.post(
-                f"https://api.telegram.org/bot{bot_token}/sendMessage",
-                json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
-            )
-            if pr.status_code == 200:
+            from services.telegram import TelegramService
+            tg = TelegramService(token=bot_token, chat_id=chat_id)
+            result = await tg.send_async(msg, parse_mode="Markdown")
+            if result.get("ok"):
                 return JSONResponse(content={
                     "ok": True, "message": f"✅ 测试推送成功！已发送至 @{bot_username}"
                 })
             else:
                 return JSONResponse(status_code=400, content={
-                    "ok": False, "message": f"发送失败: HTTP {pr.status_code}"
+                    "ok": False, "message": f"发送失败: {result.get('error', 'unknown')}"
                 })
     except Exception as e:
         return JSONResponse(status_code=500, content={
@@ -1972,17 +1970,10 @@ async def admin_channels_test(request: Request, channel_id: int,
         return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
     bot_config = db.get_tenant_bot_config(tenant_id)
     token = bot_config["token"] or settings.telegram_bot_token
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, json={
-                "chat_id": target["chat_id"],
-                "text": "✅ 测试消息 — 推送配置正常，机器人已接入",
-            })
-            data = resp.json()
-            return JSONResponse({"ok": data.get("ok", False), "chat_id": target["chat_id"]})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
+    from services.telegram import TelegramService
+    tg = TelegramService(token=token)
+    result = tg.send("✅ 测试消息 — 推送配置正常，机器人已接入", chat_id=target["chat_id"])
+    return JSONResponse(result)
 
 
 @router.get("/api/meeting-participants")

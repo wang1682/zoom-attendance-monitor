@@ -21,18 +21,17 @@ from db import (
 logger = logging.getLogger(__name__)
 
 API_BASE = f"https://api.telegram.org/bot{settings.telegram_bot_token}"
+GETUPDATES_URL = f"{API_BASE}/getUpdates"
 PRIVATE_CHAT = settings.telegram_private_chat_id
 POLL_TIMEOUT = 30  # long-poll 秒
 
 
 def _send(chat_id: str, text: str, parse_mode: str = "HTML") -> bool:
     try:
-        resp = requests.post(
-            f"{API_BASE}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": parse_mode},
-            timeout=10,
-        )
-        return resp.ok
+        from services.telegram import TelegramService
+        tg = TelegramService(chat_id=chat_id)
+        result = tg.send(text, parse_mode=parse_mode)
+        return result.get("ok", False)
     except Exception as e:
         logger.warning("send_message 失败: %s", e)
         return False
@@ -113,8 +112,7 @@ def poll_loop():
 
     while True:
         try:
-            resp = requests.get(
-                f"{API_BASE}/getUpdates",
+            resp = requests.get(GETUPDATES_URL,
                 params={
                     "offset": offset,
                     "timeout": POLL_TIMEOUT,

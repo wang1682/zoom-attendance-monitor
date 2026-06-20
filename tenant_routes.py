@@ -626,21 +626,14 @@ async def tenant_channels_test(request: Request, channel_id: int,
         return JSONResponse({"ok": False, "error": "Channel not found"}, status_code=404)
     # Use channel's bot_token first, fallback to tenant's bot, then global
     token = target.get("bot_token", "") or db.get_tenant_bot_config(tenant_id)["token"] or settings.telegram_bot_token
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, json={
-                "chat_id": target["chat_id"],
-                "text": "✅ 测试消息 — 推送配置正常，机器人已接入",
-            })
-            data = resp.json()
-            if data.get("ok"):
-                return JSONResponse({"ok": True, "message": "✅ 测试消息已发送", "chat_id": target["chat_id"]})
-            else:
-                err = data.get("description", "Telegram API returned error")
-                return JSONResponse({"ok": False, "error": err, "chat_id": target["chat_id"]})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)})
+    from services.telegram import TelegramService
+    tg = TelegramService(token=token)
+    result = tg.send("✅ 测试消息 — 推送配置正常，机器人已接入", chat_id=target["chat_id"])
+    if result.get("ok"):
+        return JSONResponse({"ok": True, "message": "✅ 测试消息已发送", "chat_id": target["chat_id"]})
+    else:
+        err = result.get("error", "send failed")
+        return JSONResponse({"ok": False, "error": err, "chat_id": target["chat_id"]})
 
 
 @router.post("/channels/bot-test")

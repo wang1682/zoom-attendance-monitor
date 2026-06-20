@@ -867,24 +867,19 @@ def build_app() -> "FastAPI":
                 f"事件: {event_type}\n"
                 "状态: 推送配置正常"
             )
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{channel['bot_token']}/sendMessage",
-                    json={"chat_id": channel["chat_id"], "text": text},
-                    timeout=10,
+            from services.telegram import TelegramService
+            tg = TelegramService(token=channel["bot_token"], chat_id=channel["chat_id"])
+            result = tg.send(text)
+            if not result.get("ok"):
+                import logging
+                logger = logging.getLogger("zoom_monitor")
+                logger.error("[RULE_TEST] event=%s tenant=%s channel=%s err=%s",
+                             event_type, tenant_id, target_id, result.get("error"))
+                print(f"[RULE_TEST] event={event_type} tenant={tenant_id} channel={target_id} err={result.get('error')}", flush=True)
+                return JSONResponse(
+                    {"ok": False, "error": f"Telegram: {result.get('error', 'unknown')}"},
+                    status_code=500,
                 )
-                data = resp.json()
-                if not data.get("ok"):
-                    import logging
-                    logger = logging.getLogger("zoom_monitor")
-                    logger.error("[RULE_TEST] event=%s tenant=%s channel=%s resp=%s",
-                                 event_type, tenant_id, target_id, resp.text)
-                    print(f"[RULE_TEST] event={event_type} tenant={tenant_id} channel={target_id} resp={resp.text}", flush=True)
-                    return JSONResponse(
-                        {"ok": False, "error": f"Telegram: {data.get('description', 'unknown')}"},
-                        status_code=500,
-                    )
             return {"ok": True, "message": "测试消息已发送"}
         except Exception as e:
             tb = traceback.format_exc()
@@ -1115,11 +1110,10 @@ def build_app() -> "FastAPI":
         token = "8791140288:AAHL_7Az6vQitTIJUhlP-M8YaMXzPz2joG4"
         now_str = datetime.now(MYT).strftime("%m-%d %H:%M:%S")
         try:
-            import requests as req
-            r = req.post(f"https://api.telegram.org/bot{token}/sendMessage", json={
-                "chat_id": "7922047310", "text": f"🧪 Zoom Monitor 测试消息\n\nTelegram 推送正常 ✅\n发送时间: {now_str} MYT"
-            }, timeout=10)
-            return {"ok": r.json().get("ok", False), "sent_at": now_str}
+            from services.telegram import TelegramService
+            tg = TelegramService(token=token, chat_id="7922047310")
+            result = tg.send(f"🧪 Zoom Monitor 测试消息\n\nTelegram 推送正常 ✅\n发送时间: {now_str} MYT")
+            return {"ok": result.get("ok", False), "sent_at": now_str}
         except Exception as e:
             return {"ok": False, "error": str(e), "sent_at": now_str}
 
