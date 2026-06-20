@@ -91,13 +91,13 @@
   </a>
   {% endif %}
 
-  <!-- ⑧ 验证 Bot — super_admin only -->
+  <!-- ⑧ Telegram 配置 — super_admin only → 跳转到系统设置 -->
   {% if is_super_admin %}
-  <a href="/dashboard/settings/bot" class="admin-card">
+  <a href="/dashboard/settings#telegram" class="admin-card">
     <div class="admin-card-icon">🤖</div>
     <div class="admin-card-body">
-      <div class="admin-card-title">验证 Bot</div>
-      <div class="admin-card-desc">配置两步验证专用 Telegram Bot</div>
+      <div class="admin-card-title">Telegram</div>
+      <div class="admin-card-desc">配置 Telegram / 2FA / Bot 等系统通知</div>
     </div>
   </a>
   {% endif %}
