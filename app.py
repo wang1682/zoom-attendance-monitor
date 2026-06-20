@@ -818,68 +818,54 @@ def build_app() -> "FastAPI":
     # ── Telegram Rules API ──────────────────────────────────────────────
 
     @app.get("/api/v3/telegram-rules")
-    async def api_v3_get_telegram_rules():
-        rules = db.get_telegram_rules()
+    async def api_v3_get_telegram_rules(request: Request):
+        """获取所有预警规则（按租户隔离，走 AlertService）"""
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, 'get_effective_tenant_id') else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
+        from services.alert import AlertService
+        rules = AlertService().get_rules(tenant_id)
         return {"ok": True, "rules": rules}
 
     @app.post("/api/v3/telegram-rules")
     async def api_v3_create_telegram_rule(request: Request):
+        """创建预警规则（按租户隔离，走 AlertService）"""
         data = await request.json()
         event_type = data.get("event_type", "").strip()
-        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, 'get_effective_tenant_id') else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
         if not event_type:
             return {"ok": False, "error": "event_type is required"}
-        rule_id = db.upsert_telegram_rule(tenant_id, event_type, data)
+        from services.alert import AlertService
+        rule_id = AlertService().upsert_rule(tenant_id, event_type, data)
         return {"ok": True, "id": rule_id}
 
     @app.put("/api/v3/telegram-rules/{event_type}")
     async def api_v3_update_telegram_rule(event_type: str, request: Request):
+        """更新预警规则（按租户隔离，走 AlertService）"""
         data = await request.json()
-        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
-        rule_id = db.upsert_telegram_rule(tenant_id, event_type, data)
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, 'get_effective_tenant_id') else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
+        from services.alert import AlertService
+        rule_id = AlertService().upsert_rule(tenant_id, event_type, data)
         return {"ok": True, "id": rule_id}
 
     @app.delete("/api/v3/telegram-rules/{event_type}")
     async def api_v3_delete_telegram_rule(event_type: str, request: Request):
-        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
-        db.delete_telegram_rule(tenant_id, event_type)
-        db.set_alert_rule_channels(event_type, [])  # 清理关联
+        """删除预警规则（按租户隔离，走 AlertService）"""
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, 'get_effective_tenant_id') else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
+        from services.alert import AlertService
+        AlertService().delete_rule(tenant_id, event_type)
         return {"ok": True}
 
     @app.post("/api/v3/telegram-rules/{event_type}/test")
     async def api_v3_test_telegram_rule(event_type: str, request: Request):
-        """测试发送推送消息，验证规则配置是否正确"""
+        """测试预警规则推送（走 AlertService）"""
         import traceback
         try:
-            tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
-            rules = db.get_telegram_rules_by_tenant(tenant_id)
-            rule = next((r for r in rules if r["event_type"] == event_type), None)
-            if not rule:
-                return JSONResponse({"ok": False, "error": "规则不存在"}, status_code=404)
-            target_id = rule.get("target_channel_id")
-            channel = db.get_telegram_channel_by_id(target_id) if target_id else None
-            if not channel or not channel.get("bot_token") or not channel.get("chat_id"):
-                return JSONResponse({"ok": False, "error": "推送目标未配置"}, status_code=400)
-            title = rule.get("title") or event_type
-            text = (
-                "✅ 测试规则推送\n\n"
-                f"规则: {title}\n"
-                f"事件: {event_type}\n"
-                "状态: 推送配置正常"
-            )
-            from services.telegram import TelegramService
-            tg = TelegramService(token=channel["bot_token"], chat_id=channel["chat_id"])
-            result = tg.send(text)
+            tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, "get_effective_tenant_id") else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
+            from services.alert import AlertService
+            result = AlertService().test_rule(tenant_id, event_type)
             if not result.get("ok"):
-                import logging
-                logger = logging.getLogger("zoom_monitor")
-                logger.error("[RULE_TEST] event=%s tenant=%s channel=%s err=%s",
-                             event_type, tenant_id, target_id, result.get("error"))
-                print(f"[RULE_TEST] event={event_type} tenant={tenant_id} channel={target_id} err={result.get('error')}", flush=True)
-                return JSONResponse(
-                    {"ok": False, "error": f"Telegram: {result.get('error', 'unknown')}"},
-                    status_code=500,
-                )
+                status_code = 404 if "不存在" in (result.get("error") or "") else 400
+                return JSONResponse({"ok": False, "error": result.get("error")}, status_code=status_code)
+            db.update_rule_test_result(tenant_id, event_type, True)
             return {"ok": True, "message": "测试消息已发送"}
         except Exception as e:
             tb = traceback.format_exc()
@@ -1488,182 +1474,18 @@ def build_app() -> "FastAPI":
                     )
             conn.commit()
 
-        # ── Webhook Telegram Push ──────────────────────────────────────
+        # ── Webhook Telegram Push (走 AlertService) ──────────────────────
         try:
-            p_conn = db._get_conn()
-            rule = p_conn.execute("SELECT enabled FROM alert_rules WHERE rule_type='webhook_event_push'").fetchone()
-            if rule and rule[0] == 1:
-                from telegram_push import send_message
-                import datetime as _dt
-                MYT = _dt.timezone(_dt.timedelta(hours=8))
-                now_utc = _dt.datetime.now(_dt.timezone.utc)
-                now_myt_str = now_utc.astimezone(MYT).strftime("%m-%d %H:%M:%S")
-
-                # 查租户级 bot_token(优先于全局)
-                _bot_token = ""
-                if webhook_tenant_id:
-                    _row = p_conn.execute(
-                        "SELECT telegram_bot_token FROM tenants WHERE id=?", (webhook_tenant_id,)
-                    ).fetchone()
-                    if _row and _row[0]:
-                        _bot_token = _row[0]
-
-                # Build dedup key
-                obj = payload.get("payload", {}).get("object", payload.get("object", {}))
-                participant = obj.get("participant", {})
-                pid = str(participant.get("user_id", "")) or str(participant.get("id", ""))
-                ename = participant.get("user_name", "").strip()
-                sd = participant.get("sharing_details", {})
-                sdt = sd.get("date_time", "")
-                
-                # Determine event type for display
-                push_event = "unknown"
-                push_icon = "ℹ️"
-                push_title = ""
-                _rm = resolve_member(ename)
-                standard_name = _rm["standard_name"]
-                group_name = _rm["group_name"]
-                is_mapped = _rm["is_mapped"]
-                if "breakout_room" in event_type:
-                    # Check for breakout room events first
-                    if "participant_joined" in event_type:
-                        push_event = "participant_joined_breakout_room"
-                        push_icon = "📌"
-                        if group_name:
-                            push_title = f"加入【{group_name}】分组讨论室"
-                        elif is_mapped:
-                            push_title = "加入分组讨论室"
-                        else:
-                            push_title = f"未配置成员 {standard_name} 加入分组讨论室"
-                    elif "participant_left" in event_type:
-                        push_event = "participant_left_breakout_room"
-                        push_icon = "🚪"
-                        if group_name:
-                            push_title = f"离开【{group_name}】分组讨论室"
-                        elif is_mapped:
-                            push_title = "离开分组讨论室"
-                        else:
-                            push_title = f"未配置成员 {standard_name} 离开分组讨论室"
-                    elif "sharing_started" in event_type:
-                        push_event = "sharing_started"
-                        push_icon = "🖥"
-                        push_title = "分组讨论室开始共享屏幕"
-                    elif "sharing_ended" in event_type:
-                        push_event = "sharing_ended"
-                        push_icon = "🖥"
-                        push_title = "分组讨论室结束共享屏幕"
-                elif "participant_joined" in event_type and "waiting_room" not in event_type:
-                    push_event = "participant_joined"
-                    push_icon = "📌"
-                    if group_name:
-                        push_title = f"{standard_name} 进入【{group_name}】主会议"
-                    else:
-                        push_title = "进入主会议"
-                elif "participant_left" in event_type:
-                    push_event = "participant_left"
-                    push_icon = "🚪"
-                    push_title = "成员离开会议"
-                elif "waiting_room" in event_type and "joined" in event_type:
-                    push_event = "waiting_room_joined"
-                    push_icon = "⏳"
-                    push_title = "有人在等候室"
-                elif "admitted" in event_type:
-                    push_event = "admitted"
-                    push_icon = "✅"
-                    push_title = "等候室成员已准入"
-                elif "sharing_started" in event_type:
-                    push_event = "sharing_started"
-                    push_icon = "🖥"
-                    push_title = "开始共享屏幕"
-                elif "sharing_ended" in event_type:
-                    push_event = "sharing_ended"
-                    push_icon = "🖥"
-                    push_title = "结束共享屏幕"
-                
-                if push_title and ename:
-                    mid = str(obj.get("id", ""))
-                    event_ts = sdt or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-                    user_key = pid or standard_name.strip().lower().replace(" ", "")
-                    dedup_key = "webhook:" + push_event + ":" + mid + ":" + user_key + ":" + event_ts[:16]
-                    sys.stderr.write("[PUSH] dedup_key=" + dedup_key + "\n")
-                    sys.stderr.flush()
-
-                    # Check rule-based gate before sending
-                    if not db.should_send_telegram(push_event):
-                        sys.stderr.write(f"[PUSH] {push_event} blocked by rule (should_send_telegram=False)\n")
-                        sys.stderr.flush()
-                    else:
-                        already = p_conn.execute("SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)).fetchone()
-                        if already:
-                            sys.stderr.write("[PUSH] duplicate, skipped\n")
-                            sys.stderr.flush()
-                        else:
-                            content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
-                            extra_line = "\n\uD83D\uDCC4 \u5185\u5BB9: " + content_type if content_type else ""
-                            text = push_icon + " *" + push_title + "*\n\n" + "\uD83D\uDC46 " + standard_name + "\n" + "\uD83D\uDD14 \u4F1A\u8BAE: " + mid + "\n" + "\u23F0 " + now_myt_str + extra_line
-                            # 解析 target channel(s) - 从 tenant_channels 读取
-                            _targets = []
-                            try:
-                                _wtid = webhook_tenant_id or ""
-                                _channels = db.get_tenant_channels(_wtid) if _wtid else []
-                                for _ch in _channels:
-                                    if not _ch.get("is_enabled", 1):
-                                        continue
-                                    _c_bot = _ch.get("bot_token", "") or _bot_token or None
-                                    if _c_bot and _ch.get("chat_id"):
-                                        _targets.append({"chat_id": _ch["chat_id"], "bot_token": _c_bot})
-                            except:
-                                pass
-                            if not _targets:
-                                sys.stderr.write("[PUSH] no enabled tenant_channels for " + str(webhook_tenant_id) + ", skipping\n")
-                                sys.stderr.flush()
-                                _targets = []
-                            result = {"ok": False, "error": "no targets"}
-                            for _t in _targets:
-                                result = send_message(text, chat_id=_t["chat_id"], bot_token=_t["bot_token"] or None)
-                                sys.stderr.write(f"[PUSH] send to {_t['chat_id']}: " + str(result) + "\n")
-                                sys.stderr.flush()
-                            if result.get("ok"):
-                                def _safe_text(v):
-                                    if v is None:
-                                        return ""
-                                    return str(v).encode("utf-8", "ignore").decode("utf-8", "ignore")
-                                safe_title = _safe_text(push_title)
-                                safe_message = _safe_text(text)
-                                safe_name = _safe_text(standard_name)
-                                safe_event = _safe_text(push_event)
-
-                                p_conn.execute(
-                                    "INSERT OR REPLACE INTO alert_sent (alert_key, rule_type, sent_at) VALUES (?, ?, ?)",
-                                    (_safe_text(dedup_key), "webhook_event_push", now_utc.isoformat()),
-                                )
-
-                                p_conn.execute("""INSERT INTO alerts (
-                                    alert_type, severity, title, message, related_name,
-                                    success, created_at, tenant_id, event_type,
-                                    target_channel_id, telegram_chat_id, status, error_message
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", (
-                                    "webhook_push",
-                                    "info",
-                                    safe_title,
-                                    safe_message,
-                                    safe_name,
-                                    1,
-                                    now_utc.isoformat(),
-                                    webhook_tenant_id or "default",
-                                    safe_event,
-                                    0,
-                                    "",
-                                    "sent",
-                                    "",
-                                ))
-
-                                p_conn.commit()
-                                sys.stderr.write("[PUSH] inserted alert_sent + alerts\n")
-                                sys.stderr.flush()
-                            else:
-                                sys.stderr.write("[PUSH] send failed: " + str(result.get("error", "")) + "\n")
-                                sys.stderr.flush()
+            webhook_tenant_id = webhook_tenant_id or "default"
+            from services.alert import AlertService
+            alert_service = AlertService()
+            alert_service.handle_webhook_event(
+                payload=payload,
+                event_type=event_type,
+                tenant_id=webhook_tenant_id,
+                account_id=account_id,
+                bot_token_override="",
+            )
         except Exception as e:
             sys.stderr.write(f"[WEBHOOK_PUSH] error: {e}\n")
             sys.stderr.flush()

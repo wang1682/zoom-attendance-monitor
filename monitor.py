@@ -233,6 +233,7 @@ async def monitor_loop():
     sys.stdout.flush()
 
     cycle_count = 0
+    _known_tenants: set[str] = set()
     while True:
         cycle_count += 1
         try:
@@ -253,6 +254,7 @@ async def monitor_loop():
             )
 
             # 默认账号推送到 tenant_id=default 的 channels
+            _known_tenants.add("default")
             await _push_entries(d_strangers, "stranger", "default", push_now, now_myt, tg)
             await _push_entries(d_new, "enter", "default", push_now, now_myt, tg)
             await _push_entries(d_leaves, "leave", "default", push_now, now_myt, tg)
@@ -280,6 +282,7 @@ async def monitor_loop():
 
                     # 每个租户各自推送
                     tid = acct["tenant_id"]
+                    _known_tenants.add(tid)
                     await _push_entries(a_strangers, "stranger", tid, push_now, now_myt, tg)
                     await _push_entries(a_new, "enter", tid, push_now, now_myt, tg)
                     await _push_entries(a_leaves, "leave", tid, push_now, now_myt, tg)
@@ -305,80 +308,16 @@ async def monitor_loop():
             if accounts:
                 detail += f" {len(accounts)+1}账号"
 
-                        # ── Periodic online report (每 3 小时一次，统一走 telegram_alert_rules 配置) ──
-            if False and now_hour not in _report_sent_hours:
+                        # ── Periodic online report (每 3 小时一次，走 ReportService) ──
+            if now_hour not in _report_sent_hours:
                 _report_sent_hours.add(now_hour)
-                import db as _db
-                from services.zoom import ZoomService
-                from app import resolve_member
-
-                # 查询所有已启用的 periodic_online_report 规则
-                _report_rules = _db._get_conn().execute(
-                    "SELECT id, event_type, enabled, tenant_id, target_channel_id "
-                    "FROM telegram_alert_rules "
-                    "WHERE event_type='periodic_online_report' AND enabled=1"
-                ).fetchall()
-                for _rule in _report_rules:
-                    _tid = _rule["tenant_id"]
-                    _ch_id = _rule["target_channel_id"]
-                    if not _ch_id:
-                        continue
-                    # 从 telegram_channels 获取频道 Bot 信息
-                    _ch_row = _db._get_conn().execute(
-                        "SELECT chat_id, bot_token, bot_username FROM telegram_channels WHERE id=? AND enabled=1",
-                        (_ch_id,)
-                    ).fetchone()
-                    if not _ch_row or not _ch_row["bot_token"]:
-                        continue
-                    _cp_chat_id = _ch_row["chat_id"]
-                    _cp_bot_token = _ch_row["bot_token"]
+                from services.report import ReportService
+                rs = ReportService()
+                for _rt in list(_known_tenants):
                     try:
-                        _zoom = ZoomService()
-                        _live = await _zoom.get_live_meetings(_tid)
-                        _v2_participants = []
-                        for _m in _live.get("meetings", []):
-                            for _p in _m.get("participants", []):
-                                _raw = _p.get("name", "").strip()
-                                if not _raw:
-                                    continue
-                                _rm = resolve_member(_raw)
-                                _std = _rm["standard_name"]
-                                _grp = _rm.get("group_name") or "未分组"
-                                _mins = _p.get("online_minutes", 0)
-                                _h, _m = _mins // 60, _mins % 60
-                                _v2_participants.append((_std, _grp, _mins, _h, _m))
-                    except Exception:
-                        _v2_participants = []
-                    _grouped = {}
-                    for _std, _grp, _mins, _h, _m in _v2_participants:
-                        _grouped.setdefault(_grp, []).append((_std, _mins, _h, _m))
-                    for _g in _grouped:
-                        _grouped[_g].sort(key=lambda x: x[1], reverse=True)
-                    _ordered = []
-                    for _g in ("核销", "推进"):
-                        if _g in _grouped:
-                            _ordered.append((_g, _grouped.pop(_g)))
-                    for _g, _members in _grouped.items():
-                        _ordered.append((_g, _members))
-                    _lines = ["🟠 实时在线", f"👥 在线人数：{len(_v2_participants)}", ""]
-                    if _v2_participants:
-                        _g_emoji = {"核销": "🔵", "推进": "🟡"}
-                        for _g, _members in _ordered:
-                            _emoji = _g_emoji.get(_g, "⚪")
-                            _lines.append(f"{_emoji} {_g}（{len(_members)}）")
-                            for _gi, (_std, _mins, _h, _m) in enumerate(_members):
-                                _idx = _gi + 1
-                                _dur_cn = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
-                                _lines.append(f"{_idx}. {_std} · {_dur_cn}")
-                            _lines.append("")
-                    else:
-                        _lines.append("当前无人在线")
-                        _lines.append("")
-                    _report_text = "\n".join(_lines)
-                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 rule_id={_rule['id']} tenant={_tid} ({len(_v2_participants)}人)\n")
-                    sys.stdout.flush()
-                    _cp_tg = TelegramNotifier(token=_cp_bot_token)
-                    await _cp_tg.send(_report_text, chat_id=_cp_chat_id)
+                        await rs.send_report(_rt)
+                    except Exception as _re:
+                        sys.stderr.write(f"[PERIODIC REPORT] error for {_rt}: {_re}\n")
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()
