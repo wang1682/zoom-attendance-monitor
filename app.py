@@ -1405,74 +1405,33 @@ def build_app() -> "FastAPI":
         sys.stdout.write(f" account={account_id[:20] if account_id else 'none'}\n")
         sys.stdout.flush()
 
-        if "participant_joined" in event_type or "participant_left" in event_type:
+        # 参与者事件 -> ParticipantService
+        if "participant" in event_type and any(
+            kw in event_type for kw in ["joined", "left", "admitted", "waiting_room"]
+        ):
+            from services.participant import ParticipantService
+
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
             if "breakout" in event_type:
                 meeting_id = str(payload.get("payload", {}).get("object", {}).get("id", ""))
-            name = participant.get("user_name", "").strip()
-            email = participant.get("email", "")
-            action = "breakout_enter" if "breakout" in event_type and "joined" in event_type else \
-                     "breakout_leave" if "breakout" in event_type and "left" in event_type else \
-                     "enter" if "joined" in event_type else "leave"
-            raw_time = (
-                participant.get("join_time")
-                or participant.get("leave_time")
-                or participant.get("date_time")
-                or ""
+            ParticipantService.save_webhook_participant(
+                event_type, participant, meeting_id,
+                tenant_id=webhook_tenant_id or "unknown",
             )
-            if raw_time:
-                try:
-                    action_time = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
-                except:
-                    action_time = datetime.now(timezone.utc)
-            else:
-                action_time = datetime.now(timezone.utc)
-            if name and action:
-                db.save_participant(meeting_id, name, email, action, action_time,
-                                    source="webhook", tenant_id=webhook_tenant_id or "unknown")
 
-        # Sharing events
+        # Sharing events -> ParticipantService
         if "sharing_started" in event_type or "sharing_ended" in event_type:
+            from services.participant import ParticipantService
+
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))
             participant = obj.get("participant", {})
             meeting_id = str(obj.get("id", ""))
-            name = participant.get("user_name", "").strip()
-            raw_uid = str(participant.get("user_id", ""))
-            # Breakout room events corrupt user_id by appending timestamp
-            if "breakout" in event_type and re.search(r"20\d{2}-\d{2}-\d{2}", raw_uid):
-                m = re.match(r"^(\d+)", raw_uid)
-                user_id = m.group(1) if m else ""
-            else:
-                user_id = re.sub(r"[^0-9]", "", raw_uid)[:20]
-            sd = participant.get("sharing_details", {})
-            content = sd.get("content", "")
-            dt_str = sd.get("date_time", "")
-            conn = db._get_conn()
-            wtid = webhook_tenant_id  # 当前租户
-            if "sharing_started" in event_type:
-                # 去重:先关闭同租户、同 meeting、同 user_id 的旧 active 记录
-                if wtid:
-                    conn.execute("UPDATE sharing_live SET is_active=0, end_time=?, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?", (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id, wtid))
-                conn.execute(
-                    "INSERT INTO sharing_live (meeting_id, user_name, user_id, content, start_time, is_active, source, created_at, updated_at, tenant_id) VALUES (?, ?, ?, ?, ?, 1, 'webhook', ?, ?, ?)",
-                    (meeting_id, name, user_id, content, dt_str, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat(), wtid or "unknown")
-                )
-            elif "sharing_ended" in event_type:
-                # Mark by meeting_id + user_id, fallback to user_name. Always with tenant_id.
-                affected = 0
-                if wtid:
-                    affected = conn.execute(
-                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?",
-                        (dt_str, datetime.now(timezone.utc).isoformat(), meeting_id, user_id, wtid)
-                    ).rowcount
-                if affected == 0:
-                    conn.execute(
-                        "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? WHERE user_name=? AND is_active=1 AND tenant_id=?",
-                        (dt_str, datetime.now(timezone.utc).isoformat(), name, wtid or "unknown")
-                    )
-            conn.commit()
+            ParticipantService.save_webhook_sharing(
+                event_type, participant, meeting_id,
+                tenant_id=webhook_tenant_id or "unknown",
+            )
 
         # ── Webhook Telegram Push (走 AlertService) ──────────────────────
         try:

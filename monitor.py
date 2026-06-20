@@ -11,8 +11,7 @@ import time
 from datetime import datetime, timezone, timedelta
 
 from config import settings
-from db import (save_participant, check_new_email, create_alert,
-                should_send_telegram, get_all_active_zoom_accounts)
+from db import (should_send_telegram, get_all_active_zoom_accounts)
 from alerts import TelegramNotifier
 from zoom_api import ZoomAPI
 import templates as tmpl
@@ -89,9 +88,11 @@ async def poll_account(zoom: ZoomAPI, meeting_ids: list[str],
                 continue
             _known.add(key)
 
+            from services.participant import ParticipantService
+
             new_entries.append((name, utc_dt, mid, email))
-            save_participant(mid, name, email, "enter", utc_dt,
-                             source="poll", tenant_id=tenant_id)
+            ParticipantService.save_participant(mid, name, email, "enter", utc_dt,
+                                                tenant_id=tenant_id, source="poll")
 
     # 离开检测
     leaves: list = []
@@ -128,22 +129,17 @@ async def poll_account(zoom: ZoomAPI, meeting_ids: list[str],
             _known.add(key)
 
             leaves.append((name, utc_dt, mid))
-            save_participant(mid, name, "", "leave", utc_dt,
-                             source="poll", tenant_id=tenant_id)
+            ParticipantService.save_participant(mid, name, "", "leave", utc_dt,
+                                                tenant_id=tenant_id, source="poll")
 
     # 陌生人检测
     stranger_warnings = []
     for name, utc_dt, mid, email in new_entries:
-        if check_new_email(email, name, utc_dt):
+        from services.participant import ParticipantService
+
+        if ParticipantService.check_new_participant(email, name, utc_dt):
             stranger_warnings.append((name, email, utc_dt, mid))
-            create_alert(
-                alert_type="stranger",
-                title=f"陌生来访: {name}",
-                message=f"邮箱 {email} 首次出现",
-                severity="warning",
-                related_name=name,
-                related_email=email,
-            )
+            ParticipantService.create_stranger_alert(name, email, utc_dt, mid)
 
     return new_entries, leaves, stranger_warnings
 
