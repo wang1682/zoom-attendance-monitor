@@ -90,6 +90,11 @@
       <td>
         {% if u.telegram_chat_id %}
         <span class="badge badge-green">已绑定</span>
+        {% if u.telegram_2fa_enabled %}
+        <span class="badge badge-purple" style="margin-left:4px">2FA 开</span>
+        {% else %}
+        <span class="badge badge-gray" style="margin-left:4px">2FA 关</span>
+        {% endif %}
         {% else %}
         <span class="badge badge-gray">未绑定</span>
         {% endif %}
@@ -114,6 +119,12 @@
             <button class="dropdown-item" onclick="showTenantModal({{ u.id }}, '{{ u.tenant_id|e }}')">修改租户</button>
             {% endif %}
             <button class="dropdown-item" onclick="showResetPwModal({{ u.id }}, '{{ u.username|e }}')">重置密码</button>
+            <div class="dropdown-divider"></div>
+            {% if u.telegram_chat_id and u.telegram_2fa_enabled %}
+            <button class="dropdown-item" onclick="showBindTg2faModal({{ u.id }}, '{{ u.username|e }}', true)">解绑 TG 两步验证</button>
+            {% else %}
+            <button class="dropdown-item" onclick="showBindTg2faModal({{ u.id }}, '{{ u.username|e }}', false)">绑定 TG 两步验证</button>
+            {% endif %}
             <div class="dropdown-divider"></div>
             <form method="POST" action="/dashboard/users/{{ u.id }}/toggle" style="display:inline">
               <button class="dropdown-item danger" onclick="return confirm('确认{{ '禁用' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用' }}此用户？')">{{ '禁用用户' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用用户' }}</button>
@@ -236,6 +247,26 @@
   </div>
 </div>
 
+<!-- ===== TG 两步验证 Modal ===== -->
+<div class="modal-overlay" id="bindTg2faModal" style="display:none">
+  <div class="modal-panel" style="max-width:400px">
+    <div class="modal-header">
+      <h3 id="bindTg2faTitle">绑定 TG 两步验证</h3>
+      <button class="modal-close" onclick="hideModal('bindTg2faModal')">×</button>
+    </div>
+    <form id="bindTg2faForm" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px" onsubmit="return submitBindTg2fa(event)">
+      <p style="font-size:12px;color:var(--text-muted);margin:0" id="bindTg2faDesc">将为 <strong id="bindTg2faUser">-</strong> 启用 Telegram 两步验证</p>
+      <label style="font-size:12px;color:var(--text-muted)">Telegram Chat ID</label>
+      <input type="text" id="bindTg2faChatId" required style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <p style="font-size:11px;color:var(--text-muted);margin:0">用户需要先向 IPIC Bot 发送 /id 获取自己的 Chat ID</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+        <button type="button" class="btn btn-secondary" onclick="hideModal('bindTg2faModal')">取消</button>
+        <button type="submit" class="btn btn-primary" id="bindTg2faBtn">确认绑定</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- ===== Change Role Modal ===== -->
 {% if is_super_admin %}
 <div class="modal-overlay" id="roleModal" style="display:none">
@@ -244,9 +275,9 @@
       <h3>修改角色</h3>
       <button class="modal-close" onclick="hideModal('roleModal')">×</button>
     </div>
-    <form id="roleForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+    <form id="roleForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px" onsubmit="return submitRoleForm(event)">
       <label style="font-size:12px;color:var(--text-muted)">新角色</label>
-      <select id="roleSelect" name="new_role" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <select id="roleSelect" name="role" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
       {% for r in createable_roles %}
         <option value="{{ r.value }}">{{ r.label }}</option>
       {% endfor %}
@@ -266,12 +297,19 @@
       <h3>修改租户</h3>
       <button class="modal-close" onclick="hideModal('tenantModal')">×</button>
     </div>
-    <form id="tenantForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px">
+    <form id="tenantForm" method="POST" style="display:flex;flex-direction:column;gap:12px;padding:20px 24px" onsubmit="return submitTenantForm(event)">
       <label style="font-size:12px;color:var(--text-muted)">新租户</label>
-      <select id="tenantSelect" name="new_tenant_id" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+      <select id="tenantSelect" name="tenant_id" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
         <option value="">-</option>
       {% for t in all_tenants %}
         <option value="{{ t.id }}">{{ t.display_name }}</option>
+      {% endfor %}
+      </select>
+      <label style="font-size:12px;color:var(--text-muted)">新角色</label>
+      <select id="tenantRoleSelect" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px">
+        <option value="">不修改角色</option>
+      {% for r in createable_roles %}
+        <option value="{{ r.value }}">{{ r.label }}</option>
       {% endfor %}
       </select>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
@@ -409,18 +447,57 @@ document.getElementById('resetPwForm')?.addEventListener('submit', function(e) {
   if (pw !== confirm) { alert('两次输入的密码不一致'); e.preventDefault(); }
 });
 
-// ── Role modal ──
+// ── Role modal (fetch JSON) ──
 function showRoleModal(id, role) {
-  document.getElementById('roleForm').action = '/dashboard/users/' + id + '/role';
+  document.getElementById('roleForm').dataset.userId = id;
   document.getElementById('roleSelect').value = role;
   showModal('roleModal');
 }
+function submitRoleForm(event) {
+  event.preventDefault();
+  var id = document.getElementById('roleForm').dataset.userId;
+  var role = document.getElementById('roleSelect').value;
+  if (!role) { alert('请选择角色'); return false; }
+  fetch('/dashboard/users/' + id + '/role', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({role: role})
+  }).then(function(r) {
+    if (r.ok) { hideModal('roleModal'); location.reload(); }
+    else { r.json().then(function(j) { alert(j.detail || JSON.stringify(j) || '请求失败'); }); }
+  }).catch(function() { alert('网络错误'); });
+  return false;
+}
 
-// ── Tenant modal ──
-function showTenantModal(id, tenantId) {
-  document.getElementById('tenantForm').action = '/dashboard/users/' + id + '/tenant';
+// ── Tenant modal (fetch JSON) ──
+function showTenantModal(id, tenantId, currentRole) {
+  document.getElementById('tenantForm').dataset.userId = id;
   document.getElementById('tenantSelect').value = tenantId || '';
+  if (document.getElementById('tenantRoleSelect')) {
+    document.getElementById('tenantRoleSelect').value = '';
+  }
   showModal('tenantModal');
+}
+function submitTenantForm(event) {
+  event.preventDefault();
+  var id = document.getElementById('tenantForm').dataset.userId;
+  var tid = document.getElementById('tenantSelect').value;
+  var body = {};
+  if (tid) body.tenant_id = tid;
+  var roleSel = document.getElementById('tenantRoleSelect');
+  if (roleSel && roleSel.value) body.role = roleSel.value;
+  if (!body.tenant_id && !body.role) { alert('请选择租户或角色'); return false; }
+  fetch('/dashboard/users/' + id + '/tenant', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  })
+  .then(function(r) {
+    if (r.ok) { hideModal('tenantModal'); location.reload(); }
+    else { r.json().then(function(j) { alert(j.detail || JSON.stringify(j) || '请求失败'); }); }
+  })
+  .catch(function() { alert('网络错误'); });
+  return false;
 }
 
 // ── Create form validation ──
@@ -428,6 +505,51 @@ function validateCreateForm() {
   var pw = document.querySelector('#createModal input[name="password"]').value;
   if (pw.length < 4) { alert('密码长度不能少于 4 位'); return false; }
   return true;
+}
+
+// ── TG 两步验证 modal ──
+var bindTg2faUserId = null;
+function showBindTg2faModal(id, username, isUnbind) {
+  bindTg2faUserId = id;
+  if (isUnbind) {
+    document.getElementById('bindTg2faTitle').textContent = '解绑 TG 两步验证';
+    document.getElementById('bindTg2faDesc').innerHTML = '将解绑 <strong>' + username + '</strong> 的 Telegram 两步验证';
+    document.getElementById('bindTg2faChatId').style.display = 'none';
+    document.getElementById('bindTg2faChatId').previousElementSibling.style.display = 'none';
+    document.getElementById('bindTg2faChatId').nextElementSibling.style.display = 'none';
+    document.getElementById('bindTg2faChatId').removeAttribute('required');
+    document.getElementById('bindTg2faBtn').textContent = '确认解绑';
+  } else {
+    document.getElementById('bindTg2faTitle').textContent = '绑定 TG 两步验证';
+    document.getElementById('bindTg2faDesc').innerHTML = '将为 <strong>' + username + '</strong> 启用 Telegram 两步验证';
+    document.getElementById('bindTg2faChatId').style.display = '';
+    document.getElementById('bindTg2faChatId').previousElementSibling.style.display = '';
+    document.getElementById('bindTg2faChatId').nextElementSibling.style.display = '';
+    document.getElementById('bindTg2faBtn').textContent = '确认绑定';
+    document.getElementById('bindTg2faChatId').value = '';
+    document.getElementById('bindTg2faChatId').setAttribute('required', '');
+  }
+  showModal('bindTg2faModal');
+}
+function submitBindTg2fa(event) {
+  event.preventDefault();
+  var title = document.getElementById('bindTg2faTitle').textContent;
+  var isUnbind = title.indexOf('解绑') !== -1;
+  var body = {};
+  if (!isUnbind) {
+    var chatId = document.getElementById('bindTg2faChatId').value.trim();
+    if (!chatId) { alert('请输入 Telegram Chat ID'); return false; }
+    body.chat_id = chatId;
+  }
+  fetch('/dashboard/users/' + bindTg2faUserId + '/tg-2fa', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r) {
+    if (r.ok) { hideModal('bindTg2faModal'); location.reload(); }
+    else { r.json().then(function(j) { alert(j.detail || JSON.stringify(j) || '请求失败'); }); }
+  }).catch(function() { alert('网络错误'); });
+  return false;
 }
 </script>
 

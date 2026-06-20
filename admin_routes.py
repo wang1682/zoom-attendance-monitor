@@ -6,13 +6,14 @@ import json
 import re
 import time
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import db
 from config import settings
 from zoom_api import ZoomAPI
-from tenant_routes import _get_nav_items
+from services.auth import AuthService
 
 router = APIRouter()
 
@@ -29,17 +30,22 @@ def _log_perf(label: str, ms: float) -> None:
         import logging; logging.getLogger("perf").info(f"[PERF] {label} {ms:.0f}ms")
 
 
-# ── Auth helpers ──────────────────────────────────────────────────────────────
+# ── Auth helpers (compatibility wrappers for existing route Dependencies) ─────
 
 def get_current_user(request: Request) -> dict | None:
-    """Extract user info from session. Returns None if not logged in."""
-    user_id = request.session.get("user_id")
-    if not user_id:
+    """Extract user info from session. Returns None if not logged in.
+
+    Compatibility wrapper: delegates to AuthService.
+    Phase 2+ will migrate routes away from this pattern.
+    """
+    auth = AuthService(request)
+    try:
+        ctx = auth.require_authenticated()
+    except Exception:
         return None
-    user = db.get_user_by_id(user_id)
-    if not user or not user["is_active"]:
+    user = db.get_user_by_id(ctx.user_id)
+    if not user or not user.get("is_active"):
         return None
-    # Format boolean fields
     user["is_active_str"] = "true" if user["is_active"] else "false"
     return user
 
@@ -55,6 +61,10 @@ async def require_user(request: Request) -> dict:
 def require_role(role: str):
     """Dependency factory: require minimum role level."""
     async def _check(user: dict = Depends(require_user)) -> dict:
+        # Delegated to AuthService via the request object (injected by FastAPI)
+        # FastAPI's Depends provides the request via the route handler's signature,
+        # but the closure doesn't have it. We check via user dict's role field instead.
+        # AuthService.require() is used in routes that pass request directly.
         if db.ROLE_HIERARCHY.get(user.get("role", "user"), 0) < db.ROLE_HIERARCHY.get(role, 0):
             raise HTTPException(status_code=403, detail="权限不足")
         return user
@@ -307,6 +317,28 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     "email": "",
                     "aliases": [],
                 })
+        # ── 补全网关 email：用全局历史最近一条 ──
+        if members:
+            conn_email = db._get_conn()
+            for m in members:
+                if m.get("email"):
+                    continue
+                for candidate in [m.get("standard_name", ""), m.get("raw_name", "")]:
+                    if not candidate:
+                        continue
+                    if tenant_id:
+                        row = conn_email.execute(
+                            "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' AND tenant_id=? ORDER BY action_time DESC LIMIT 1",
+                            (candidate, tenant_id),
+                        ).fetchone()
+                    else:
+                        row = conn_email.execute(
+                            "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                            (candidate,),
+                        ).fetchone()
+                    if row:
+                        m["email"] = row[0]
+                        break
         data_source = "metrics"
 
     # ── 合并 live 数据：在线成员状态用实时数据标记 ──
@@ -733,7 +765,7 @@ async def dashboard_shifts_members_by_group(request: Request, user: dict = Depen
 @router.get("/meetings", response_class=HTMLResponse)
 async def dashboard_meetings(request: Request, user: dict = Depends(require_user)):
     """Meetings center — live meetings from Zoom Metrics API + history + sharing."""
-    from db import get_meeting_history, get_sharing_records, get_zoom_accounts
+    from db import get_meeting_history, get_sharing_records, get_zoom_accounts, _myt_short, _fmt_dur
     from zoom_metrics import ZoomMetrics
     from datetime import datetime, timezone, timedelta
 
@@ -822,6 +854,83 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
         group_id=sharing_group_id or None,
     )
 
+    # ── 合并重复共享记录：按 user_name + content 分组 ──
+    from collections import OrderedDict
+    sharing_grouped = OrderedDict()
+    for s in sharing:
+        # 跳过无 user_name 的记录
+        uname = s.get("user_name", "").strip()
+        content = s.get("content", "desktop").strip()
+        if not uname:
+            continue
+        name_key = (
+            uname.lower()
+            .replace(" ", "")
+            .replace("_", "")
+            .replace("-", "")
+        )
+        grp_key = name_key
+        if grp_key not in sharing_grouped:
+            sharing_grouped[grp_key] = {
+                "user_name": uname,  # 保留第一个出现的原始大小写
+                "group_name": s.get("group_name", ""),
+                "group_id": s.get("group_id", ""),
+                "content": content,
+                "first_start": s.get("start_time", ""),
+                "last_end": s.get("end_time", ""),
+                "total_seconds": 0,
+                "count": 0,
+                "is_active": False,
+                "details": [],
+            }
+        g = sharing_grouped[grp_key]
+        g["count"] += 1
+        # 更新时间范围
+        if s.get("start_time") and (not g["first_start"] or s["start_time"] < g["first_start"]):
+            g["first_start"] = s["start_time"]
+        if s.get("end_time") and (not g["last_end"] or s["end_time"] > g["last_end"]):
+            g["last_end"] = s["end_time"]
+        elif s.get("is_active"):
+            g["last_end"] = ""  # 有活跃记录则显示空（共享中）
+            g["is_active"] = True
+        # 累加时长
+        dur_sec = s.get("duration_seconds", 0) or 0
+        g["total_seconds"] += dur_sec
+        # 保留明细
+        g["details"].append({
+            "start_time": s.get("start_time", ""),
+            "start_time_display": s.get("start_time_display", ""),
+            "end_time": s.get("end_time", ""),
+            "end_time_display": s.get("end_time_display", ""),
+            "duration": s.get("duration", ""),
+            "is_active": s.get("is_active", False),
+        })
+    # 转列表，添加时长格式化
+    sharing_grouped_list = []
+    for grp in sharing_grouped.values():
+        grp["first_start_display"] = _myt_short(grp["first_start"])
+        if grp["last_end"]:
+            grp["last_end_display"] = _myt_short(grp["last_end"])
+        else:
+            grp["last_end_display"] = "共享中" if grp["is_active"] else ""
+        grp["total_duration"] = _fmt_dur(grp["total_seconds"])
+        sharing_grouped_list.append(grp)
+
+    # ── 排序：共享中优先 > 最后开始最新 > 总时长最长 ──
+    def _sort_ts(v):
+        try:
+            return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0
+    sharing_grouped_list.sort(
+        key=lambda g: (
+            0 if g.get("is_active") else 1,
+            -_sort_ts(g.get("first_start")),
+            -(g.get("total_seconds") or 0),
+        )
+    )
+    sharing_grouped_total = len(sharing_grouped_list)
+
     # 查询本租户所有分组及各组共享人数
     conn = db._get_conn()
     all_groups = conn.execute(
@@ -857,6 +966,8 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                          total_meetings=total_meetings,
                          sharing_records=sharing,
                          sharing_total=sharing_total,
+                         sharing_grouped=sharing_grouped_list,
+                         sharing_grouped_total=sharing_grouped_total,
                          sharing_range_label=range_label,
                          sharing_range=range_val,
                          sharing_start=start_param,
@@ -1062,7 +1173,7 @@ async def dashboard_channels(request: Request, user: dict = Depends(require_user
 async def dashboard_admin_center(request: Request, user: dict = Depends(require_user)):
     """Admin center — hub page for management features."""
     role = user.get("role", "")
-    if role not in ("super_admin", "admin", "tenant_admin"):
+    if role not in ("super_admin", "admin"):
         raise HTTPException(status_code=403, detail="权限不足")
 
     return _render_admin(request, "admin_center", user, "admin_center.html")
@@ -1073,6 +1184,9 @@ async def dashboard_admin_center(request: Request, user: dict = Depends(require_
 @router.get("/admin/tenants", response_class=HTMLResponse)
 async def admin_tenants(request: Request, user: dict = Depends(require_user)):
     """Tenant management page."""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
     all_tenants = db.get_all_tenants()
     tenants = [_tenant_dict(t) for t in all_tenants]
     return _render_admin(request, "admin", user, "admin_tenants.html",
@@ -1132,7 +1246,7 @@ async def admin_users(request: Request, user: dict = Depends(require_user)):
 
 
 @router.post("/members/update-display")
-async def update_member_display_api(request: Request, user: dict = Depends(require_role("tenant_admin"))):
+async def update_member_display_api(request: Request, user: dict = Depends(require_role("user"))):
     """更新成员别名/备注/计入统计"""
     try:
         data = await request.json()
@@ -1174,7 +1288,10 @@ async def admin_users_create(request: Request,
                              display_name: str = Form(""),
                              role: str = Form("viewer"),
                              user: dict = Depends(require_user)):
-    """Create a new user."""
+    """Create a new user. Only super_admin and admin can create users."""
+    actor_role = user.get("role", "")
+    if actor_role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
     try:
         uid = db.create_user(username, password, display_name, role)
         # Also add to current tenant
@@ -1188,7 +1305,10 @@ async def admin_users_create(request: Request,
 @router.post("/admin/users/{user_id}/toggle")
 async def admin_users_toggle(request: Request, user_id: int,
                              user: dict = Depends(require_user)):
-    """Toggle user active/inactive."""
+    """Toggle user active/inactive. Only super_admin and admin can toggle users."""
+    actor_role = user.get("role", "")
+    if actor_role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
     db.toggle_user(user_id)
     return RedirectResponse(url="/dashboard/admin/users", status_code=303)
 
@@ -1196,7 +1316,10 @@ async def admin_users_toggle(request: Request, user_id: int,
 @router.post("/admin/users/{user_id}/delete")
 async def admin_users_delete(request: Request, user_id: int,
                              user: dict = Depends(require_user)):
-    """Delete a user."""
+    """Delete a user. Only super_admin and admin can delete users."""
+    actor_role = user.get("role", "")
+    if actor_role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
     db.delete_user(user_id)
     return RedirectResponse(url="/dashboard/admin/users", status_code=303)
 
@@ -1204,35 +1327,24 @@ async def admin_users_delete(request: Request, user_id: int,
 # ── New: /dashboard/users/* (role-based user management) ───────────────────
 
 def _user_can_manage(actor_role: str, target: dict) -> bool:
-    """Check if actor can manage (edit/delete/toggle) target user."""
-    if actor_role == "super_admin":
-        return True  # can manage everyone including self
-    if actor_role == "admin":
-        return target.get("role") != "super_admin"
-    if actor_role == "tenant_admin":
-        return target.get("role") == "user"
-    return False
+    """Check if actor can manage target user.
+
+    Phase 1 compatibility: used by existing routes that pass (actor_role, target).
+    Routes will be migrated to AuthService(request).can_manage(target) in Phase 2+.
+    """
+    try:
+        return AuthService._check_role_can_manage(actor_role, target)
+    except Exception:
+        return False
 
 
 def _allowed_create_roles(actor_role: str) -> list[dict]:
-    """Roles the actor is allowed to create."""
-    if actor_role == "super_admin":
-        return [
-            {"value": "admin", "label": "管理员"},
-            {"value": "tenant_admin", "label": "租户管理员"},
-            {"value": "user", "label": "用户"},
-        ]
-    if actor_role == "admin":
-        return [
-            {"value": "tenant_admin", "label": "租户管理员"},
-            {"value": "user", "label": "用户"},
-        ]
-    if actor_role == "tenant_admin":
-        return [
-            {"value": "user", "label": "用户"},
-        ]
-    return []
+    """Roles the actor is allowed to create.
 
+    Phase 1 compatibility wrapper.
+    Will be replaced by AuthService(request).allowed_create_roles() in Phase 2+.
+    """
+    return AuthService._check_allowed_create_roles(actor_role)
 
 @router.get("/users", response_class=HTMLResponse)
 async def dashboard_users(request: Request, user: dict = Depends(require_user)):
@@ -1331,11 +1443,23 @@ async def dashboard_users_delete(request: Request, user_id: int,
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
+@router.get("/users/{user_id}/role")
+@router.get("/users/{user_id}/tenant")
+async def dashboard_users_post_only(request: Request, user_id: int,
+                                    user: dict = Depends(require_user)):
+    """GET returns friendly page instead of 405."""
+    return _render_admin(request, "admin_center", user, "post_only.html",
+                         user_id=user_id, title="请使用弹窗操作")
+
 @router.post("/users/{user_id}/role")
 async def dashboard_users_role(request: Request, user_id: int,
-                               role: str = Form(...),
+                               role: Optional[str] = Form(None),
+                               new_role: Optional[str] = Form(None),
                                user: dict = Depends(require_user)):
-    """Update user role — role-gated."""
+    """Update user role — role-gated. Accepts role or new_role."""
+    role = role or new_role
+    if not role:
+        raise HTTPException(status_code=422, detail="缺少 role 参数")
     actor_role = user.get("role", "user")
     target = db.get_user_by_id(user_id)
     if not target:
@@ -1356,8 +1480,8 @@ async def dashboard_users_role(request: Request, user_id: int,
     if actor_role == "admin" and role == "admin":
         raise HTTPException(status_code=403, detail="无权将他人设为管理员")
 
-    # tenant_admin can only set user role
-    if actor_role == "tenant_admin" and role != "user":
+    # user (tenant-level) can only set user role
+    if actor_role == "user" and role != "user":
         raise HTTPException(status_code=403, detail="无权设置此角色")
 
     # Ensure at least 1 super_admin remains
@@ -1438,24 +1562,92 @@ async def dashboard_users_reset_password(request: Request, user_id: int,
     return RedirectResponse(url="/dashboard/users", status_code=303)
 
 
+@router.post("/users/{user_id}/tg-2fa")
+async def dashboard_users_tg2fa(request: Request, user_id: int,
+                                 user: dict = Depends(require_user)):
+    """Admin bind/unbind Telegram 2FA for a user."""
+    import json as _json2
+    actor_role = user.get("role", "user")
+    if actor_role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    target = db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    body = await request.json()
+    chat_id = body.get("chat_id", "")
+
+    if chat_id:
+        # Bind: set telegram_chat_id + enable 2FA
+        db.update_user_full(user_id, telegram_chat_id=chat_id, telegram_2fa_enabled=1,
+                            telegram_2fa_verified_at=None)
+        db.audit_log_action(
+            tenant_id=target.get("tenant_id", "default"),
+            action="enable_telegram_2fa", entity_type="user", entity_id=user_id,
+            details=_json2.dumps({"target": target.get("username", ""), "operator": user.get("username", "")}, ensure_ascii=False)
+        )
+        return {"ok": True, "detail": "TG 两步验证已启用"}
+    else:
+        # Unbind: clear chat_id + disable 2FA
+        db.update_user_full(user_id, telegram_chat_id="", telegram_2fa_enabled=0,
+                            telegram_2fa_verified_at=None)
+        db.audit_log_action(
+            tenant_id=target.get("tenant_id", "default"),
+            action="disable_telegram_2fa", entity_type="user", entity_id=user_id,
+            details=_json2.dumps({"target": target.get("username", ""), "operator": user.get("username", "")}, ensure_ascii=False)
+        )
+        return {"ok": True, "detail": "TG 两步验证已解绑"}
+
+
 @router.post("/users/{user_id}/tenant")
 async def dashboard_users_tenant(request: Request, user_id: int,
-                                 tenant_id: str = Form(...),
+                                 tenant_id: Optional[str] = Form(None),
+                                 new_tenant: Optional[str] = Form(None),
+                                 role: Optional[str] = Form(None),
                                  user: dict = Depends(require_user)):
-    """Change user's tenant — role-gated (super_admin/admin only)."""
+    """Change user's tenant and/or role — role-gated (super_admin/admin only)."""
+    import json as _json2
+    # Parse JSON body if applicable
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            tenant_id = body.get("tenant_id", body.get("new_tenant", tenant_id))
+            role = body.get("role", role)
+        except Exception:
+            pass
+    tenant_id = tenant_id or new_tenant
+    if not tenant_id and not role:
+        return JSONResponse({"detail": "缺少 tenant_id 和 role，至少提供一个"}, status_code=422)
     actor_role = user.get("role", "user")
     target = db.get_user_by_id(user_id)
     if not target or not _user_can_manage(actor_role, target):
-        raise HTTPException(status_code=403, detail="无权修改此用户租户")
-    old_tenant = target.get("tenant_id", "")
-    db.update_user_full(user_id, tenant_id=tenant_id)
-    # Audit log
-    details = {"username": target.get("username", ""), "old_tenant": old_tenant, "new_tenant": tenant_id,
-               "operator": user.get("username", "")}
-    db.audit_log_action(tenant_id=tenant_id, action="user.tenant_change",
-                        entity_type="user", entity_id=user_id,
-                        details=json.dumps(details, ensure_ascii=False))
-    return RedirectResponse(url="/dashboard/users", status_code=303)
+        raise HTTPException(status_code=403, detail="无权修改此用户")
+    details = {"username": target.get("username", "")}
+    if tenant_id:
+        old_tenant = target.get("tenant_id", "")
+        db.update_user_full(user_id, tenant_id=tenant_id)
+        details["old_tenant"] = old_tenant
+        details["new_tenant"] = tenant_id
+    if role:
+        valid_roles = {"super_admin", "admin", "user", "viewer"}
+        if role not in valid_roles:
+            return JSONResponse({"detail": f"无效角色: {role}"}, status_code=422)
+        if actor_role == "admin" and role == "super_admin":
+            raise HTTPException(status_code=403, detail="无权创建超级管理员")
+        if actor_role == "user" and role not in ("user",):
+            raise HTTPException(status_code=403, detail="租户管理员仅可设置为普通用户或租户管理员")
+        old_role = target.get("role", "")
+        db.update_user_full(user_id, role=role)
+        details["old_role"] = old_role
+        details["new_role"] = role
+    db.audit_log_action(
+        tenant_id=tenant_id or target.get("tenant_id", "default"),
+        action="user.update", entity_type="user", entity_id=user_id,
+        details=_json2.dumps(details, ensure_ascii=False)
+    )
+    return {"ok": True, "detail": "保存成功"}
 
 
 # ── Tenants / Audit / Settings (guarded routes) ────────────────────────────
@@ -1575,6 +1767,9 @@ async def dashboard_audit(request: Request, user: dict = Depends(require_user)):
 
 @router.get("/admin/accounts", response_class=HTMLResponse)
 async def admin_accounts(request: Request, user: dict = Depends(require_user)):
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
     """Zoom account & meeting management page."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     accounts = [_account_dict(a) for a in db.get_zoom_accounts(tenant_id)]
@@ -1718,7 +1913,7 @@ async def admin_meetings_delete(request: Request, meeting_db_id: int,
 # ── Admin: Channels ──────────────────────────────────────────────────────────
 
 @router.get("/admin/channels", response_class=HTMLResponse)
-async def admin_channels(request: Request, user: dict = Depends(require_user)):
+async def admin_channels(request: Request, user: dict = Depends(require_role("admin"))):
     """Telegram channel management page."""
     tenant_id = request.app.state.get_effective_tenant_id(request)
     channels = [_channel_dict(c) for c in db.get_tenant_channels(tenant_id)]
@@ -1793,32 +1988,109 @@ async def admin_channels_test(request: Request, channel_id: int,
 @router.get("/api/meeting-participants")
 async def api_meeting_participants(request: Request, meeting_id: str,
                                     user: dict = Depends(require_user)):
-    """获取指定会议的所有参与者"""
+    """获取指定会议的统计详情"""
     from db import get_participants_by_meeting
-    participants = get_participants_by_meeting(meeting_id)
-    return JSONResponse({"ok": True, "participants": participants})
+    detail = get_participants_by_meeting(meeting_id)
+    return JSONResponse({"ok": True, **detail})
+
+
+@router.get("/api/sharing-stats")
+async def api_sharing_stats(request: Request, user: dict = Depends(require_user)):
+    """获取共享统计（顶部卡片）"""
+    from db import get_sharing_day_stats
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    return JSONResponse({"ok": True, **get_sharing_day_stats(tenant_id)})
+
+
+@router.get("/api/sharing-trend")
+async def api_sharing_trend(request: Request, hours: int = 24,
+                            user: dict = Depends(require_user)):
+    """获取共享趋势（按小时）"""
+    from db import get_sharing_trend
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    return JSONResponse({"ok": True, "data": get_sharing_trend(tenant_id, hours)})
+
+
+@router.get("/api/sharing-rank")
+async def api_sharing_rank(request: Request, user: dict = Depends(require_user)):
+    """获取今日共享时长排行"""
+    from db import get_sharing_rank
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    return JSONResponse({"ok": True, "data": get_sharing_rank(tenant_id)})
+
+
+@router.get("/api/sharing-detail")
+async def api_sharing_detail(request: Request, meeting_id: str, user_name: str = "",
+                             user: dict = Depends(require_user)):
+    """获取单条共享记录详情（含同会议参与人数）"""
+    from db import get_sharing_detail
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    return JSONResponse(get_sharing_detail(meeting_id, tenant_id, user_name))
 
 
 # ── Rendering helper ──────────────────────────────────────────────────────────
+
+@router.get("/settings/bot", response_class=HTMLResponse)
+async def dashboard_bot_config(request: Request, user: dict = Depends(require_user)):
+    """Bot configuration page — set Telegram bot for 2FA verification."""
+    role = user.get("role", "")
+    if role != "super_admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from db import get_setting
+    bot_token = get_setting("2fa_bot_token") or ""
+    return _render_admin(request, "settings", user, "bot_config.html", bot_token=bot_token)
+
+
+@router.post("/settings/bot/verify")
+async def dashboard_bot_verify(request: Request, user: dict = Depends(require_user)):
+    """Verify and save a Telegram bot token for 2FA."""
+    role = user.get("role", "")
+    if role != "super_admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from db import set_setting
+    import httpx
+    try:
+        form = await request.form()
+        token = form.get("token", "").strip()
+        if not token:
+            return JSONResponse(status_code=400, content={"success": False, "error": "Token 不能为空"})
+        async with httpx.AsyncClient(timeout=10) as cl:
+            r = await cl.get(f"https://api.telegram.org/bot{token}/getMe")
+            if r.status_code != 200:
+                return JSONResponse(status_code=400, content={"success": False, "error": f"Bot Token 无效: HTTP {r.status_code}"})
+            bot_info = r.json()
+            if not bot_info.get("ok"):
+                return JSONResponse(status_code=400, content={"success": False, "error": bot_info.get("description", "Token 无效")})
+            username = bot_info.get("result", {}).get("username", "unknown")
+            r2 = await cl.post(f"https://api.telegram.org/bot{token}/getUpdates", json={"limit": 1, "allowed_updates": ["message"]})
+            can_read = r2.status_code == 200
+            set_setting("2fa_bot_token", token)
+            set_setting("2fa_bot_username", username)
+            return JSONResponse(content={"success": True, "username": username, "can_read": can_read})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": f"{type(e).__name__}: {str(e)[:200]}"})
+
 
 def _render_admin(request: Request, active: str, user: dict, template_name: str,
                   **extra) -> HTMLResponse:
     """Render admin template with common context injected."""
     from fastapi.templating import Jinja2Templates
     from pathlib import Path
-    # Use the same templates directory as the main app
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
     from app import fmt_myt
     templates.env.globals["fmt_myt"] = fmt_myt
 
+    # Use AuthService for template context
+    auth = AuthService(request)
+    ctx = auth.require_authenticated()
+
     # Build current_user dict matching template expectations
-    tenant_id = request.app.state.get_effective_tenant_id(request)
     current_user = {
         "id": user["id"],
         "username": user["username"],
         "display_name": user.get("display_name", ""),
         "role": user.get("role", "user"),
-        "tenant_id": tenant_id,
+        "tenant_id": ctx.effective_tenant,
         "is_active": user.get("is_active_str", "true" if user.get("is_active") else "false"),
         "telegram_chat_id": user.get("telegram_chat_id", ""),
         "telegram_2fa_enabled": user.get("telegram_2fa_enabled", 0),
@@ -1826,29 +2098,11 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
         "twofa_backup_codes": user.get("twofa_backup_codes", ""),
     }
 
-    # ── 租户切换上下文（仅 super_admin 需要） ──
-    from db import get_all_tenants
-    is_super_admin = user.get("role") == "super_admin"
-    if is_super_admin:
-        all_tenants = get_all_tenants()
-        current_tenant = next((t for t in all_tenants if t["id"] == tenant_id), None)
-        current_tenant_name = current_tenant["display_name"] if current_tenant else tenant_id
-    else:
-        all_tenants = []
-        current_tenant_name = ""
+    context = auth.get_template_vars(active, **extra)
+    # Override request/page_title for rendering
+    context["request"] = request
+    context["page_title"] = extra.pop("title", "成员中心")
+    # Ensure current_user from dict
+    context["current_user"] = current_user
 
-    context = {
-        "request": request,
-        "active": active,
-        "current_user": current_user,
-        "page_title": extra.pop("title", "成员中心"),
-        "is_super_admin": is_super_admin,
-        "available_tenants": all_tenants,
-        "current_tenant_id": tenant_id,
-        "current_tenant_name": current_tenant_name,
-        "hide_settings": current_user.get("role", "user") not in ("super_admin", "admin"),
-        "nav_items": _get_nav_items(user.get("role", "user")),
-        "stats": extra.pop("stats", None),
-        **extra,
-    }
     return templates.TemplateResponse(request, template_name, context)

@@ -259,6 +259,7 @@ def build_app() -> "FastAPI":
             "/favicon.ico",
             "/api/v2/auth/",
             "/api/v3/live",
+            "/api/v3/telegram-rules/",
             "/api/health-check",
             "/webhook",
             "/dashboard/tenant/webhook/",
@@ -456,59 +457,23 @@ def build_app() -> "FastAPI":
         t_db = _t_ms()
         
         # ── Online - Single Source of Truth ──
-        online_data = db.get_current_online(tid)
-        current_online = online_data["online_count"]
-        active_meetings = online_data["active_meetings"]
+        try:
+            if '/app/data' not in sys.path:
+                sys.path.insert(0, '/app/data')
+            import service
+            online_data = await asyncio.wait_for(
+                service.get_online_state(tid), timeout=5.0
+            )
+            current_online = online_data["online_count"]
+            active_meetings = online_data["active_meetings"]
+            _log_perf("kpi_service_online", _t_ms() - t_db)
+        except Exception:
+            # Fallback to old logic
+            online_data = db.get_current_online(tid)
+            current_online = online_data["online_count"]
+            active_meetings = online_data["active_meetings"]
 
-        # ── Only use Metrics API for Business tenants ──
-        _tenant = db.get_tenant(tid)
-        metrics_available = (_tenant or {}).get("metrics_available", 0)
-        if metrics_available:
-            try:
-                # ── Check cache first ──
-                cached = _get_cached_zoom_live(tid)
-                if cached is not None:
-                    current_online = cached.get("total_online", current_online)
-                    active_meetings = cached.get("meetings", active_meetings)
-                else:
-                    accounts = db.get_zoom_accounts(tid)
-                    active = next(
-                        (a for a in accounts if a.get("is_active") and a.get("status") == "active"),
-                        None,
-                    )
-                    if active:
-                        t0 = _t_ms()
-                        from zoom_metrics import ZoomMetrics
-                        zm = ZoomMetrics(active)
-                        try:
-                            live_data = await asyncio.wait_for(zm.get_live(), timeout=3.0)
-                            zoom_ms = _t_ms() - t0
-                            _log_perf("zoom_live", zoom_ms)
-                            current_online = live_data.get("total_online", current_online)
-                            meetings_raw = live_data.get("meetings", [])
-                            active_meetings = [
-                                {
-                                    "id": m.get("id", ""),
-                                    "topic": m.get("meeting_topic", ""),
-                                    "participant_count": len(m.get("participants", [])),
-                                    "start_time": iso_to_myt_str(m.get("start_time", "")),
-                                }
-                                for m in meetings_raw
-                            ]
-                            _set_cached_zoom_live(tid, {
-                                "total_online": current_online,
-                                "meetings": active_meetings,
-                            })
-                            # 补充 today_participants:当 webhook 数据缺失(0)时，
-                            # 用 participants_summary 长度作为下限(当前在线人数即今日参与者)
-                            if today_participants == 0:
-                                ps = live_data.get("participants_summary", [])
-                                if ps:
-                                    today_participants = len(ps)
-                        except (asyncio.TimeoutError, asyncio.CancelledError):
-                            _log_perf("zoom_live_timeout", _t_ms() - t0)
-            except Exception:
-                pass  # Metrics failed - webhook data remains
+        # ── No longer call per-tenant Metrics API separately — service.get_online_state already handles it
         conn = db._get_conn()
         today_myt = datetime.now(MYT).strftime("%Y-%m-%d")
         myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -861,22 +826,70 @@ def build_app() -> "FastAPI":
     async def api_v3_create_telegram_rule(request: Request):
         data = await request.json()
         event_type = data.get("event_type", "").strip()
+        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
         if not event_type:
             return {"ok": False, "error": "event_type is required"}
-        rule_id = db.upsert_telegram_rule(event_type, data)
+        rule_id = db.upsert_telegram_rule(tenant_id, event_type, data)
         return {"ok": True, "id": rule_id}
 
     @app.put("/api/v3/telegram-rules/{event_type}")
     async def api_v3_update_telegram_rule(event_type: str, request: Request):
         data = await request.json()
-        rule_id = db.upsert_telegram_rule(event_type, data)
+        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
+        rule_id = db.upsert_telegram_rule(tenant_id, event_type, data)
         return {"ok": True, "id": rule_id}
 
     @app.delete("/api/v3/telegram-rules/{event_type}")
-    async def api_v3_delete_telegram_rule(event_type: str):
-        db.delete_telegram_rule(event_type)
+    async def api_v3_delete_telegram_rule(event_type: str, request: Request):
+        tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
+        db.delete_telegram_rule(tenant_id, event_type)
         db.set_alert_rule_channels(event_type, [])  # 清理关联
         return {"ok": True}
+
+    @app.post("/api/v3/telegram-rules/{event_type}/test")
+    async def api_v3_test_telegram_rule(event_type: str, request: Request):
+        """测试发送推送消息，验证规则配置是否正确"""
+        import traceback
+        try:
+            tenant_id = request.session.get("selected_tenant") or request.session.get("tenant_id") or "default"
+            rules = db.get_telegram_rules_by_tenant(tenant_id)
+            rule = next((r for r in rules if r["event_type"] == event_type), None)
+            if not rule:
+                return JSONResponse({"ok": False, "error": "规则不存在"}, status_code=404)
+            target_id = rule.get("target_channel_id")
+            channel = db.get_telegram_channel_by_id(target_id) if target_id else None
+            if not channel or not channel.get("bot_token") or not channel.get("chat_id"):
+                return JSONResponse({"ok": False, "error": "推送目标未配置"}, status_code=400)
+            title = rule.get("title") or event_type
+            text = (
+                "✅ 测试规则推送\n\n"
+                f"规则: {title}\n"
+                f"事件: {event_type}\n"
+                "状态: 推送配置正常"
+            )
+            import httpx
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"https://api.telegram.org/bot{channel['bot_token']}/sendMessage",
+                    json={"chat_id": channel["chat_id"], "text": text},
+                    timeout=10,
+                )
+                data = resp.json()
+                if not data.get("ok"):
+                    import logging
+                    logger = logging.getLogger("zoom_monitor")
+                    logger.error("[RULE_TEST] event=%s tenant=%s channel=%s resp=%s",
+                                 event_type, tenant_id, target_id, resp.text)
+                    print(f"[RULE_TEST] event={event_type} tenant={tenant_id} channel={target_id} resp={resp.text}", flush=True)
+                    return JSONResponse(
+                        {"ok": False, "error": f"Telegram: {data.get('description', 'unknown')}"},
+                        status_code=500,
+                    )
+            return {"ok": True, "message": "测试消息已发送"}
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[TEST-RULE-ERROR] {event_type}: {e}\n{tb}", flush=True)
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     @app.get("/api/v3/telegram-rules/discover")
     async def api_v3_discover_telegram_rules():
@@ -2566,9 +2579,35 @@ def build_app() -> "FastAPI":
             m = (s % 3600) // 60
             return f"{h}h{m}m" if h else f"{m}m"
 
+        # 最新邮箱映射: 从 zoom_participants.email 取每个名字最近非空邮箱
+        email_map = {}
+        try:
+            for r in conn.execute("""
+                SELECT name, email
+                FROM zoom_participants
+                WHERE tenant_id=? AND email IS NOT NULL AND email!=''
+                ORDER BY action_time DESC
+            """, (tenant_id,)).fetchall():
+                if r["name"] not in email_map:
+                    email_map[r["name"]] = r["email"] or ""
+        except Exception:
+            pass
+
         # 为每个成员计算排序字段
         for m in items:
             nm = m["display_name"]
+            aliases_list_email = [m.get("raw_name") or nm, nm] + (m.get("aliases") or [])
+            m["email"] = ""
+            for alias_email in aliases_list_email:
+                if alias_email in email_map:
+                    m["email"] = email_map.get(alias_email, "")
+                    break
+                for k, v in email_map.items():
+                    if k.lower() == str(alias_email).lower():
+                        m["email"] = v
+                        break
+                if m["email"]:
+                    break
             m["is_online"] = nm in online_names or any(
                 a in online_names for a in (m.get("aliases") or [])
             )
@@ -3825,13 +3864,14 @@ def build_app() -> "FastAPI":
         db.record_login_attempt(client_ip, username, success=True)
 
         # ── 强制 super_admin 开启 2FA ──
+        # 已注释：不再强制要求 2FA
         is_super = user.get("role") == "super_admin"
-        if is_super and not db.is_2fa_enabled(user["id"]):
-            db.log_security_event("login_blocked_no_2fa", user_id=user["id"], username=user["username"],
-                                  tenant_id=user.get("tenant_id", ""), ip=client_ip,
-                                  user_agent=request.headers.get("user-agent", ""),
-                                  result="failed", details="超管必须启用两步验证")
-            return RedirectResponse(url="/login?error=管理员账户必须启用两步验证，请联系另一管理员", status_code=303)
+        # if is_super and not db.is_2fa_enabled(user["id"]):
+        #     db.log_security_event("login_blocked_no_2fa", user_id=user["id"], username=user["username"],
+        #                           tenant_id=user.get("tenant_id", ""), ip=client_ip,
+        #                           user_agent=request.headers.get("user-agent", ""),
+        #                           result="failed", details="超管必须启用两步验证")
+        #     return RedirectResponse(url="/login?error=管理员账户必须启用两步验证，请联系另一管理员", status_code=303)
 
         # ── Telegram 2FA ──
         if db.is_2fa_enabled(user["id"]):

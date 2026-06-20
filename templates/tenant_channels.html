@@ -4,8 +4,11 @@
 
 <div class="page-header">
   <div class="flex items-center justify-between">
+    {% set can_edit = current_user.role in ('super_admin', 'admin', 'tenant_admin') %}
     <h1 class="page-title">推送频道</h1>
+    {% if can_edit %}
     <button onclick="openModal('createModal')" class="btn btn-primary">＋ 添加频道</button>
+    {% endif %}
   </div>
   <p class="page-subtitle">Telegram Bot · 推送目标管理</p>
 </div>
@@ -28,10 +31,12 @@
         · 已验证: {{ bc.verified_at[:16] if bc.verified_at else '—' }}
       </div>
       <div class="flex gap-2" style="margin-top:4px">
+        {% if can_edit %}
         <button onclick="toggleBotEdit()" class="btn btn-sm">✏️ 更换 Bot</button>
         <form method="post" action="/dashboard/tenant/channels/bot-config/clear" style="display:inline" onsubmit="return confirm('清除后推送将使用系统默认 Bot。确定？')">
           <button type="submit" class="btn btn-sm btn-danger">清除</button>
         </form>
+        {% endif %}
       </div>
       {% else %}
       <div class="flex items-center gap-2" style="margin-bottom:6px">
@@ -93,6 +98,7 @@
           </td>
           <td class="td-action">
             <div class="flex gap-1" style="justify-content:flex-end">
+              {% if can_edit %}
               <form method="post" action="/dashboard/tenant/channels/{{ ch.id }}/toggle" style="display:inline">
                 <button type="submit" class="btn btn-sm">{{ '暂停' if ch.enabled == 'true' else '启用' }}</button>
               </form>
@@ -104,6 +110,9 @@
                     onsubmit="return confirm('确定删除频道「{{ ch.label or ch.chat_id }}」？')">
                 <button type="submit" class="btn btn-sm btn-danger">删除</button>
               </form>
+              {% else %}
+              <span class="text-xs text-muted">—</span>
+              {% endif %}
             </div>
           </td>
         </tr>
@@ -121,7 +130,9 @@
   {% else %}
   <p class="text-sm text-muted">添加一个 Telegram 群组或私聊作为推送目标。</p>
   {% endif %}
+  {% if can_edit %}
   <button onclick="openModal('createModal')" class="btn btn-primary" style="margin-top:8px">＋ 添加频道</button>
+  {% endif %}
 </div>
 {% endif %}
 

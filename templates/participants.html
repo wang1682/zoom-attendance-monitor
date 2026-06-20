@@ -15,6 +15,9 @@
   <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0 0 16px 0">成员中心</h2>
 
   {# ── 筛选器 ── #}
+  <div class="hint" style="color:var(--tm);font-size:12px;margin:0 0 8px 0">
+    注：今日累计、首次进入、最近活动、离开时间均按当前会议统计；切换会议后数据会重新计算。
+  </div>
   <div class="toolbar">
     <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
     <select class="toolbar-select" id="groupFilter">
@@ -50,10 +53,11 @@
     <th style="width:60px">状态</th>
     <th>分组</th>
     <th>进入/离开次数</th>
-    <th>今日累计</th>
-    <th>首次进入</th>
-    <th>最近活动</th>
-    <th>离开时间</th>
+    <th>今日累计<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
+    <th>首次进入<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
+    <th>最近活动<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
+    <th>离开时间<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
+    <th>邮箱</th>
   </tr>
   </thead>
   <tbody id="memberTable">
@@ -100,6 +104,7 @@
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
+    <td class="td-mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ m.get("email", "") or "—" }}</td>
   </tr>
   {% endfor %}
   </tbody>
@@ -197,6 +202,9 @@ function switchTab(tab) {
       // 离开时间
       var tdLeave = row.querySelector('td:nth-child(8)');
       if (tdLeave) tdLeave.textContent = api.last_leave_time_display || '—';
+      // 邮箱
+      var tdEmail = row.querySelector('td:nth-child(9)');
+      if (tdEmail) tdEmail.textContent = api.email || '—';
     });
   }).catch(function(){});
 })();
@@ -214,20 +222,22 @@ function openGroupManage() {
   document.getElementById('groupManageModal').style.display = 'flex';
   fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(data){
     if (!data || !data.groups) { container.innerHTML = '暂无分组数据'; return; }
-    var html = '<style>.gm-row{display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--cb)}.gm-row:last-child{border:none}.gm-name{flex:1;font-size:13px}.gm-count{color:var(--tm);font-size:12px;margin-right:12px}.gm-actions{display:flex;gap:6px}</style>';
+    var html = '<style>.gm-row{position:relative;background:linear-gradient(180deg,rgba(15,23,42,.96),rgba(15,23,42,.86));border:1px solid rgba(34,211,238,.18);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 10px 30px rgba(0,0,0,.22)}.gm-name{font-size:15px;font-weight:800;color:#f8fafc;margin-bottom:6px}.gm-desc{font-size:12px;color:#94a3b8;margin-bottom:12px}.gm-footer{display:flex;justify-content:space-between;align-items:center}.gm-count{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;background:rgba(34,211,238,.12);color:#67e8f9;font-size:12px}.gm-actions{position:absolute;right:14px;top:50%;transform:translateY(-50%)}.gm-actions .bt{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08);color:#fecaca}.gm-create{display:grid;grid-template-columns:1fr 1fr 76px;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid rgba(34,211,238,.14)}.gm-create .ipt{height:34px}.gm-create .bt{height:34px}</style>';
     data.groups.forEach(function(g){
       html += '<div class="gm-row">'
         + '<div class="gm-name"><strong>' + escHtml(g.name) + '</strong>'
-        + (g.description ? '<br><span style="font-size:11px;color:var(--tm)">' + escHtml(g.description) + '</span>' : '')
         + '</div>'
-        + '<span class="gm-count">' + ((g.members && g.members.length) || 0) + '人</span>'
+        + '<div class="gm-desc">' + escHtml(g.description || '-') + '</div>'
+        + '<div class="gm-footer">'
+        + '<span class="gm-count">成员：' + ((g.members && g.members.length) || 0) + '人</span>'
         + '<div class="gm-actions">'
+        + '<button class="bt bt-s" onclick="editGroup(' + g.id + ',\'' + escAttr(g.name) + '\',\'' + escAttr(g.description || '') + '\')">编辑</button>'
         + '<button class="bt bt-s" onclick="deleteGroup(' + g.id + ',\'' + escAttr(g.name) + '\')" style="color:#ef4444">删除</button>'
-        + '</div></div>';
+        + '</div></div></div>';
     });
-    html += '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--cb)">'
-      + '<input id="newGroupName" class="ipt" placeholder="新分组名称" style="width:200px;margin-right:8px">'
-      + '<input id="newGroupDesc" class="ipt" placeholder="描述（可选）" style="width:240px;margin-right:8px">'
+    html += '<div class="gm-create">'
+      + '<input id="newGroupName" class="ipt" placeholder="新分组名称">'
+      + '<input id="newGroupDesc" class="ipt" placeholder="描述（可选）">'
       + '<button class="bt" onclick="createGroup()">创建</button>'
       + '</div>';
     container.innerHTML = html;
@@ -251,6 +261,21 @@ function createGroup() {
   }).catch(function(){ alert('请求失败'); });
 }
 
+
+function editGroup(id, oldName, oldDesc) {
+  var name = prompt('分组名称', oldName);
+  if (!name) return;
+  var desc = prompt('描述', oldDesc || '');
+  fetch('/api/v3/member-groups/' + id, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name:name, description:desc})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) openGroupManage();
+    else alert(j.error || '保存失败');
+  }).catch(function(){ alert('请求失败'); });
+}
+
 function deleteGroup(id, name) {
   if (!confirm('确定删除分组「' + name + '」？不会删除成员。')) return;
   fetch('/api/v3/member-groups/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(j){
@@ -262,3 +287,36 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 </script>
 {% endblock %}
+
+<style>
+.group-modal {
+  width: 560px;
+  max-width: 90vw;
+}
+
+.group-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 60px 70px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.group-name {
+  font-weight: 600;
+}
+
+.group-desc {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.group-count {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.group-delete {
+  white-space: nowrap;
+}
+</style>

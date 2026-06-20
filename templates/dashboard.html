@@ -28,7 +28,8 @@
 </div>
 {% endif %}
 
-<!-- ═══════ 运营统计（系统级，同 admin_center 数据源）═══════ -->
+<!-- ═══════ 运营统计（系统级，仅 super_admin/admin 可见）═══════ -->
+{% if current_user.role in ('super_admin', 'admin') %}
 <div class="panel mb-p">
   <div class="panel-header"><h2>运营统计</h2></div>
   <div class="panel-body">
@@ -68,6 +69,7 @@
     </div>
   </div>
 </div>
+{% endif %}
 
 <!-- ═══════ KPI Metric Row (skeleton → JS fills) ═══════ -->
 <div class="stats-row" id="kpi-row">
@@ -165,7 +167,7 @@
 
     // ── 当前共享屏幕 ──
     // 从 /api/v3/sharing-live 获取（独立接口）
-    fetchSharing();
+    setTimeout(fetchSharing, 100);
 
     // ── 最近事件 ──
     const events = d.recent_events || [];
@@ -195,12 +197,14 @@
       const sharing = await r.json();
       const list = document.getElementById('screen-sharing-list');
       const badge = document.getElementById('capability-badge');
-      const rows = sharing.records || sharing || [];
-      if (rows.length) {
+      const activeList = sharing.active || [];
+      if (activeList.length) {
         badge.textContent = '✓ 检测中';
-        let h = '<table class="data-table"><thead><tr><th>用户</th><th>会议</th><th>已共享</th></tr></thead><tbody>';
-        for (const s of rows) {
-          h += '<tr><td class="td-name">' + esc(s.user_name || s.name || '') + '</td><td class="td-name">' + esc(s.meeting_topic || s.meeting_id || '') + '</td><td class="td-mono">' + esc(s.duration || s.start_time || '') + '</td></tr>';
+        let h = '<table class="data-table"><thead><tr><th>用户</th><th>会议</th><th>时长</th><th>状态</th><th></th></tr></thead><tbody>';
+        for (const s of activeList) {
+          const statusTag = s.is_stale ? '<span class="badge badge-warning">疑似残留</span>' : '<span class="badge badge-success">共享中</span>';
+          const clearBtn = s.is_stale ? '<button class="btn btn-xs btn-danger" onclick="clearSharing(\'' + esc(s.raw_name || s.name || '') + '\')">清除</button>' : '';
+          h += '<tr><td class="td-name">' + esc(s.name || '') + '</td><td class="td-name">' + esc(s.meeting_id || '') + '</td><td class="td-mono">' + esc(s.duration_display || '') + '</td><td>' + statusTag + '</td><td>' + clearBtn + '</td></tr>';
         }
         h += '</tbody></table>';
         list.innerHTML = h;
@@ -211,6 +215,20 @@
     } catch(e) {
       console.warn('Sharing fetch failed:', e);
     }
+  }
+
+  // ── Toast 通知 ──
+  function showToast(msg) {
+    const t = document.getElementById('toast') || (function(){
+      const el = document.createElement('div');
+      el.id = 'toast';
+      el.style.cssText = 'position:fixed;top:20px;right:20px;padding:8px 16px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:11px;z-index:999;font-family:var(--mono);border-radius:3px;display:none';
+      document.body.appendChild(el);
+      return el;
+    })();
+    t.textContent = msg;
+    t.style.display = 'block';
+    setTimeout(() => t.style.display = 'none', 4000);
   }
 
   async function fetchAlerts() {
@@ -268,5 +286,24 @@
     setTimeout(updateMytClock, 1000);
   })();
 })();
+// ── 清除 stale 共享记录 ──
+function clearSharing(userName) {
+  if (!confirm('清除 "' + userName + '" 的共享记录？')) return;
+  fetch('/api/v3/sharing-clear', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({user_name: userName})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showToast('已清除 ' + userName);
+      // 重新加载共享列表
+      setTimeout(fetchSharing, 100);
+    } else {
+      showToast('清除失败: ' + (d.error || '未知错误'));
+    }
+  }).catch(e => {
+    showToast('请求失败: ' + e.message);
+  });
+}
 </script>
 {% endblock %}

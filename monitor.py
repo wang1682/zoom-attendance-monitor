@@ -19,6 +19,7 @@ import templates as tmpl
 
 MYT = timezone(timedelta(hours=8))
 _known: set = set()
+_report_sent_hours: set = set()  # 已推送过在线报告的 MYT 小时
 
 
 def in_push_slot(hour: int) -> bool:
@@ -149,19 +150,24 @@ async def poll_account(zoom: ZoomAPI, meeting_ids: list[str],
 
 def _push_by_rule(event_type: str, text: str, tenant_id: str,
                   default_tg: TelegramNotifier) -> asyncio.Task | None:
-    """按告警规则推送，只推给指定租户的 channels（每个 channel 用自己的 bot_token）"""
-    from db import get_tenant_channels, get_tenant_bot_config
-    channels = get_tenant_channels(tenant_id)
-    if not channels:
+    """按告警规则推送 — 统一走 telegram_alert_rules + telegram_channels"""
+    from db import _get_conn
+    conn = _get_conn()
+    rule = conn.execute(
+        "SELECT id, enabled, target_channel_id FROM telegram_alert_rules "
+        "WHERE event_type=? AND enabled=1",
+        (event_type,)
+    ).fetchone()
+    if not rule or not rule["target_channel_id"]:
         return None
-    futures = []
-    for ch in channels:
-        token = ch.get("bot_token", "") or get_tenant_bot_config(tenant_id)["token"]
-        if not token:
-            continue  # 没有配置 bot token 就不推
-        _tg = TelegramNotifier(token=token)
-        futures.append(asyncio.ensure_future(_tg.send(text, chat_id=ch["chat_id"])))
-    return futures[0] if futures else None
+    ch = conn.execute(
+        "SELECT chat_id, bot_token FROM telegram_channels WHERE id=? AND enabled=1",
+        (rule["target_channel_id"],)
+    ).fetchone()
+    if not ch or not ch["bot_token"]:
+        return None
+    _tg = TelegramNotifier(token=ch["bot_token"])
+    return asyncio.ensure_future(_tg.send(text, chat_id=ch["chat_id"]))
 
 
 async def _push_entries(entries: list[tuple], entry_type: str, tenant_id: str,
@@ -299,20 +305,33 @@ async def monitor_loop():
             if accounts:
                 detail += f" {len(accounts)+1}账号"
 
-                        # ── Periodic online report (每 3 小时一次，按租户 tenant_channels 推送) ──
-            if in_report_slot(now_hour):
-                # 按租户分别推送在线报告 – 每租户拉自己的数据
+                        # ── Periodic online report (每 3 小时一次，统一走 telegram_alert_rules 配置) ──
+            if False and in_report_slot(now_hour) and now_hour not in _report_sent_hours:
+                _report_sent_hours.add(now_hour)
                 import httpx
                 import db as _db
                 from app import resolve_member
 
-                _all_channels = _db.get_tenant_channels_periodic_report()
-                for _ch in _all_channels:
-                    _cp_chat_id = _ch["chat_id"]
-                    _cp_bot_token = _ch.get("bot_token", "")
-                    if not _cp_bot_token or not _cp_chat_id:
+                # 查询所有已启用的 periodic_online_report 规则
+                _report_rules = _db._get_conn().execute(
+                    "SELECT id, event_type, enabled, tenant_id, target_channel_id "
+                    "FROM telegram_alert_rules "
+                    "WHERE event_type='periodic_online_report' AND enabled=1"
+                ).fetchall()
+                for _rule in _report_rules:
+                    _tid = _rule["tenant_id"]
+                    _ch_id = _rule["target_channel_id"]
+                    if not _ch_id:
                         continue
-                    _tid = _ch["tenant_id"]
+                    # 从 telegram_channels 获取频道 Bot 信息
+                    _ch_row = _db._get_conn().execute(
+                        "SELECT chat_id, bot_token, bot_username FROM telegram_channels WHERE id=? AND enabled=1",
+                        (_ch_id,)
+                    ).fetchone()
+                    if not _ch_row or not _ch_row["bot_token"]:
+                        continue
+                    _cp_chat_id = _ch_row["chat_id"]
+                    _cp_bot_token = _ch_row["bot_token"]
                     try:
                         _v2r = httpx.get(f"http://zoom-api:8000/api/v3/live/tenant/{_tid}", timeout=10)
                         _v2d = _v2r.json() if _v2r.status_code == 200 else {"data": {"meetings": []}}
@@ -327,11 +346,6 @@ async def monitor_loop():
                             _rm = resolve_member(_raw)
                             _std = _rm["standard_name"]
                             _grp = _rm.get("group_name") or "未分组"
-                            _join = _p.get("join_time", "")
-                            try:
-                                _join_dt = datetime.fromisoformat(_join.replace("Z", "+00:00"))
-                            except Exception:
-                                _join_dt = None
                             _mins = _p.get("online_minutes", 0)
                             _h, _m = _mins // 60, _mins % 60
                             _v2_participants.append((_std, _grp, _mins, _h, _m))
@@ -346,23 +360,22 @@ async def monitor_loop():
                             _ordered.append((_g, _grouped.pop(_g)))
                     for _g, _members in _grouped.items():
                         _ordered.append((_g, _members))
-                    _num_emoji = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
-                    _lines = ["🟠 实时在线", "", f"👥 在线人数：{len(_v2_participants)}", ""]
+                    _lines = ["🟠 实时在线", f"👥 在线人数：{len(_v2_participants)}", ""]
                     if _v2_participants:
                         _g_emoji = {"核销": "🔵", "推进": "🟡"}
                         for _g, _members in _ordered:
                             _emoji = _g_emoji.get(_g, "⚪")
                             _lines.append(f"{_emoji} {_g}（{len(_members)}）")
                             for _gi, (_std, _mins, _h, _m) in enumerate(_members):
-                                _num = _num_emoji[_gi] if _gi < len(_num_emoji) else f"({_gi+1})"
+                                _idx = _gi + 1
                                 _dur_cn = f"{_h}小时{_m}分" if _h > 0 else f"{_m}分钟"
-                                _lines.append(f"{_num} {_std}        {_dur_cn}")
+                                _lines.append(f"{_idx}. {_std} · {_dur_cn}")
                             _lines.append("")
                     else:
                         _lines.append("当前无人在线")
                         _lines.append("")
                     _report_text = "\n".join(_lines)
-                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 {_ch.get('label','?')} tenant={_tid} chat_id={_cp_chat_id} ({len(_v2_participants)}人)\n")
+                    sys.stdout.write(f"[PERIODIC REPORT] 推送至 rule_id={_rule['id']} tenant={_tid} ({len(_v2_participants)}人)\n")
                     sys.stdout.flush()
                     _cp_tg = TelegramNotifier(token=_cp_bot_token)
                     await _cp_tg.send(_report_text, chat_id=_cp_chat_id)

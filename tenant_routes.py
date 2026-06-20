@@ -12,24 +12,39 @@ import logging
 
 import db
 from config import settings
+from services.auth import AuthService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-# ── Auth helpers ──────────────────────────────────────────────────────────────
+# ── Auth helpers (compatibility wrappers, delegate to AuthService) ─────
 
 
 def get_current_user(request: Request) -> dict | None:
-    user_id = request.session.get("user_id")
-    if not user_id:
-        return None
-    user = db.get_user_by_id(user_id)
-    if not user or not user["is_active"]:
-        return None
-    user["is_active_str"] = "true" if user["is_active"] else "false"
-    return user
+    """Extract user info from session. Returns None if not logged in.
+
+    Phase 1 compat: delegates to AuthService for future migration.
+    Routes will use AuthService(request) directly in Phase 2+.
+    """
+    try:
+        auth = AuthService(request)
+        ctx = auth.require_authenticated()
+        user = ctx.current_user
+        if user:
+            user["is_active_str"] = "true" if user.get("is_active") else "false"
+        return user
+    except Exception:
+        # Fallback: old logic
+        user_id = request.session.get("user_id")
+        if not user_id:
+            return None
+        user = db.get_user_by_id(user_id)
+        if not user or not user["is_active"]:
+            return None
+        user["is_active_str"] = "true" if user["is_active"] else "false"
+        return user
 
 
 async def require_user(request: Request) -> dict:
@@ -51,20 +66,10 @@ async def require_editor(user: dict = Depends(require_user)) -> dict:
 def _get_nav_items(role: str) -> list[dict]:
     """Build the top nav items filtered by user role.
 
-    All admin pages (推送/安全中心/账号管理) are consolidated under 管理中心.
-    super_admin/admin/tenant_admin see 管理中心; user sees none.
+    Phase 1 compat wrapper: delegates to AuthService logic.
+    Routes will use AuthService(request).get_nav_items() in Phase 2+.
     """
-    items = [
-        {"key": "overview",     "label": "总览",   "href": "/dashboard/",                      "icon": ""},
-        {"key": "participants", "label": "成员",   "href": "/dashboard/participants",            "icon": ""},
-        {"key": "meetings",     "label": "会议",   "href": "/dashboard/meetings",               "icon": ""},
-        {"key": "alerts",       "label": "预警",   "href": "/dashboard/alerts",                 "icon": ""},
-    ]
-    if role in ("super_admin", "admin", "tenant_admin"):
-        items += [
-            {"key": "admin_center", "label": "管理中心","href": "/dashboard/admin-center",         "icon": ""},
-        ]
-    return items
+    return AuthService._check_get_nav_items(role)
 
 
 # ── Render helper ─────────────────────────────────────────────────────────────
@@ -78,6 +83,9 @@ def _render_tenant(request: Request, active: str, user: dict,
     templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
+    auth = AuthService(request)
+    ctx = auth.require_authenticated()
+
     # 从 DB 重读完整用户资料（确保 telegram 字段最新）
     fresh_user = db.get_user_by_id(user["id"]) or user
     logger.info(
@@ -87,7 +95,14 @@ def _render_tenant(request: Request, active: str, user: dict,
         tenant_id,
         fresh_user.get("telegram_2fa_enabled"),
     )
-    current_user = {
+
+    context = auth.get_template_vars(active, **extra)
+    # Override request for TemplateResponse
+    context["request"] = request
+    context["page_title"] = extra.pop("title", None)
+
+    # Ensure current_user has telegram fields from DB
+    context["current_user"] = {
         "id": fresh_user["id"],
         "username": fresh_user["username"],
         "display_name": fresh_user.get("display_name", ""),
@@ -98,38 +113,6 @@ def _render_tenant(request: Request, active: str, user: dict,
         "telegram_2fa_enabled": fresh_user.get("telegram_2fa_enabled", 0),
         "telegram_2fa_verified_at": fresh_user.get("telegram_2fa_verified_at", ""),
         "twofa_backup_codes": fresh_user.get("twofa_backup_codes", ""),
-    }
-    tenant_info = db.get_tenant(tenant_id)
-    tenant_name = tenant_info.get("display_name", tenant_id) if tenant_info else tenant_id
-    role = user.get("role", "user")
-    is_viewer = role == "viewer"
-    is_super_admin = role == "super_admin"
-
-    # ── 租户切换上下文（仅 super_admin 需要） ──
-    if is_super_admin:
-        all_tenants = db.get_all_tenants()
-        current_tenant = next((t for t in all_tenants if t["id"] == tenant_id), None)
-        current_tenant_name = current_tenant["display_name"] if current_tenant else tenant_id
-    else:
-        all_tenants = []
-        current_tenant_name = ""
-
-    hide_settings = role not in ("admin", "super_admin")
-    nav_items = _get_nav_items(role)
-
-    context = {
-        **extra,
-        "request": request,
-        "active": active,
-        "tenant_name": tenant_name,
-        "is_viewer": is_viewer,
-        "is_super_admin": is_super_admin,
-        "available_tenants": all_tenants,
-        "current_tenant_id": tenant_id,
-        "current_tenant_name": current_tenant_name,
-        "hide_settings": hide_settings,
-        "current_user": current_user,
-        "nav_items": nav_items,
     }
     return templates.TemplateResponse(request, template_name, context)
 
@@ -703,7 +686,7 @@ async def tenant_bot_config_save(request: Request,
                 bot = data["result"]
                 username = bot.get("username", "")
                 db.update_tenant_bot_config(tenant_id, token, username,
-                                              datetime.utcnow().isoformat())
+                                              datetime.now(timezone.utc).isoformat())
             else:
                 # Token invalid — still save but with empty username (show as broken)
                 db.update_tenant_bot_config(tenant_id, token)
@@ -728,7 +711,24 @@ async def tenant_bot_config_clear(request: Request,
 async def tenant_alerts_page(request: Request, user: dict = Depends(require_user)):
     tenant_id = request.app.state.get_effective_tenant_id(request)
     rules = db.get_telegram_rules_by_tenant(tenant_id)
-    channels = db.get_tenant_channels(tenant_id)
+    # 从 telegram_channels 表获取可用频道
+    _raw_tg = db.get_telegram_channels()
+    channels = []
+    channel_map = {}
+    for ch in _raw_tg:
+        d = {
+            "id": ch["id"],
+            "is_enabled": ch.get("enabled", 1),
+            "label": ch.get("name", f"频道 {ch['id']}"),
+            "chat_id": ch.get("chat_id", ""),
+            "bot_token": ch.get("bot_token", ""),
+        }
+        channels.append(d)
+        if int(ch.get("enabled", 1)) == 1:
+            channel_map[int(ch["id"])] = ch.get("name", "")
+    for r in rules:
+        tid = r.get("target_channel_id")
+        r["channel_label"] = channel_map.get(int(tid), "全部启用频道") if tid else "全部启用频道"
     bot_config = db.get_tenant_bot_config(tenant_id)
     bot_username = "系统"
     if bot_config.get("username"):
@@ -931,15 +931,17 @@ async def bind_telegram_2fa(request: Request,
     import secrets as sec
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
-    bot_cfg = db.get_tenant_bot_config(tenant_id)
-    token = bot_cfg.get("token") or settings.telegram_bot_token
+
+    # 两步验证确认码始终用专用 Bot 发送（通过 admin 配置的 2FA Bot）
+    from db import get_setting
+    bot_token = get_setting("2fa_bot_token") or settings.telegram_bot_token
 
     code = f"{sec.randbelow(1000000):06d}"
 
     result = send_message(
         f"🔐 两步验证绑定确认\n\n确认码：{code}\n\n请在 Dashboard 输入该确认码完成绑定。验证码 5 分钟内有效。",
         chat_id=chat_id,
-        bot_token=token
+        bot_token=bot_token
     )
     if not result.get("ok"):
         msg = result.get("error", "")

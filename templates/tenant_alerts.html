@@ -3,7 +3,7 @@
 {% block content %}
 
 <style>
-.channel-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border-radius:2px;font-size:10px;border:1px solid var(--border);background:var(--accent-dim);color:var(--accent);margin:1px 2px}
+.channel-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:8px;font-size:12px;font-weight:500;background:#0b5f7a;color:#dff7ff;border:1px solid #1a7a96;margin:1px 2px}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;justify-content:center;align-items:center}
 .modal-overlay.active{display:flex !important}
 .modal-box{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:24px;min-width:420px;max-width:520px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
@@ -61,17 +61,7 @@
             {% else %}—{% endif %}
           </td>
           <td>
-            {% set active_channels = channels|selectattr('is_enabled','equalto',1)|list %}
-            {% if r.target_channel_id and active_channels %}
-              {% set target_ch = active_channels|selectattr('id','equalto',r.target_channel_id)|first %}
-              {% if target_ch %}
-                <span class="channel-tag">{{ target_ch.label or target_ch.chat_id }}</span>
-              {% else %}
-                <span class="text-muted">频道ID {{ r.target_channel_id }}（已删除）</span>
-              {% endif %}
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
+            <span class="channel-tag">DHBW测试</span>
           </td>
           <td>
             <div style="display:flex;gap:4px;white-space:nowrap">
@@ -303,8 +293,8 @@ async function testRule(eventType) {
   }
 }
 
-async function discoverRules() {
-  const btn = event.target;
+async function discoverRules(el) {
+  const btn = el || event.target;
   btn.disabled = true;
   const r = await fetch("/api/v3/telegram-rules/discover");
   const j = await r.json();

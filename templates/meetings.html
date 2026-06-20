@@ -1,14 +1,17 @@
 {% extends "tenant_base.html" %}
 {% block title %}会议中心{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+{% endblock %}
 {% block content %}
 
-{% set tab_labels = {'live':'● 当前会议','history':'■ 历史会议','sharing':'◆ 共享记录'} %}
+{% set tab_labels = {'live':'● 当前会议','history':'■ 历史会议','sharing':'◆ 屏幕共享'} %}
 
 <div class="page-header">
   <div class="flex" style="justify-content:space-between;align-items:flex-start">
     <div>
       <h1 class="page-title">会议中心</h1>
-      <p class="page-subtitle">当前会议 · 历史会议 · 屏幕共享记录</p>
+      <p class="page-subtitle">当前会议 · 历史会议 · 屏幕共享监控</p>
     </div>
   </div>
 </div>
@@ -48,176 +51,192 @@
       <div class="empty-state">
         <div class="es-icon">📭</div>
         <div class="es-title">暂无活跃会议</div>
-        <div class="es-desc">当前没有进行中的会议</div>
       </div>
     </div>
   {% endif %}
 
 <!-- ── Tab: 历史会议 ── -->
 {% elif tab == 'history' %}
-  <div class="flex justify-between mb-2">
-    <span class="text-sm text-muted">共 {{ total_meetings }} 个会议</span>
-  </div>
   {% if history_meetings and history_meetings|length > 0 %}
-    <div class="panel">
-      <div class="overflow-x">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>会议主题</th>
-              <th>Meeting ID</th>
-              <th>参与者</th>
-              <th>时长</th>
-              <th>时间范围</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for m in history_meetings %}
-          <tr>
-            <td class="td-name">{{ m.topic }}</td>
-            <td class="td-mono">{{ m.meeting_id }}</td>
-            <td><span class="badge badge-cyan">{{ m.participant_count }} 人</span></td>
-            <td class="td-mono">{{ m.duration_display }}</td>
-            <td class="td-mono">{{ m.first_event_display }} → {{ m.last_event_display }}</td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+    {% for m in history_meetings %}
+    <div class="panel mb-p">
+      <div class="panel-body" style="padding:10px 14px">
+        <div class="flex" style="justify-content:space-between;align-items:center">
+          <div style="flex:1;min-width:0">
+            <div class="flex" style="gap:8px;align-items:center;margin-bottom:4px">
+              <span style="font-size:13px;font-weight:600;color:var(--text)">{{ m.topic }}</span>
+            </div>
+            <div class="flex" style="gap:16px;flex-wrap:wrap">
+              <span class="text-sm text-muted">ID: <span class="mono">{{ m.meeting_id }}</span></span>
+              <span class="text-sm text-muted">参会: <strong>{{ m.participant_count }}</strong></span>
+              <span class="text-sm text-muted">开始: {{ fmt_myt(m.start_time) }}</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+    {% endfor %}
   {% else %}
     <div class="panel">
       <div class="empty-state">
-        <div class="es-icon">📋</div>
-        <div class="es-title">暂无历史会议记录</div>
+        <div class="es-icon">📭</div>
+        <div class="es-title">暂无历史会议</div>
       </div>
     </div>
   {% endif %}
 
-<!-- ── Tab: 共享记录 ── -->
+<!-- ── Tab: 屏幕共享 ── -->
 {% elif tab == 'sharing' %}
-  <!-- 时间筛选 -->
-  <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-    <span class="text-sm text-muted" style="margin-right:4px">时间范围：</span>
-    {% set ranges = [('today','今天'),('yesterday','昨天'),('7d','最近7天'),('30d','最近30天')] %}
-    {% for rk, rl in ranges %}
-    <a href="?tab=sharing&range={{ rk }}" class="btn btn-sm {% if sharing_range == rk %}btn-primary{% endif %}" style="padding:2px 10px;font-size:12px">{{ rl }}</a>
-    {% endfor %}
-    <a href="?tab=sharing&range=custom" class="btn btn-sm {% if sharing_range == 'custom' %}btn-primary{% endif %}" style="padding:2px 10px;font-size:12px">自定义</a>
-    {% if sharing_range == 'custom' %}
-    <input type="date" id="sharing-start" value="{{ sharing_start }}" style="width:130px;font-size:12px;padding:2px 6px">
-    <span class="text-muted" style="font-size:12px">~</span>
-    <input type="date" id="sharing-end" value="{{ sharing_end }}" style="width:130px;font-size:12px;padding:2px 6px">
-    <button class="btn btn-sm btn-primary" onclick="applyCustomDate()" style="padding:2px 10px;font-size:12px">确定</button>
-    {% endif %}
+
+<!-- ======== Layer 1: 顶部统计卡片 ======== -->
+<div class="row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+  <div class="stat-card">
+    <div class="stat-label">今日共享</div>
+    <div class="stat-value" id="stat-total">—</div>
   </div>
-  <div class="text-sm text-muted" style="margin-bottom:8px">
-    当前范围：<strong>{{ sharing_range_label }}</strong>
-    {% if sharing_records|length > 0 %} · 共 {{ sharing_total }} 条记录{% endif %}
+  <div class="stat-card">
+    <div class="stat-label">在线共享</div>
+    <div class="stat-value" id="stat-online">—</div>
   </div>
-  <!-- 分组筛选按钮 -->
-  <div class="flex" style="gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-    <span class="text-sm text-muted" style="margin-right:4px">分组：</span>
-    {% for g in sharing_groups %}
-    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}&search={{ sharing_search }}&group_id={{ g.group_id }}"
-       class="btn btn-sm {% if sharing_group_id == g.group_id %}btn-primary{% else %}btn-outline{% endif %}"
-       style="padding:2px 10px;font-size:12px">
-      {{ g.group_name }}({{ g.count }})
-    </a>
-    {% endfor %}
-    {% if sharing_group_id %}
-    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}&search={{ sharing_search }}"
-       class="text-sm text-muted" style="padding:4px 8px">清除筛选</a>
-    {% endif %}
-    {% if sharing_records|length == 0 and sharing_group_id %}
-    <span class="text-sm" style="color:var(--warning);margin-left:4px">该分组当前无共享</span>
-    {% endif %}
+  <div class="stat-card">
+    <div class="stat-label">累计时长</div>
+    <div class="stat-value" id="stat-duration">—</div>
   </div>
-  <!-- 搜索框 -->
-  <div class="flex" style="gap:6px;align-items:center;margin-bottom:10px">
-    <input type="text" id="sharing-search" placeholder="搜索成员姓名..."
-           value="{{ sharing_search }}"
-           style="flex:1;max-width:280px;font-size:13px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-card);color:var(--text)">
-    <button class="btn btn-sm btn-primary" onclick="applySearch()" style="padding:4px 12px;font-size:12px">搜索</button>
-    {% if sharing_search %}
-    <a href="?tab=sharing&range={{ sharing_range }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}" class="text-sm text-muted" style="padding:4px 8px">清除</a>
-    {% endif %}
+  <div class="stat-card">
+    <div class="stat-label">活跃成员</div>
+    <div class="stat-value" id="stat-users">—</div>
   </div>
-  {% if sharing_records and sharing_records|length > 0 %}
-    <div class="panel">
-      <div class="overflow-x">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>用户</th>
-              <th>分组</th>
-              <th>内容</th>
-              <th>状态</th>
-              <th>时长</th>
-              <th>时间</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for s in sharing_records %}
-          <tr>
-            <td class="td-name">{{ s.user_name }}</td>
-            <td class="td-mono" style="font-size:11px;color:var(--text-secondary)">{{ s.group_name or '—' }}</td>
-            <td class="truncate" style="max-width:160px;font-size:11px;color:var(--text-secondary)">{{ s.content }}</td>
-            <td>
-              {% if s.is_active %}
-              <span class="badge badge-success">共享中</span>
-              {% else %}
-              <span class="badge badge-muted">已结束</span>
-              {% endif %}
-            </td>
-            <td class="td-mono">{{ s.duration }}</td>
-            <td class="td-mono">{{ s.start_time_display }} → {{ s.end_time_display }}</td>
-            <td><button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 8px" onclick="showParticipants('{{ s.meeting_id }}', '{{ s.user_name }}')">👤</button></td>
-          </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+</div>
+
+<!-- ======== Layer 2: 共享趋势 + 排行榜 ======== -->
+<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:12px;margin-bottom:16px">
+
+  <!-- 趋势图 -->
+  <div class="panel">
+    <div class="panel-header"><h2>📊 共享趋势（24h）</h2></div>
+    <div class="panel-body" style="padding:10px 14px">
+      <canvas id="sharingTrendChart" height="160" style="max-height:160px"></canvas>
+    </div>
+  </div>
+
+  <!-- 排行榜 -->
+  <div class="panel">
+    <div class="panel-header"><h2>🏆 今日共享排行</h2></div>
+    <div class="panel-body" style="padding:8px 14px">
+      <div id="sharing-rank-list">
+        <div class="text-sm text-muted">加载中...</div>
       </div>
     </div>
-  {% else %}
-    <div class="panel">
+  </div>
+</div>
+
+<!-- ======== Layer 3: 共享记录表 ======== -->
+<div class="panel mb-p">
+  <div class="panel-header">
+    <h2>📺 共享记录明细</h2>
+    {% if sharing_grouped|length > 0 %} · 共 {{ sharing_grouped_total }} 人<span class="text-xs text-muted">（明细 {{ sharing_total }} 条）</span>{% endif %}
+  </div>
+  <div class="panel-body compact">
+    <!-- 筛选栏 -->
+    <div class="filters-bar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <input type="text" id="sharing-search" placeholder="搜索用户名…" value="{{ sharing_search }}" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:160px">
+      <button class="btn btn-sm btn-primary" onclick="applySearch()">搜索</button>
+      <span class="text-xs text-muted"> | </span>
+      {% for g in sharing_groups %}
+      <a href="?tab=sharing&range={{ sharing_range }}&group_id={{ g.group_id }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}" class="badge {% if sharing_group_id == g.group_id|string %}badge-accent{% else %}badge-muted{% endif %}">{{ g.group_name }}{% if g.count is defined %} ({{ g.count }}){% endif %}</a>
+      {% endfor %}
+    </div>
+    {% if sharing_records|length == 0 and sharing_group_id %}
       <div class="empty-state">
-        <div class="es-icon">🖥️</div>
+        <div class="es-icon">📭</div>
+        <div class="es-title">该分组暂无共享记录</div>
+      </div>
+    {% elif sharing_records|length == 0 %}
+      <div class="empty-state">
+        <div class="es-icon">📭</div>
         <div class="es-title">暂无共享记录</div>
       </div>
-    </div>
-  {% endif %}
+    {% else %}
+    <table class="data-table" id="sharing-grouped-table">
+      <thead>
+        <tr>
+          <th>用户</th>
+          <th>分组</th>
+          <th>共享内容</th>
+          <th>首次开始</th>
+          <th>最后结束</th>
+          <th>总时长</th>
+          <th>次数</th>
+          <th>状态</th>
+          <th style="width:80px"></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for g in sharing_grouped %}
+        <tr class="sharing-group-row" data-key="{{ loop.index0 }}">
+          <td class="td-name">{{ g.user_name }}</td>
+          <td class="td-mono" style="font-size:11px;color:var(--text-secondary)">{{ g.group_name or '—' }}</td>
+          <td class="truncate" style="max-width:100px;font-size:11px;color:var(--text-secondary)">{{ g.content }}</td>
+          <td class="td-mono">{{ g.first_start_display }}</td>
+          <td class="td-mono">{{ g.last_end_display }}</td>
+          <td class="td-mono">{{ g.total_duration }}</td>
+          <td class="td-mono" style="text-align:center">{{ g.count }}</td>
+          <td>{% if g.is_active %}<span class="badge badge-success">共享中</span>{% else %}<span class="badge badge-muted">已结束</span>{% endif %}</td>
+          <td><button class="btn btn-sm btn-outline" onclick="toggleSharingDetail('{{ loop.index0 }}')">查看明细</button></td>
+        </tr>
+        <tr class="sharing-detail-row" id="sharing-detail-{{ loop.index0 }}" style="display:none">
+          <td colspan="9" style="padding:0">
+            <div class="sharing-detail-inner">
+              <table class="data-table" style="font-size:11px;margin:0;width:100%">
+                <thead>
+                  <tr>
+                    <th style="width:30px">#</th>
+                    <th>开始</th>
+                    <th>结束</th>
+                    <th>时长</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {% for d in g.details %}
+                  <tr>
+                    <td style="text-align:center;color:var(--text-muted);font-size:10px">{{ loop.index }}</td>
+                    <td class="td-mono">{{ d.start_time_display }}</td>
+                    <td class="td-mono">{{ d.end_time_display }}</td>
+                    <td class="td-mono">{{ d.duration }}</td>
+                    <td>{% if d.is_active %}<span class="badge badge-success badge-xs">共享中</span>{% else %}<span class="badge badge-muted badge-xs">已结束</span>{% endif %}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
 
 {% endif %}
 
-<style>
-.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
-.modal-overlay.open{display:flex}
-.modal-box{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:20px;max-width:400px;width:90%;max-height:70vh;overflow-y:auto}
-.modal-box h3{margin:0 0 10px 0;font-size:14px}
-.modal-close{float:right;cursor:pointer;font-size:18px;color:var(--text-muted)}
-.participant-item{padding:6px 0;font-size:13px;border-bottom:1px solid var(--border-subtle)}
-.search-filter{display:inline-flex;gap:6px;align-items:center;margin-bottom:8px}
-</style>
-
-<!-- 参会者弹窗 -->
-<div id="participant-modal" class="modal-overlay" onclick="if(event.target===this)closeParticipants()">
-  <div class="modal-box">
-    <span class="modal-close" onclick="closeParticipants()">&times;</span>
-    <h3 id="participant-modal-title">参会者</h3>
-    <div id="participant-list"></div>
+<!-- ── 右侧详情 Drawer ── -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeSharingDrawer()"></div>
+<div class="drawer" id="sharing-drawer">
+  <div class="drawer-header">
+    <span>📋 共享详情</span>
+    <button class="modal-close" onclick="closeSharingDrawer()">&times;</button>
+  </div>
+  <div class="drawer-body" id="drawer-body">
+    <div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>
   </div>
 </div>
 
 <script>
-function applyCustomDate() {
-  var s = document.getElementById('sharing-start').value;
-  var e = document.getElementById('sharing-end').value;
-  if (s && e) {
-    window.location.href = '?tab=sharing&range=custom&start=' + s + '&end=' + e;
-  }
-}
+var tab = '{{ tab }}';
+
+// ── 搜索 ──
 function applySearch() {
   var q = document.getElementById('sharing-search').value;
   if (!q) return;
@@ -227,35 +246,294 @@ function applySearch() {
   {% endif %}
   window.location.href = url;
 }
-function showParticipants(meetingId, userName) {
-  document.getElementById('participant-modal-title').textContent = meetingId + ' - ' + userName + ' 的参会者';
-  document.getElementById('participant-list').innerHTML = '<div class=\"text-sm text-muted\">加载中...</div>';
-  document.getElementById('participant-modal').classList.add('open');
-  fetch('/dashboard/api/meeting-participants?meeting_id=' + encodeURIComponent(meetingId))
+
+// ── 加载统计卡片 ──
+function loadSharingStats() {
+  fetch('/dashboard/api/sharing-stats')
     .then(function(r){return r.json()})
-    .then(function(data){
-      var list = document.getElementById('participant-list');
-      if (!data.ok || !data.participants || data.participants.length === 0) {
-        list.innerHTML = '<div class=\"text-sm text-muted\">无参会者记录</div>';
+    .then(function(d){
+      if (!d.ok) return;
+      document.getElementById('stat-total').textContent = d.total;
+      document.getElementById('stat-online').textContent = d.online;
+      document.getElementById('stat-duration').textContent = d.total_duration;
+      document.getElementById('stat-users').textContent = d.active_users + '人';
+    });
+}
+
+// ── 加载趋势图 ──
+var trendChart = null;
+function loadSharingTrend() {
+  fetch('/dashboard/api/sharing-trend?hours=24')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok) return;
+      var labels = d.data.map(function(p){return p.hour;});
+      var values = d.data.map(function(p){return p.count;});
+      var ctx = document.getElementById('sharingTrendChart').getContext('2d');
+      if (trendChart) trendChart.destroy();
+      trendChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: '共享次数',
+            data: values,
+            backgroundColor: 'rgba(0, 168, 255, 0.5)',
+            borderColor: '#00a8ff',
+            borderWidth: 1,
+            borderRadius: 3,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              ticks: { color: '#6b7280', font: {size:9}, maxTicksLimit: 12 },
+              grid: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: '#6b7280', font: {size:9}, stepSize: 1 },
+              grid: { color: 'rgba(107,114,128,0.15)' }
+            }
+          }
+        }
+      });
+    });
+}
+
+// ── 加载排行 ──
+function loadSharingRank() {
+  fetch('/dashboard/api/sharing-rank')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok) return;
+      var list = document.getElementById('sharing-rank-list');
+      var h = '<table class="data-table" style="font-size:12px"><thead><tr><th style="width:28px">#</th><th>用户</th><th style="width:70px;text-align:right">时长</th></tr></thead><tbody>';
+      for (var i=0; i<d.data.length; i++) {
+        var r = d.data[i];
+        var medal = '';
+        if (i===0) medal = '🥇';
+        else if (i===1) medal = '🥈';
+        else if (i===2) medal = '🥉';
+        else medal = (i+1);
+        h += '<tr><td style="text-align:center;font-size:11px">' + medal + '</td><td class="td-name">' + esc(r.user_name) + '</td><td class="td-mono" style="text-align:right">' + r.duration + '</td></tr>';
+      }
+      h += '</tbody></table>';
+      list.innerHTML = h;
+    });
+}
+
+// ── 详情 Drawer ──
+function openSharingDrawer(meetingId, userName) {
+  document.getElementById('drawer-body').innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>';
+  document.getElementById('drawer-overlay').classList.add('open');
+  document.getElementById('sharing-drawer').classList.add('open');
+  fetch('/dashboard/api/sharing-detail?meeting_id=' + encodeURIComponent(meetingId) + '&user_name=' + encodeURIComponent(userName))
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok) {
+        document.getElementById('drawer-body').innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">未找到共享记录</div>';
         return;
       }
-      var html = '';
-      for (var i=0; i<data.participants.length; i++) {
-        var p = data.participants[i];
-        html += '<div class=\"participant-item\">' + p.name + (p.email ? ' <span class=\"text-muted\" style=\"font-size:11px\">(' + p.email + ')</span>' : '') + '</div>';
-      }
-      list.innerHTML = html;
+      var dd = d.detail;
+      // 格式化时间
+      var st = fmtMyt(dd.start_time);
+      var et = dd.end_time ? fmtMyt(dd.end_time) : '共享中';
+      var h = '';
+      h += '<div class="detail-card"><div class="detail-card-name">' + esc(dd.user_name) + '</div></div>';
+      h += '<div class="detail-row"><span class="detail-label">🖥 共享内容</span><span class="detail-value">' + esc(dd.content || '—') + '</span></div>';
+      h += '<div class="detail-row"><span class="detail-label">⏰ 开始时间</span><span class="detail-value">' + st + '</span></div>';
+      h += '<div class="detail-row"><span class="detail-label">⏰ 结束时间</span><span class="detail-value">' + et + '</span></div>';
+      h += '<div class="detail-row"><span class="detail-label">⏱ 时长</span><span class="detail-value">' + (dd.duration || '—') + '</span></div>';
+      h += '<div class="detail-row"><span class="detail-label">🆔 会议 ID</span><span class="detail-value">' + esc(dd.meeting_id || '—') + '</span></div>';
+      h += '<div class="detail-row"><span class="detail-label">👥 同会议参与</span><span class="detail-value">' + (dd.participant_count || '—') + '人</span></div>';
+      document.getElementById('drawer-body').innerHTML = h;
     })
-    .catch(function(){document.getElementById('participant-list').innerHTML = '<div class=\"text-sm text-muted\">加载失败</div>';});
+    .catch(function(){
+      document.getElementById('drawer-body').innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载失败</div>';
+    });
 }
-function closeParticipants() {
-  document.getElementById('participant-modal').classList.remove('open');
+
+function fmtMyt(isoStr) {
+  if (!isoStr) return '—';
+  try {
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return '—';
+    // Convert to MYT (UTC+8)
+    var myt = new Date(d.getTime() + 8 * 3600000);
+    var mm = String(myt.getUTCMonth() + 1).padStart(2,'0');
+    var dd = String(myt.getUTCDate()).padStart(2,'0');
+    var hh = String(myt.getUTCHours()).padStart(2,'0');
+    var mi = String(myt.getUTCMinutes()).padStart(2,'0');
+    return mm + '-' + dd + ' ' + hh + ':' + mi;
+  } catch(e) { return '—'; }
 }
-// 回车搜索
+
+function closeSharingDrawer() {
+  document.getElementById('drawer-overlay').classList.remove('open');
+  document.getElementById('sharing-drawer').classList.remove('open');
+}
+
+// ── 共享记录合并视图：展开/收起明细 ──
+function toggleSharingDetail(idx) {
+  var row = document.getElementById('sharing-detail-' + idx);
+  if (!row) return;
+  var btn = row.previousElementSibling.querySelector('button');
+  if (row.style.display === 'none' || row.style.display === '') {
+    row.style.display = 'table-row';
+    if (btn) btn.textContent = '收起';
+  } else {
+    row.style.display = 'none';
+    if (btn) btn.textContent = '查看明细';
+  }
+}
+
+// ── 初始化 ──
 document.addEventListener('DOMContentLoaded', function(){
+  // 搜索回车
   var inp = document.getElementById('sharing-search');
   if (inp) inp.addEventListener('keydown', function(e){if(e.key==='Enter')applySearch();});
+
+  // Sharing tab 专用
+  var tabEl = document.querySelector('a[href*="sharing"].active');
+  if (tabEl) {
+    loadSharingStats();
+    setTimeout(loadSharingTrend, 100);
+    loadSharingRank();
+  }
 });
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 </script>
+
+<style>
+/* 统计卡片 */
+.stat-card {
+  background: var(--panel-bg, #0d1b3e);
+  border: 1px solid var(--border, #1e3a6b);
+  border-radius: 10px;
+  padding: 16px 14px;
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--text, #e5e7eb);
+  font-family: var(--mono, 'SF Mono', 'Fira Code', monospace);
+}
+
+/* Drawer */
+.drawer-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 999;
+}
+.drawer-overlay.open {
+  display: block;
+}
+.drawer {
+  position: fixed;
+  top: 0;
+  right: -420px;
+  width: 400px;
+  height: 100%;
+  background: var(--panel-bg, #0d1b3e);
+  border-left: 1px solid var(--border, #1e3a6b);
+  z-index: 1000;
+  transition: right 0.25s ease;
+  overflow-y: auto;
+}
+.drawer.open {
+  right: 0;
+}
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border, #1e3a6b);
+  font-size: 14px;
+  font-weight: 600;
+}
+.drawer-body {
+  padding: 16px;
+}
+.detail-card {
+  background: var(--surface, #0e2044);
+  border: 1px solid var(--border, #1e3a6b);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+  text-align: center;
+}
+.detail-card-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text, #e5e7eb);
+}
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border, #1e3a6b);
+}
+.detail-row:last-child {
+  border-bottom: none;
+}
+.detail-label {
+  font-size: 12px;
+  color: var(--text-muted, #6b7280);
+}
+.detail-value {
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--mono, 'SF Mono', 'Fira Code', monospace);
+  color: var(--text, #e5e7eb);
+  text-align: right;
+}
+
+/* 共享合并视图 - 明细展开行 */
+.sharing-detail-row > td {
+  background: var(--surface, #0a1635);
+  border-top: none;
+}
+.sharing-detail-inner {
+  padding: 4px 16px 8px 16px;
+}
+.sharing-detail-inner .data-table th {
+  font-size: 10px;
+  color: var(--text-muted, #6b7280);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border, #1e3a6b);
+  background: transparent;
+}
+.sharing-detail-inner .data-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(30,58,107,0.3);
+  font-size: 11px;
+}
+.sharing-detail-inner .data-table tr:last-child td {
+  border-bottom: none;
+}
+.badge-xs {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+</style>
 
 {% endblock %}

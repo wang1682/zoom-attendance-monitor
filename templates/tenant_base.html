@@ -16,7 +16,7 @@
 </head>
 <body>
 
-{% set is_accounts_admin = current_user.role in ('super_admin', 'admin') %}
+{% set is_accounts_admin = current_user.role in ('super_admin', 'admin', 'tenant_admin') %}
 {% set is_super_admin = current_user.role == 'super_admin' %}
 
 <header class="topbar">
@@ -57,7 +57,9 @@ function fmtMYT(value) {
     if (!value) return '-';
     var d = new Date(value);
     if (isNaN(d.getTime())) return value;
-    var mo=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'),hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0'),ss=String(d.getSeconds()).padStart(2,'0');
+    var ms = d.getTime() + 8 * 3600000;
+    var nd = new Date(ms);
+    var mo=String(nd.getUTCMonth()+1).padStart(2,'0'),dd=String(nd.getUTCDate()).padStart(2,'0'),hh=String(nd.getUTCHours()).padStart(2,'0'),mm=String(nd.getUTCMinutes()).padStart(2,'0'),ss=String(nd.getUTCSeconds()).padStart(2,'0');
     return mo+'-'+dd+' '+hh+':'+mm+':'+ss;
 }
 /* 兼容旧代码 */

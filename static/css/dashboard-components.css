@@ -84,7 +84,8 @@ a { color: var(--accent); text-decoration: none; }
 .topbar-nav a {
   padding: 6px 14px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--nav-text);
   text-decoration: none;
   transition: all .12s;

@@ -21,12 +21,13 @@ from config import settings
 
 MYT = timezone(timedelta(hours=8))
 
-ROLES = ["super_admin", "admin", "tenant_admin", "user"]
+ROLES = ["super_admin", "admin", "tenant_admin", "user", "viewer"]
 ROLE_HIERARCHY = {
     "super_admin": 4,
     "admin": 3,
     "tenant_admin": 2,
     "user": 1,
+    "viewer": 0,
 }
 
 def role_ge(user_role: str, required_role: str) -> bool:
@@ -211,20 +212,22 @@ def init_db(readonly: bool = False):
 
         "CREATE TABLE IF NOT EXISTS telegram_alert_rules ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  event_type TEXT NOT NULL UNIQUE,"
+        "  tenant_id TEXT NOT NULL DEFAULT 'default',"
+        "  event_type TEXT NOT NULL,"
         "  title TEXT NOT NULL DEFAULT '',"
         "  enabled INTEGER NOT NULL DEFAULT 1,"
         "  target_chat_id TEXT DEFAULT '',"
         "  target_channel_id INTEGER DEFAULT NULL,"
-        "  cooldown_seconds INTEGER DEFAULT 0,"
+        "  cooldown_seconds INTEGER DEFAULT 60,"
         "  quiet_enabled INTEGER DEFAULT 0,"
         "  quiet_start TEXT DEFAULT '00:00',"
         "  quiet_end TEXT DEFAULT '08:00',"
         "  created_at TEXT,"
-        "  updated_at TEXT"
+        "  updated_at TEXT,"
+        "  UNIQUE(tenant_id, event_type)"
         ")",
 
-        "CREATE INDEX IF NOT EXISTS idx_telegram_rules_event ON telegram_alert_rules(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_telegram_rules_tenant_event ON telegram_alert_rules(tenant_id, event_type)",
 
         "CREATE TABLE IF NOT EXISTS telegram_channels ("
         "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -367,8 +370,15 @@ def init_db(readonly: bool = False):
 
     conn.commit()
 
-    # seed default telegram alert rules
-    if not readonly: seed_telegram_rules()
+    # seed default telegram alert rules for all tenants
+    if not readonly:
+        seed_telegram_rules()
+        try:
+            for t in get_all_tenants():
+                if t["id"] != "default":
+                    seed_telegram_rules(t["id"])
+        except Exception:
+            pass  # 表可能还不存在
     if not readonly: seed_member_groups()
 
     # seed default telegram channel
@@ -550,17 +560,20 @@ def save_participant(
 
 
 def get_today_participants(limit: int = 200, tenant_id: str = None) -> list[dict]:
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # MYT 日历日开始: 今天的 MYT 00:00 转为 UTC
+    myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
+    myt_midnight = myt_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_utc_start = myt_midnight - timedelta(hours=8)
     conn = _get_conn()
     if tenant_id:
         rows = conn.execute(
             "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? ORDER BY action_time DESC LIMIT ?",
-            (today, tenant_id, limit),
+            (today_utc_start.isoformat(), tenant_id, limit),
         ).fetchall()
     else:
         rows = conn.execute(
             "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY action_time DESC LIMIT ?",
-            (today, limit),
+            (today_utc_start.isoformat(), limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -691,7 +704,10 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             m["last_action"] = "leave"
 
         # ── 更新 email：用今天数据里最新一条（按 action_time） ──
-        m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": e.get("email", "")})
+        ev_email = e.get("email", "")
+        if ev_email:
+            m["email"] = ev_email
+        m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": ev_email})
 
         # ── last_activity 只取今天 UTC 00:00 之后的事件 ──
         if at_dt >= today_start_utc:
@@ -748,18 +764,23 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 break
         # ── 今天没有 email，查全局历史最近 ──
         if not m["email"]:
-            if tenant_id:
-                row = _get_conn().execute(
-                    "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' AND tenant_id=? ORDER BY action_time DESC LIMIT 1",
-                    (m["standard_name"], tenant_id),
-                ).fetchone()
-            else:
-                row = _get_conn().execute(
-                    "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
-                    (m["standard_name"],),
-                ).fetchone()
-            if row:
-                m["email"] = row[0]
+            raw_name = m.get("raw_name", "")
+            for candidate_name in [m["standard_name"], raw_name]:
+                if not candidate_name:
+                    continue
+                if tenant_id:
+                    row = _get_conn().execute(
+                        "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' AND tenant_id=? ORDER BY action_time DESC LIMIT 1",
+                        (candidate_name, tenant_id),
+                    ).fetchone()
+                else:
+                    row = _get_conn().execute(
+                        "SELECT email FROM zoom_participants WHERE LOWER(name) = LOWER(?) AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                        (candidate_name,),
+                    ).fetchone()
+                if row:
+                    m["email"] = row[0]
+                    break
 
     # ── 排序：在线优先 → 时长降序 ──
     sorted_members = sorted(
@@ -1336,19 +1357,20 @@ DEFAULT_TELEGRAM_RULES = [
 ]
 
 
-def seed_telegram_rules():
-    """插入默认 Telegram 告警规则，INSERT OR IGNORE 防止重复"""
+def seed_telegram_rules(tenant_id: str = "default"):
+    """为指定租户插入默认 Telegram 告警规则，INSERT OR IGNORE 防止重复"""
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     for rule in DEFAULT_TELEGRAM_RULES:
         _cd = 300 if rule["event_type"] in ("participant_joined", "participant_left") else 60
         conn.execute(
             "INSERT OR IGNORE INTO telegram_alert_rules "
-            "(event_type, title, enabled, cooldown_seconds, quiet_enabled, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 0, ?, ?)",
-            (rule["event_type"], rule["title"], rule["enabled"], _cd, now, now),
+            "(tenant_id, event_type, title, enabled, cooldown_seconds, quiet_enabled, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+            (tenant_id, rule["event_type"], rule["title"], rule["enabled"], _cd, now, now),
         )
     conn.commit()
+    print(f"Seeded {len(DEFAULT_TELEGRAM_RULES)} rules for tenant '{tenant_id}'")
 
 
 def get_telegram_rules() -> list[dict]:
@@ -1415,15 +1437,15 @@ def get_telegram_rule(event_type: str) -> dict | None:
     return dict(row) if row else None
 
 
-def upsert_telegram_rule(event_type: str, data: dict) -> int:
-    """插入或更新告警规则，返回 id"""
+def upsert_telegram_rule(tenant_id: str, event_type: str, data: dict) -> int:
+    """插入或更新告警规则（按租户隔离），返回 id"""
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
 
-    # 检查是否已存在
+    # 检查是否已存在（按租户+事件）
     existing = conn.execute(
-        "SELECT id FROM telegram_alert_rules WHERE event_type = ?",
-        (event_type,),
+        "SELECT id FROM telegram_alert_rules WHERE tenant_id = ? AND event_type = ?",
+        (tenant_id, event_type),
     ).fetchone()
 
     if existing:
@@ -1437,23 +1459,25 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
                 values.append(data[key])
         fields.append("updated_at = ?")
         values.append(now)
+        values.append(tenant_id)
         values.append(event_type)
         conn.execute(
-            f"UPDATE telegram_alert_rules SET {', '.join(fields)} WHERE event_type = ?",
+            f"UPDATE telegram_alert_rules SET {', '.join(fields)} WHERE tenant_id = ? AND event_type = ?",
             values,
         )
         conn.commit()
         log_audit("update", "telegram_alert_rule", existing[0],
-                  f"Updated rule for {event_type}")
+                  f"Updated rule for {event_type} (tenant={tenant_id})")
         return existing[0]
     else:
         cur = conn.execute(
             "INSERT INTO telegram_alert_rules "
-            "(event_type, title, enabled, cooldown_seconds, "
+            "(tenant_id, event_type, title, enabled, cooldown_seconds, "
             " quiet_enabled, quiet_start, quiet_end, target_channel_id, "
             " created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
+                tenant_id,
                 event_type,
                 data.get("title", ""),
                 data.get("enabled", 1),
@@ -1468,36 +1492,36 @@ def upsert_telegram_rule(event_type: str, data: dict) -> int:
         )
         conn.commit()
         log_audit("create", "telegram_alert_rule", cur.lastrowid,
-                  f"Created rule for {event_type}")
+                  f"Created rule for {event_type} (tenant={tenant_id})")
         return cur.lastrowid
 
 
-def delete_telegram_rule(event_type: str) -> bool:
-    """删除指定 event_type 的告警规则，返回是否成功删除"""
+def delete_telegram_rule(tenant_id: str, event_type: str) -> bool:
+    """删除指定租户+event_type 的告警规则，返回是否成功删除"""
     conn = _get_conn()
     existing = conn.execute(
-        "SELECT id FROM telegram_alert_rules WHERE event_type = ?",
-        (event_type,),
+        "SELECT id FROM telegram_alert_rules WHERE tenant_id = ? AND event_type = ?",
+        (tenant_id, event_type),
     ).fetchone()
     if not existing:
         return False
     conn.execute(
-        "DELETE FROM telegram_alert_rules WHERE event_type = ?",
-        (event_type,),
+        "DELETE FROM telegram_alert_rules WHERE tenant_id = ? AND event_type = ?",
+        (tenant_id, event_type),
     )
     conn.commit()
     log_audit("delete", "telegram_alert_rule", existing[0],
-              f"Deleted rule for {event_type}")
+              f"Deleted rule for {event_type} (tenant={tenant_id})")
     return True
 
 
-def update_rule_test_result(event_type: str, ok: bool, error: str = ""):
-    """记录规则的最近一次测试结果"""
+def update_rule_test_result(tenant_id: str, event_type: str, ok: bool, error: str = ""):
+    """更新规则测试结果（按租户隔离）"""
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
-        "UPDATE telegram_alert_rules SET last_test_at=?, last_test_result=?, last_test_error=? WHERE event_type=?",
-        (now, "ok" if ok else "fail", error, event_type),
+        "UPDATE telegram_alert_rules SET last_test_at = ?, last_test_result = ?, last_test_error = ? WHERE tenant_id = ? AND event_type = ?",
+        (now, 1 if ok else 0, error, tenant_id, event_type),
     )
     conn.commit()
 
@@ -1528,11 +1552,16 @@ def should_send_telegram(event_type: str) -> bool:
     """判断是否应该发送 Telegram 通知
 
     逻辑：
+    0. 硬拦截：breakout/主会切换事件一律不推
     1. 查规则，不存在则返回 True（兼容旧逻辑）
     2. not enabled → False
     3. cooldown: 查 alert_sent 表同一 event_type 最近一次发送时间
     4. quiet_hours: 判断当前 MYT 时间是否在静默时段内
     """
+    # 0. 硬拦截：breakout/主会切换事件不推送
+    if event_type in ("participant_joined_breakout_room", "participant_left_breakout_room", "breakout_room_joined", "breakout_room_left"):
+        return False
+
     conn = _get_conn()
     rule = conn.execute(
         "SELECT * FROM telegram_alert_rules WHERE event_type = ?",
@@ -3271,8 +3300,8 @@ def get_current_online(tenant_id: str | None = None) -> dict:
     }
 
 
-def get_participants_by_meeting(meeting_id: str) -> list[dict]:
-    """获取指定会议的所有参与者（去重）"""
+def get_participants_by_meeting(meeting_id: str) -> dict:
+    """获取指定会议的详细统计信息"""
     conn = _get_conn()
     rows = conn.execute("""
         SELECT DISTINCT name, email
@@ -3280,7 +3309,64 @@ def get_participants_by_meeting(meeting_id: str) -> list[dict]:
         WHERE meeting_id = ?
         ORDER BY name
     """, (meeting_id,)).fetchall()
-    return [dict(r) for r in rows]
+    # 总参与人数
+    total_row = conn.execute(
+        "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE meeting_id = ?",
+        (meeting_id,)
+    ).fetchone()
+    total_participants = total_row[0] if total_row else 0
+    # 当前在线人数（最后动作是 enter 且没有后续 leave）
+    rows_online = conn.execute("""
+        SELECT DISTINCT name FROM zoom_participants zp
+        WHERE meeting_id = ? AND action = 'enter'
+        AND NOT EXISTS (
+            SELECT 1 FROM zoom_participants zp2
+            WHERE zp2.meeting_id = zp.meeting_id
+            AND zp2.name = zp.name
+            AND zp2.action IN ('leave', 'left')
+            AND zp2.action_time > zp.action_time
+        )
+    """, (meeting_id,)).fetchall()
+    online_count = len(rows_online)
+    # 最近进入成员（前5个）
+    recent_joins = conn.execute("""
+        SELECT name, action_time FROM zoom_participants
+        WHERE meeting_id = ? AND action IN ('enter', 'joined')
+        ORDER BY action_time DESC LIMIT 5
+    """, (meeting_id,)).fetchall()
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    def _short(utc_str):
+        if not utc_str: return "—"
+        try:
+            s = utc_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            return dt.astimezone(MYT).strftime("%m-%d %H:%M")
+        except:
+            return "—"
+    recent_join_list = [{"name": r["name"], "time": _short(r["action_time"])} for r in recent_joins]
+    # 最近离开成员（前5个）
+    recent_leaves = conn.execute("""
+        SELECT name, action_time FROM zoom_participants
+        WHERE meeting_id = ? AND action IN ('leave', 'left')
+        ORDER BY action_time DESC LIMIT 5
+    """, (meeting_id,)).fetchall()
+    recent_leave_list = [{"name": r["name"], "time": _short(r["action_time"])} for r in recent_leaves]
+    # 会议开始时间
+    first_row = conn.execute(
+        "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id = ?",
+        (meeting_id,)
+    ).fetchone()
+    meeting_start = _short(first_row[0]) if first_row and first_row[0] else "—"
+    return {
+        "meeting_id": meeting_id,
+        "total_participants": total_participants,
+        "online_count": online_count,
+        "participant_list": [dict(r) for r in rows],
+        "recent_joins": recent_join_list,
+        "recent_leaves": recent_leave_list,
+        "meeting_start": meeting_start,
+    }
 
 
 # ═══════════════════════════════════════════
@@ -3883,3 +3969,140 @@ def get_shift_attendance_for_shift(
         "required_minutes": required_seconds // 60,
         "meeting_not_open_minutes": meeting_not_open_seconds // 60,
     }
+
+
+def get_sharing_day_stats(tenant_id: str) -> dict:
+    """获取当前 MYT 日的共享统计信息"""
+    conn = _get_conn()
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    now_myt = datetime.now(timezone.utc).astimezone(MYT)
+    today_start_utc = (now_myt - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_utc = today_start_utc + timedelta(days=1)
+
+    sql = """
+        SELECT 
+            COUNT(*) AS total,
+            SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS online,
+            SUM(CASE WHEN end_time IS NOT NULL AND end_time!='' THEN 
+                CAST(ROUND((julianday(end_time) - julianday(start_time)) * 86400) AS INTEGER)
+            ELSE 0 END) AS total_duration_sec,
+            COUNT(DISTINCT user_name) AS active_users
+        FROM sharing_live 
+        WHERE tenant_id=? AND start_time>=? AND start_time<?
+    """
+    row = conn.execute(sql, (tenant_id, today_start_utc.isoformat(), today_end_utc.isoformat())).fetchone()
+    total = row[0] or 0
+    online = row[1] or 0
+    total_duration_sec = row[2] or 0
+    active_users = row[3] or 0
+
+    return {
+        "total": total,
+        "online": online,
+        "total_duration": _fmt_dur(total_duration_sec),
+        "total_duration_sec": total_duration_sec,
+        "active_users": active_users,
+    }
+
+
+def get_sharing_trend(tenant_id: str, hours: int = 24) -> list[dict]:
+    """获取最近 N 小时每小时共享次数"""
+    conn = _get_conn()
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    now_myt = datetime.now(timezone.utc).astimezone(MYT)
+    threshold_utc = (now_myt - timedelta(hours=hours)).astimezone(timezone.utc)
+
+    rows = conn.execute(
+        "SELECT start_time FROM sharing_live WHERE tenant_id=? AND start_time>=?",
+        (tenant_id, threshold_utc.isoformat())
+    ).fetchall()
+
+    buckets = {}
+    for (st,) in rows:
+        if not st:
+            continue
+        try:
+            dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+            myt_hour = dt.astimezone(MYT).strftime("%H:00")
+            buckets[myt_hour] = buckets.get(myt_hour, 0) + 1
+        except:
+            pass
+
+    result = []
+    for h in range(24):
+        label = f"{h:02d}:00"
+        result.append({"hour": label, "count": buckets.get(label, 0)})
+    return result
+
+
+def get_sharing_rank(tenant_id: str) -> list[dict]:
+    """获取今日共享时长排行（TOP 10）"""
+    from datetime import datetime, timezone, timedelta
+    MYT = timezone(timedelta(hours=8))
+    now_myt = datetime.now(timezone.utc).astimezone(MYT)
+    today_start_utc = (now_myt - timedelta(hours=8)).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end_utc = today_start_utc + timedelta(days=1)
+
+    conn = _get_conn()
+    rows = conn.execute(
+        """SELECT user_name, 
+                  SUM(CASE WHEN end_time IS NOT NULL AND end_time!='' THEN 
+                      CAST(ROUND((julianday(end_time) - julianday(start_time)) * 86400) AS INTEGER)
+                  ELSE 0 END) AS total_sec
+           FROM sharing_live 
+           WHERE tenant_id=? AND start_time>=? AND start_time<?
+           GROUP BY user_name
+           ORDER BY total_sec DESC
+           LIMIT 10""",
+        (tenant_id, today_start_utc.isoformat(), today_end_utc.isoformat())
+    ).fetchall()
+
+    result = []
+    for name, sec in rows:
+        result.append({"user_name": name, "duration": _fmt_dur(sec), "duration_seconds": sec})
+    return result
+
+
+def get_sharing_detail(meeting_id: str, tenant_id: str, user_name: str = "") -> dict:
+    """获取某条共享记录的详细数据（含同会议参与人数）"""
+    conn = _get_conn()
+    if user_name:
+        row = conn.execute(
+            "SELECT * FROM sharing_live WHERE meeting_id=? AND tenant_id=? AND user_name=? ORDER BY id DESC LIMIT 1",
+            (meeting_id, tenant_id, user_name)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM sharing_live WHERE meeting_id=? AND tenant_id=? ORDER BY id DESC LIMIT 1",
+            (meeting_id, tenant_id)
+        ).fetchone()
+    if not row:
+        return {"ok": False}
+
+    d = dict(row)
+    try:
+        if d.get("end_time"):
+            s = d["start_time"].replace("Z", "+00:00") if d.get("start_time") else ""
+            e = d["end_time"].replace("Z", "+00:00")
+            from datetime import datetime, timezone
+            st = datetime.fromisoformat(s) if s else None
+            et = datetime.fromisoformat(e)
+            if et.tzinfo is None: et = et.replace(tzinfo=timezone.utc)
+            if st and st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+            dur_sec = int((et - st).total_seconds()) if st else 0
+            d["duration"] = _fmt_dur(dur_sec)
+        else:
+            d["duration"] = "共享中"
+    except:
+        d["duration"] = "—"
+
+    # 同会议参与人数
+    participant_count = conn.execute(
+        "SELECT COUNT(DISTINCT name) FROM zoom_participants WHERE meeting_id=? AND tenant_id=?",
+        (meeting_id, tenant_id)
+    ).fetchone()[0] or 0
+    d["participant_count"] = participant_count
+
+    return {"ok": True, "detail": d}

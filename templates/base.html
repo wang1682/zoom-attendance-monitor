@@ -445,8 +445,9 @@ function to_myt(s){
   try{
     var d=new Date(s.replace('Z','+00:00'));
     if(isNaN(d.getTime()))return s.slice(11,16);
-    var y=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,'0'),dd=String(d.getDate()).padStart(2,'0'),hh=String(d.getHours()).padStart(2,'0'),mm=String(d.getMinutes()).padStart(2,'0'),ss=String(d.getSeconds()).padStart(2,'0');
-    // zh-CN 输出 MM/DD, HH:mm:ss → 转为 MM-DD HH:mm:ss
+    var ms=d.getTime()+8*3600000;
+    var nd=new Date(ms);
+    var y=nd.getUTCFullYear(),mo=String(nd.getUTCMonth()+1).padStart(2,'0'),dd=String(nd.getUTCDate()).padStart(2,'0'),hh=String(nd.getUTCHours()).padStart(2,'0'),mm=String(nd.getUTCMinutes()).padStart(2,'0'),ss=String(nd.getUTCSeconds()).padStart(2,'0');
     return mo+'-'+dd+' '+hh+':'+mm+':'+ss;
   }catch(e){return s.slice(11,16)}
 }

@@ -102,55 +102,6 @@
 
 </form>
 
-<!-- Telegram 设置 (separate form for test button) -->
-<div class="zone-card">
-  <h4>✈️ Telegram 设置</h4>
-  <form method="post" action="/dashboard/settings/update" style="display:contents">
-  <div class="row">
-    <span class="label">默认 Bot Token</span>
-    <input type="password" name="default_bot_token" value="{{ default_bot_token }}" placeholder="123456:ABC-DEF..." style="flex:1;max-width:400px;font-family:var(--mono);font-size:11px">
-  </div>
-  <div class="row">
-    <span class="label">默认消息模板</span>
-    <textarea name="default_message_template" rows="3" style="flex:1;max-width:400px;font-family:var(--mono);font-size:11px">{{ default_message_template }}</textarea>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <button type="submit" class="btn btn-primary">保存 Telegram 设置</button>
-  </div>
-  </form>
-  <div class="row" style="margin-top:6px;border-top:1px solid var(--border-light);padding-top:8px">
-    <span class="label" style="min-width:auto">测试推送</span>
-    <button type="button" class="btn btn-success" onclick="testTelegram()">📤 发送测试消息</button>
-    <span id="tg-test-result" class="text-muted" style="font-size:11px"></span>
-  </div>
-</div>
 
-<script>
-async function testTelegram() {
-  const btn = event.target;
-  const resultEl = document.getElementById('tg-test-result');
-  btn.disabled = true;
-  btn.textContent = '⏳ 发送中...';
-  resultEl.textContent = '';
-
-  try {
-    const res = await fetch('/dashboard/settings/test-telegram', { method: 'POST' });
-    const data = await res.json();
-    if (data.ok) {
-      resultEl.textContent = '✅ ' + data.message;
-      resultEl.style.color = 'var(--success)';
-    } else {
-      resultEl.textContent = '❌ ' + data.message;
-      resultEl.style.color = 'var(--danger)';
-    }
-  } catch (e) {
-    resultEl.textContent = '❌ 网络错误: ' + e.message;
-    resultEl.style.color = 'var(--danger)';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '📤 发送测试消息';
-  }
-}
-</script>
 
 {% endblock %}
