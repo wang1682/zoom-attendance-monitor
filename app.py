@@ -936,7 +936,9 @@ def build_app() -> "FastAPI":
     async def api_v3_get_member_groups(request: Request):
         """获取当前租户的所有成员分组"""
         tenant_id = request.app.state.get_effective_tenant_id(request)
-        groups = db.get_all_groups(tenant_id=tenant_id)
+        from services.group import GroupService
+        gs = GroupService()
+        groups = gs.get_all_groups(tenant_id)
         return {"ok": True, "groups": groups}
 
     @app.post("/api/v3/member-groups")
@@ -951,14 +953,10 @@ def build_app() -> "FastAPI":
         if not name:
             return {"ok": False, "error": "name is required"}
         tenant_id = request.app.state.get_effective_tenant_id(request)
-        conn = db._get_conn()
-        now = datetime.now(timezone.utc).isoformat()
-        cur = conn.execute(
-            "INSERT INTO member_groups (tenant_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (tenant_id, name, description, now, now),
-        )
-        conn.commit()
-        return {"ok": True, "id": cur.lastrowid}
+        from services.group import GroupService
+        gs = GroupService()
+        gid = gs.create_group(name, description, tenant_id)
+        return {"ok": True, "id": gid}
 
     @app.put("/api/v3/member-groups/{group_id}")
     async def api_v3_update_member_group(group_id: int, request: Request):
@@ -971,20 +969,23 @@ def build_app() -> "FastAPI":
         description = data.get("description", "").strip()
         if not name:
             return {"ok": False, "error": "name is required"}
-        ok = db.update_member_group(group_id, name, description)
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.group import GroupService
+        gs = GroupService()
+        ok = gs.update_group(group_id, name, description, tenant_id)
         return {"ok": ok}
 
     @app.delete("/api/v3/member-groups/{group_id}")
     async def api_v3_delete_member_group(group_id: int, request: Request):
-        """删除成员分组"""
+        """删除成员分组（仅限租户内操作）"""
         role = request.session.get("role", "tenant")
         if role not in ("super_admin", "tenant_admin", "owner"):
             return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
         tenant_id = request.app.state.get_effective_tenant_id(request)
-        conn = db._get_conn()
-        cur = conn.execute("DELETE FROM member_groups WHERE id = ? AND tenant_id = ?", (group_id, tenant_id))
-        conn.commit()
-        return {"ok": cur.rowcount > 0}
+        from services.group import GroupService
+        gs = GroupService()
+        ok = gs.delete_group(group_id, tenant_id)
+        return {"ok": ok}
 
     @app.post("/api/v3/member-groups/{group_id}/members")
     async def api_v3_add_member(group_id: int, request: Request):
@@ -994,15 +995,20 @@ def build_app() -> "FastAPI":
         if not member_name:
             return {"ok": False, "error": "member_name is required"}
         tenant_id = request.app.state.get_effective_tenant_id(request)
-        ok = db.add_member_to_group(group_id, member_name, tenant_id)
+        from services.group import GroupService
+        gs = GroupService()
+        ok = gs.add_member(group_id, member_name, tenant_id)
         return {"ok": ok}
 
     @app.delete("/api/v3/member-groups/{group_id}/members/{member_name}")
-    async def api_v3_remove_member(group_id: int, member_name: str):
-        """从分组移除成员"""
+    async def api_v3_remove_member(group_id: int, member_name: str, request: Request):
+        """从分组移除成员（仅限租户内操作）"""
         import urllib.parse
         member_name = urllib.parse.unquote(member_name)
-        ok = db.remove_member_from_group(group_id, member_name)
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.group import GroupService
+        gs = GroupService()
+        ok = gs.remove_member(group_id, member_name, tenant_id)
         return {"ok": ok}
 
     @app.get("/settings/member-groups", response_class=HTMLResponse)
@@ -1723,15 +1729,35 @@ def build_app() -> "FastAPI":
         return RedirectResponse(url="/dashboard/alerts")
 
     @app.get("/api/v3/aliases")
-    async def api_v3_aliases():
-        """获取所有别名配置"""
-        conn = db._get_conn()
-        rows = conn.execute("SELECT id, canonical_name, alias_name, count_enabled, note, created_at, updated_at FROM member_aliases ORDER BY canonical_name").fetchall()
-        cols = ["id", "canonical_name", "alias_name", "count_enabled", "note", "created_at", "updated_at"]
-        return {"ok": True, "aliases": [dict(zip(cols, r)) for r in rows]}
+    async def api_v3_aliases(request: Request):
+        """获取所有别名配置（按租户隔离）"""
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request, "app") else None
+        # 兼容旧 API 输出结构 {ok, aliases: [{id, canonical_name, alias_name, count_enabled, note, created_at, updated_at}]}
+        from services.member import MemberService
+        ms = MemberService()
+        aliases = ms.get_aliases(tenant_id)
+        # 将 JSON 数组中的第一个 alias 作为 alias_name 展示
+        result = []
+        for a in aliases:
+            alias_list = json.loads(a.get("note", "[]") or "[]")
+            if alias_list:
+                for a_name in alias_list:
+                    result.append({
+                        "id": a["id"],
+                        "canonical_name": a["canonical_name"],
+                        "alias_name": a_name,
+                        "count_enabled": a["count_enabled"],
+                        "note": "",
+                        "created_at": a["created_at"],
+                        "updated_at": a["updated_at"],
+                    })
+            else:
+                result.append(dict(a))
+        return {"ok": True, "aliases": result}
 
     @app.post("/api/v3/aliases")
     async def api_v3_add_alias(request: Request):
+        """添加别名映射（按租户隔离）"""
         data = await request.json()
         canonical = data.get("canonical_name", "").strip()
         alias = data.get("alias_name", "").strip()
@@ -1739,18 +1765,10 @@ def build_app() -> "FastAPI":
             return {"ok": False, "error": "参数不完整"}
         count_enabled = data.get("count_enabled", 1)
         note = data.get("note", "")
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        conn = db._get_conn()
-        try:
-            conn.execute(
-                "INSERT INTO member_aliases (canonical_name, alias_name, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (canonical, alias, count_enabled, note, now, now)
-            )
-            conn.commit()
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.member import MemberService
+        ms = MemberService()
+        return ms.add_alias(canonical, alias, tenant_id, note, bool(count_enabled))
 
 
 
@@ -1905,7 +1923,7 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/aliases/map")
     async def api_v3_map_alias(request: Request):
-        """一键映射:将 Zoom 用户名映射到标准成员名"""
+        """一键映射:将 Zoom 用户名映射到标准成员名（按租户隔离）"""
         data = await request.json()
         zoom_name = data.get("zoom_name", "").strip()
         canonical_name = data.get("canonical_name", "").strip()
@@ -1915,25 +1933,18 @@ def build_app() -> "FastAPI":
         if not zoom_name or not canonical_name:
             return {"ok": False, "error": "参数不完整"}
         
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        conn = db._get_conn()
-        try:
-            conn.execute(
-                "INSERT OR IGNORE INTO member_aliases (canonical_name, alias_name, count_enabled, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (canonical_name, zoom_name, count_enabled, note, now, now)
-            )
-            conn.commit()
-            return {"ok": True}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.member import MemberService
+        ms = MemberService()
+        return ms.add_alias(canonical_name, zoom_name, tenant_id, note, bool(count_enabled))
 
     @app.delete("/api/v3/aliases/{alias_id}")
-    async def api_v3_del_alias(alias_id: int):
-        conn = db._get_conn()
-        conn.execute("DELETE FROM member_aliases WHERE id=?", (alias_id,))
-        conn.commit()
-        return {"ok": True}
+    async def api_v3_del_alias(alias_id: int, request: Request):
+        """删除别名（按租户隔离）"""
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request, "app") else None
+        from services.member import MemberService
+        ms = MemberService()
+        return ms.delete_alias(alias_id, tenant_id)
 
 
     @app.get("/api/v3/aliases/duplicates")
@@ -1984,29 +1995,26 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/aliases/merge")
     async def api_v3_aliases_merge(request: Request):
-        """批量合并:将一组别名合并到标准名"""
+        """批量合并:将一组别名合并到标准名（按租户隔离）"""
         data = await request.json()
         canonical = (data.get("canonical", "") or "").strip()
         aliases = data.get("aliases", [])
         if not canonical or not aliases:
             return {"ok": False, "error": "参数不完整"}
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
-        conn = db._get_conn()
-        # 确保标准名存在
-        exist = conn.execute("SELECT display_name FROM member_display WHERE display_name=?", (canonical,)).fetchone()
-        if not exist:
-            conn.execute("INSERT INTO member_display (display_name, raw_name, aliases, created_at, updated_at) VALUES (?,?, '[]', ?,?)",
-                         (canonical, canonical, now, now))
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.member import MemberService
+        ms = MemberService()
+        ok = True
         cnt = 0
         for alias in aliases:
-            if alias == canonical: continue
-            conn.execute(
-                "INSERT OR IGNORE INTO member_aliases (canonical_name, alias_name, count_enabled, created_at, updated_at) VALUES (?,?,1,?,?)",
-                (canonical, alias, now, now))
-            cnt += 1
-        conn.commit()
-        return {"ok": True, "mapped": cnt}
+            if alias == canonical:
+                continue
+            r = ms.add_alias(canonical, alias, tenant_id)
+            if r.get("ok"):
+                cnt += 1
+            else:
+                ok = False
+        return {"ok": ok, "mapped": cnt}
 
 
     @app.get("/api/v3/sharing-live")

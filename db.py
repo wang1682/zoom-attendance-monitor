@@ -1915,14 +1915,20 @@ DEFAULT_MEMBER_GROUPS = [
 ]
 
 
-def seed_member_groups():
+def seed_member_groups(target_tenant_id: str | None = None):
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
+    if target_tenant_id:
+        tenants_to_seed = [target_tenant_id]
+    else:
+        # 默认只为 default 租户 seed
+        tenants_to_seed = ["default"]
     for g in DEFAULT_MEMBER_GROUPS:
-        conn.execute(
-            "INSERT OR IGNORE INTO member_groups (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (g["name"], g["description"], now, now),
-        )
+        for tid in tenants_to_seed:
+            conn.execute(
+                "INSERT OR IGNORE INTO member_groups (name, description, tenant_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (g["name"], g["description"], tid, now, now),
+            )
     conn.commit()
 
 
