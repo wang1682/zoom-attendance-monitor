@@ -1801,9 +1801,9 @@ def build_app() -> "FastAPI":
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live(request: Request):
         """共享状态：通过 ZoomService 统一来源，保持前向兼容"""
+        import db as _db
         tenant_id = request.app.state.get_effective_tenant_id(request)
-        conn = db._get_conn()
-        import db
+        conn = _db._get_conn()
         from services.zoom import ZoomService
 
         zoom = ZoomService()

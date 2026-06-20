@@ -2023,13 +2023,9 @@ async def api_sharing_detail(request: Request, meeting_id: str, user_name: str =
 
 @router.get("/settings/bot", response_class=HTMLResponse)
 async def dashboard_bot_config(request: Request, user: dict = Depends(require_user)):
-    """Bot configuration page — set Telegram bot for 2FA verification."""
-    role = user.get("role", "")
-    if role != "super_admin":
-        raise HTTPException(status_code=403, detail="Forbidden")
-    from db import get_setting
-    bot_token = get_setting("2fa_bot_token") or ""
-    return _render_admin(request, "settings", user, "bot_config.html", bot_token=bot_token)
+    """Bot config page — redirected to settings (template removed in cleanup)."""
+    from starlette.responses import RedirectResponse
+    return RedirectResponse(url="/dashboard/settings", status_code=302)
 
 
 @router.post("/settings/bot/verify")
