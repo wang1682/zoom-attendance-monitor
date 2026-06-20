@@ -306,10 +306,10 @@ async def monitor_loop():
                 detail += f" {len(accounts)+1}账号"
 
                         # ── Periodic online report (每 3 小时一次，统一走 telegram_alert_rules 配置) ──
-            if False and in_report_slot(now_hour) and now_hour not in _report_sent_hours:
+            if False and now_hour not in _report_sent_hours:
                 _report_sent_hours.add(now_hour)
-                import httpx
                 import db as _db
+                from services.zoom import ZoomService
                 from app import resolve_member
 
                 # 查询所有已启用的 periodic_online_report 规则
@@ -333,22 +333,22 @@ async def monitor_loop():
                     _cp_chat_id = _ch_row["chat_id"]
                     _cp_bot_token = _ch_row["bot_token"]
                     try:
-                        _v2r = httpx.get(f"http://zoom-api:8000/api/v3/live/tenant/{_tid}", timeout=10)
-                        _v2d = _v2r.json() if _v2r.status_code == 200 else {"data": {"meetings": []}}
+                        _zoom = ZoomService()
+                        _live = await _zoom.get_live_meetings(_tid)
+                        _v2_participants = []
+                        for _m in _live.get("meetings", []):
+                            for _p in _m.get("participants", []):
+                                _raw = _p.get("name", "").strip()
+                                if not _raw:
+                                    continue
+                                _rm = resolve_member(_raw)
+                                _std = _rm["standard_name"]
+                                _grp = _rm.get("group_name") or "未分组"
+                                _mins = _p.get("online_minutes", 0)
+                                _h, _m = _mins // 60, _mins % 60
+                                _v2_participants.append((_std, _grp, _mins, _h, _m))
                     except Exception:
-                        _v2d = {"data": {"meetings": []}}
-                    _v2_participants = []
-                    for _m in _v2d.get("data", {}).get("meetings", []):
-                        for _p in _m.get("participants", []):
-                            _raw = _p.get("name", "").strip()
-                            if not _raw:
-                                continue
-                            _rm = resolve_member(_raw)
-                            _std = _rm["standard_name"]
-                            _grp = _rm.get("group_name") or "未分组"
-                            _mins = _p.get("online_minutes", 0)
-                            _h, _m = _mins // 60, _mins % 60
-                            _v2_participants.append((_std, _grp, _mins, _h, _m))
+                        _v2_participants = []
                     _grouped = {}
                     for _std, _grp, _mins, _h, _m in _v2_participants:
                         _grouped.setdefault(_grp, []).append((_std, _mins, _h, _m))

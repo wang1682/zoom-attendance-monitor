@@ -1253,7 +1253,9 @@ def build_app() -> "FastAPI":
             return _ensure_demo().get_demo_attendance_summary()
         try:
             tenant_id = request.app.state.get_effective_tenant_id(request)
-            result = db.get_today_attendance_summary(tenant_id=tenant_id)
+            from services.zoom import ZoomService
+            zoom = ZoomService()
+            result = await zoom.get_today_attendance_summary(tenant_id)
             return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -2009,30 +2011,17 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/sharing-live")
     async def api_v3_sharing_live(request: Request):
-        """共享状态:合并 Metrics API + sharing_live 表 + webhook 事件--按当前租户 Zoom 账号查询"""
-        import httpx
-        import json as _json
-        from datetime import datetime, timezone, timedelta
-        MYT = timezone(timedelta(hours=8))
+        """共享状态：通过 ZoomService 统一来源，保持前向兼容"""
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        conn = db._get_conn()
+        import db
+        from services.zoom import ZoomService
+
+        zoom = ZoomService()
+        sharers = await zoom.get_current_sharing(tenant_id)
+
+        # ── 构建前向兼容的输出结构 ──
         now_utc = datetime.now(timezone.utc)
-        STALE_CUTOFF = timedelta(hours=4)
-        
-        def to_myt(dt_str):
-            if not dt_str: return ""
-            try:
-                d = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                return d.astimezone(MYT).strftime("%m-%d %H:%M:%S")
-            except: return dt_str[:16]
-        
-        def mins_between(start_str):
-            if not start_str: return 0
-            try:
-                sd = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                return int((now_utc - sd).total_seconds() / 60)
-            except: return 0
-        
-        def disp(m):
-            return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
 
         def _lookup_group(raw_name):
             _g = conn.execute(
@@ -2045,215 +2034,39 @@ def build_app() -> "FastAPI":
                 return {"group_id": str(_g[0]), "group_name": _g[1] or ""}
             return {"group_id": "", "group_name": ""}
 
-        conn = db._get_conn()
-        merged = {}  # normalized_name -> sharing_info
-        sources = {"metrics_api": 0, "sharing_live": 0, "webhook": 0}
-        tenant_id = request.app.state.get_effective_tenant_id(request)
-        
-        # Source 1: ZoomMetrics API - only for Business tenants with metrics_available
-        _tenant_for_sharing = db.get_tenant(tenant_id) if tenant_id else None
-        _metrics_ok = _tenant_for_sharing and _tenant_for_sharing.get("metrics_available", 0)
-        if _metrics_ok:
+        def to_myt(dt_str):
+            if not dt_str: return ""
             try:
-                zm, _ = _get_tenant_zoom_metrics(request)
-                live_data = await zm.get_live() if zm else {"meetings": []}
-                for m in live_data.get("meetings", []):
-                    mid = m.get("meeting_id", "")
-                    for p in m.get("participants", []):
-                        if not p.get("is_sharing"):
-                            continue
-                        raw = p.get("raw_name", "")
-                        name = p.get("name", "") or raw
-                        norm_key = re.sub(r"\s+", "", name.lower())
-                        if not norm_key or norm_key in merged:
-                            continue
-                        uid = p.get("user_id", "")
-                        content = p.get("sharing_content", "desktop")
-                        _g = _lookup_group(raw)
-                        merged[norm_key] = {
-                            "name": name, "raw_name": raw,
-                            "user_id": uid, "meeting_id": mid,
-                            "content": content, "start_time": p.get("join_time", ""),
-                            "source": "metrics_api",
-                            "group_id": _g["group_id"], "group_name": _g["group_name"]
-                        }
-                        sources["metrics_api"] += 1
-            except Exception:
-                pass
-        
-        # Source 2: sharing_live table - tenant 过滤 (is_active=1, not stale)
-        live_rows = conn.execute(
-            "SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=? ORDER BY start_time DESC",
-            (tenant_id,)
-        ).fetchall()
-        live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
-        RECENT_CUTOFF = timedelta(hours=48)
-        for r in live_rows:
-            d = dict(zip(live_cols, r))
-            uid = d.get("user_id", "")
-            start_str = d.get("start_time", "")
-            # Stale cutoff: >4h → discard from active; >24h → discard entirely
-            if start_str:
-                try:
-                    sd = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                    age = now_utc - sd
-                    if age > RECENT_CUTOFF:
-                        continue
-                    if age > STALE_CUTOFF:
-                        # stale but within 24h → keep as recent only
-                        raw = d.get("user_name", "")
-                        _rm = resolve_member(raw)
-                        dn = _rm["standard_name"]
-                        _g = _lookup_group(raw)
-                        norm_key = re.sub(r"\s+", "", dn.lower())
-                        if norm_key and norm_key not in merged:
-                            merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                                           "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
-                                           "group_id": _g["group_id"], "group_name": _g["group_name"],
-                                           "_stale": True}
-                            sources["sharing_live"] += 1
-                        continue
-                except: pass
-            if uid:
-                raw = d.get("user_name", "")
-                _rm = resolve_member(raw)
-                dn = _rm["standard_name"]
-                _g = _lookup_group(raw)
-                norm_key = re.sub(r"\s+", "", dn.lower())
-                if norm_key and norm_key not in merged:
-                    merged[norm_key] = {"name": dn, "raw_name": raw, "user_id": uid, "meeting_id": d.get("meeting_id", ""),
-                                   "content": d.get("content", ""), "start_time": start_str, "source": "sharing_live",
-                                   "group_id": _g["group_id"], "group_name": _g["group_name"]}
-                    sources["sharing_live"] += 1
-        
-        # Source 3: webhook events - recovery from last 2 hours (no ended received)
-        cutoff_2h = (now_utc - timedelta(hours=2)).isoformat()
-        events = conn.execute(
-            "SELECT payload FROM zoom_events WHERE event_type LIKE '%sharing%' AND created_at >= ? AND tenant_id=? ORDER BY created_at DESC",
-            (cutoff_2h, tenant_id)
-        ).fetchall()
-        started = {}  # (meeting_id, user_id) -> info
-        ended = set()  # (meeting_id, user_id) -> ended
-        for (payload_json,) in events:
-            try:
-                p = _json.loads(payload_json)
-                et = p.get("event", "")
-                obj = p.get("payload", {}).get("object", p.get("object", {}))
-                pt = obj.get("participant", {})
-                raw_uid2 = str(pt.get("user_id", ""))
-                if "breakout" in et and re.search(r"20\d{2}-\d{2}-\d{2}", raw_uid2):
-                    m2 = re.match(r"^(\d+)", raw_uid2)
-                    uid = m2.group(1) if m2 else ""
-                else:
-                    uid = re.sub(r"[^0-9]", "", raw_uid2)[:20]
-                raw = pt.get("user_name", "").strip()
-                sd = pt.get("sharing_details", {})
-                dt_str = sd.get("date_time", "")
-                content = sd.get("content", "")
-                mid = str(obj.get("id", ""))
-                if not uid or not mid:
-                    continue
-                key = (mid, uid)
-                if "started" in et:
-                    if key not in started:
-                        started[key] = {"raw_name": raw, "content": content, "start_time": dt_str, "meeting_id": mid}
-                elif "ended" in et:
-                    ended.add(key)
-            except: pass
-        # Remove ended
-        for key in ended:
-            started.pop(key, None)
-        # Filter stale (>2h) and add
-        for key, info in list(started.items()):
-            st = info.get("start_time", "")
-            if st:
-                try:
-                    sd = datetime.fromisoformat(st.replace("Z", "+00:00"))
-                    if (now_utc - sd).total_seconds() > 7200:
-                        started.pop(key, None)
-                        continue
-                except:
-                    pass
-            uid = key[1]
-            _rm = resolve_member(info["raw_name"])
-            dn = _rm["standard_name"]
-            _g = _lookup_group(info["raw_name"])
-            norm_key = re.sub(r"\s+", "", dn.lower())
-            if uid and norm_key and norm_key not in merged:
-                merged[norm_key] = {"name": dn, "raw_name": info["raw_name"], "user_id": uid,
-                               "meeting_id": info.get("meeting_id", ""),
-                               "content": info.get("content", ""), "start_time": info.get("start_time", ""),
-                               "source": "webhook_recovery",
-                               "group_id": _g["group_id"], "group_name": _g["group_name"]}
-                sources["webhook_recovery"] = sources.get("webhook_recovery", 0) + 1
-        
-        # ── 从 sharing_live 表统计每个人今日累计共享时长 ──
-        # 查全部记录，duration只计当日(MYT)部分
-        # 跨天会议室:共享从昨天开始到今天结束，只算今天这一段
-        all_share = conn.execute(
-            "SELECT user_name, start_time, end_time, is_active FROM sharing_live WHERE tenant_id=? ORDER BY user_name, start_time",
-            (tenant_id,)
-        ).fetchall()
-        acc_duration = {}  # norm_key -> total_minutes (仅当日)
-        myt_today = now_utc.astimezone(MYT)
-        utc_day_start = myt_today.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        utc_day_end = myt_today.replace(hour=23, minute=59, second=59, microsecond=0).astimezone(timezone.utc)
-        for sr in all_share:
-            uname = sr[0]
-            _rm = resolve_member(uname)
-            dn = _rm["standard_name"]
-            nk = re.sub(r"\s+", "", dn.lower())
-            if not nk or nk not in merged:
-                continue
-            st_str = sr[1]; et_str = sr[2]; is_act = sr[3]
-            try:
-                sd = datetime.fromisoformat(st_str.replace("Z", "+00:00"))
-                ed = datetime.fromisoformat(et_str.replace("Z", "+00:00")) if et_str and not is_act else now_utc
-                seg_start = max(sd, utc_day_start)
-                seg_end = min(ed, utc_day_end)
-                if seg_start < seg_end:
-                    acc_duration[nk] = acc_duration.get(nk, 0) + int((seg_end - seg_start).total_seconds() / 60)
-            except:
-                pass
+                d = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                return d.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+            except: return dt_str[:16]
 
-        # Build output: split into active (current) and recent (stale but <24h, shown as history)
+        def disp_mins(m):
+            return f"{m//60}h{m%60:02d}" if m >= 60 else f"{m}分钟"
+
         active = []
-        recent = []
-        for _key, info in merged.items():
-            st = info.get("start_time", "")
-            nk = re.sub(r"\s+", "", info["name"].lower())
-            total_mins = acc_duration.get(nk, 0)
-            entry = {
-                "name": info.get("name", ""),
-                "raw_name": info.get("raw_name", ""),
-                "user_id": info.get("user_id", ""),
-                "meeting_id": info.get("meeting_id", ""),
-                "content": info.get("content", ""),
+        for s in sharers:
+            g = _lookup_group(s.get("raw_name", ""))
+            st = s.get("start_time", "")
+            mins = s.get("duration_minutes", 0)
+            active.append({
+                "name": s.get("display_name", s.get("name", "")),
+                "raw_name": s.get("raw_name", ""),
+                "user_id": s.get("user_id", ""),
+                "meeting_id": s.get("meeting_id", ""),
+                "content": s.get("content", ""),
                 "start_time": st,
                 "start_time_display": to_myt(st),
-                "duration_minutes": total_mins,
-                "duration_display": disp(total_mins),
-                "source": info.get("source", ""),
-            }
-            if info.get("_stale"):
-                recent.append(entry)
-            else:
-                active.append(entry)
-        
-        # --- 添加能力配置返回 ---
-        _tenant = db.get_tenant(tenant_id) if tenant_id else None
-        cap = None
-        if _tenant:
-            cap = {
-                "zoom_plan": _tenant.get("zoom_plan", "unknown"),
-                "live_mode": _tenant.get("live_mode", "metrics"),
-                "sharing_mode": _tenant.get("sharing_mode", "metrics"),
-                "metrics_available": _tenant.get("metrics_available", 0),
-            }
-        
-        # 构建分组统计:遍历 active + recent 统计每组人数
+                "duration_minutes": mins,
+                "duration_display": disp_mins(mins),
+                "source": "zoom_service",
+                "group_id": g.get("group_id", ""),
+                "group_name": g.get("group_name", ""),
+            })
+
+        # 分组统计
         groups_stats = {}
-        for entry in [*active, *recent]:
+        for entry in active:
             gid = entry.get("group_id", "")
             gname = entry.get("group_name", "未分组")
             if gid:
@@ -2261,7 +2074,7 @@ def build_app() -> "FastAPI":
                 if key not in groups_stats:
                     groups_stats[key] = {"group_id": gid, "group_name": gname, "count": 0}
                 groups_stats[key]["count"] += 1
-        # 获取所有启用分组(包括共享人数为0的)
+
         all_groups = conn.execute(
             "SELECT id, name FROM member_groups WHERE tenant_id=? ORDER BY id",
             (tenant_id,)
@@ -2272,39 +2085,29 @@ def build_app() -> "FastAPI":
             key = f"{sgid}_{gname}"
             cnt = groups_stats[key]["count"] if key in groups_stats else 0
             groups_list.append({"group_id": sgid, "group_name": gname, "count": cnt})
-        # 未分组统计
-        ungrouped_cnt = sum(1 for e in [*active, *recent] if not e.get("group_id"))
-        groups_list.insert(0, {"group_id": "", "group_name": "全部", "count": len(active) + len(recent)})
+        ungrouped_cnt = sum(1 for e in active if not e.get("group_id"))
+        groups_list.insert(0, {"group_id": "", "group_name": "全部", "count": len(active)})
+
+        _tenant = db.get_tenant(tenant_id) if tenant_id else None
+        cap = {
+            "zoom_plan": _tenant.get("zoom_plan", "unknown"),
+            "live_mode": _tenant.get("live_mode", "metrics"),
+            "sharing_mode": _tenant.get("sharing_mode", "metrics"),
+            "metrics_available": _tenant.get("metrics_available", 0),
+        } if _tenant else None
 
         return {
             "ok": True,
             "current": len(active),
             "active": active,
-            "recent": recent,
-            "recent_total": len(recent),
+            "recent": [],
+            "recent_total": 0,
             "groups": groups_list,
             "ungrouped": ungrouped_cnt,
-            "sources": sources,
+            "sources": {"zoom_service": len(active)},
             "capability": cap,
         }
-        
-        # Build response
-        current_sharing = []
-        for uid, info in merged.items():
-            st = info.get("start_time", info.get("join_time", ""))
-            mins = calc_mins(st)
-            current_sharing.append({
-                "name": info.get("name", ""),
-                "raw_name": info.get("raw_name", ""),
-                "user_id": uid,
-                "content": info.get("content", ""),
-                "start_time": st,
-                "start_time_display": to_myt(st),
-                "duration_minutes": mins,
-                "duration_display": disp_mins(mins),
-                "source": info.get("source", ""),
-            })
-        
+
 
 
 
@@ -2479,12 +2282,12 @@ def build_app() -> "FastAPI":
         # 在线名单
         online_names = set()
         try:
-            zm, _ = _get_tenant_zoom_metrics(request)
-            if zm:
-                live_data = await zm.get_live()
-                for m in live_data.get("meetings", []):
-                    for p in m.get("participants", []):
-                        online_names.add(p.get("name", ""))
+            from services.zoom import ZoomService
+            zoom = ZoomService()
+            live = await zoom.get_live_meetings(tenant_id)
+            for m in live.get("meetings", []):
+                for p in m.get("participants", []):
+                    online_names.add(p.get("name", ""))
         except:
             pass
 
@@ -3150,14 +2953,15 @@ def build_app() -> "FastAPI":
     async def api_v3_dashboard(request: Request):
         """Dashboard 概览(兼容前端 /api/v3/dashboard 请求)
         
-        主数据源:Zoom Metrics API(与 /api/v3/live 一致)
-        备选回退:sharing_live / zoom_participants(当 API 不可用时)
-        
-        按当前租户的 Zoom 账号查询。
+        通过 ZoomService 统一来源。
         """
         conn = db._get_conn()
         report_start_utc, report_end_utc = myt_day_range_to_utc()
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        from services.zoom import ZoomService
 
+        zoom = ZoomService()
+        
         online_count = 0
         sharing_count = 0
         meetings = []
@@ -3166,15 +2970,15 @@ def build_app() -> "FastAPI":
         join_count = 0
         leave_count = 0
 
-        # ── 主源:Zoom Metrics API ──
+        # ── 主源: ZoomService get_live_meetings ──
         try:
-            zm, _ = _get_tenant_zoom_metrics(request)
-            live_data = await zm.get_live() if zm else {"meetings": [], "online_list": [], "total_online": 0}
+            live = await zoom.get_live_meetings(tenant_id)
+            meetings_data = live.get("meetings", [])
+            online_list = live.get("online_list", [])
+            online_count = live.get("online_count", 0)
 
-            online_count = live_data.get("total_online", 0)
-
-            # Build meetings from live API data
-            for m in live_data.get("meetings", []):
+            # Build meetings
+            for m in meetings_data:
                 meeting_participants = []
                 for p in m.get("participants", []):
                     meeting_participants.append({
@@ -3199,7 +3003,7 @@ def build_app() -> "FastAPI":
                 })
 
             # Build participants list from online_list
-            for p in live_data.get("online_list", []):
+            for p in online_list:
                 participants.append({
                     "name": p.get("name", ""),
                     "raw_name": p.get("raw_name", ""),
@@ -3216,12 +3020,7 @@ def build_app() -> "FastAPI":
                 })
 
             participant_count = len(participants)
-
-            # Sharing count from Metrics API (is_sharing flag on each participant)
-            # Dedup by name - same person across multiple meetings counted once
-            # NOT using sharing_live table as override: stale active entries inflate count
-            unique_sharing = {p.get("name", "") for p in live_data.get("online_list", []) if p.get("is_sharing")}
-            sharing_count = len(unique_sharing)
+            sharing_count = len({p.get("name", "") for p in online_list if p.get("is_sharing")})
         except Exception:
             # ── Fallback: sharing_live + zoom_participants ──
             try:
@@ -3318,16 +3117,17 @@ def build_app() -> "FastAPI":
                 acct_status = a.get("status", "unknown")
                 # 尝试拉在线
                 try:
-                    zm = ZoomMetrics(a)
-                    live = await zm.get_live()
-                    acct_online = live.get("total_online", 0)
+                    from services.zoom import ZoomService
+                    zoom_svc = ZoomService()
+                    live = await zoom_svc.get_live_meetings(tenant_id=a.get("tenant_id", tid))
+                    acct_online = live.get("online_count", 0)
                     online_count += acct_online
                     account_info.append({
                         "label": acct_label,
                         "status": acct_status,
                         "online": acct_online,
                         "plan": a.get("zoom_plan", "unknown"),
-                        "metrics_ok": live.get("total_online", 0) > 0 or True,
+                        "metrics_ok": live.get("online_count", 0) > 0 or True,
                     })
                 except Exception as e:
                     account_info.append({
