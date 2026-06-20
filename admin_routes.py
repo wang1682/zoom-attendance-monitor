@@ -2025,7 +2025,7 @@ async def api_sharing_detail(request: Request, meeting_id: str, user_name: str =
 async def dashboard_bot_config(request: Request, user: dict = Depends(require_user)):
     """Bot config page — redirected to settings (template removed in cleanup)."""
     from starlette.responses import RedirectResponse
-    return RedirectResponse(url="/dashboard/settings", status_code=302)
+    return RedirectResponse(url="/dashboard/settings#telegram", status_code=302)
 
 
 @router.post("/settings/bot/verify")
