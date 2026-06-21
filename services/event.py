@@ -48,6 +48,8 @@ EVENT_TYPE_LABELS = {
     "meeting.participant_left_breakout_room": "breakout_room_left",
     "meeting.sharing_started": "sharing_started",
     "meeting.sharing_ended": "sharing_ended",
+    "meeting.breakout_room_sharing_started": "sharing_started",
+    "meeting.breakout_room_sharing_ended": "sharing_ended",
     "meeting.participant_joined_waiting_room": "waiting_room_joined",
     "meeting.participant_admitted": "participant_admitted",
     "meeting.unknown_user": "unknown_user",

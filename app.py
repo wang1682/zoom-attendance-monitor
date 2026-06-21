@@ -1422,7 +1422,7 @@ def build_app() -> "FastAPI":
             )
 
         # Sharing events -> ParticipantService
-        if "sharing_started" in event_type or "sharing_ended" in event_type:
+        if "sharing" in event_type:
             from services.participant import ParticipantService
 
             obj = payload.get("payload", {}).get("object", payload.get("object", {}))

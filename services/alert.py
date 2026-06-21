@@ -235,9 +235,8 @@ class AlertService:
                 (tenant_id, mid, ename),
             ).fetchone()
             if not active:
-                sys.stderr.write(f"[PUSH] sharing_ended ignored (no active sharing) tenant={tenant_id} mid={mid} user={ename}\n")
+                sys.stderr.write(f"[PUSH] sharing_ended no active sharing, continue push tenant={tenant_id} mid={mid} user={ename}\n")
                 sys.stderr.flush()
-                return
 
         conn = _db._get_conn()
         already = conn.execute(
