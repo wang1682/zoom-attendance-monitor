@@ -2053,9 +2053,9 @@ def build_app() -> "FastAPI":
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
         if tenant_id:
-            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? AND deleted=0 ORDER BY display_name", (tenant_id,)).fetchall()
         elif role == "super_admin":
-            rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+            rows = conn.execute("SELECT * FROM member_display WHERE deleted=0 ORDER BY display_name").fetchall()
         else:
             rows = []
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
@@ -2358,9 +2358,9 @@ def build_app() -> "FastAPI":
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
         if tenant_id:
-            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? ORDER BY display_name", (tenant_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM member_display WHERE tenant_id=? AND deleted=0 ORDER BY display_name", (tenant_id,)).fetchall()
         elif role == "super_admin":
-            rows = conn.execute("SELECT * FROM member_display ORDER BY display_name").fetchall()
+            rows = conn.execute("SELECT * FROM member_display WHERE deleted=0 ORDER BY display_name").fetchall()
         else:
             rows = []
         cols = [c[1] for c in conn.execute("PRAGMA table_info(member_display)").fetchall()]
@@ -2463,12 +2463,10 @@ def build_app() -> "FastAPI":
 
     @app.delete("/api/v3/members/{display_name}")
     async def api_v3_members_del_by_name(display_name: str, request: Request):
-        """按 display_name 删除成员映射+今日参会数据(JS 前端调用)"""
-        from datetime import datetime, timezone, timedelta
+        """按 display_name 软删除成员（标记 deleted=1，保留数据）"""
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
-        # admin 全局模式需要前端传 tenant_id
         if not tenant_id and role == "super_admin":
             tenant_id = request.query_params.get("tenant_id", "").strip()
             if not tenant_id:
@@ -2480,66 +2478,41 @@ def build_app() -> "FastAPI":
 
         dn_lower = display_name.strip().lower().replace(" ", "")
 
-        # 1. 删除 member_display（精确 + 模糊匹配）
-        md_del = conn.execute(
-            "DELETE FROM member_display WHERE tenant_id=? AND "
+        rows = conn.execute(
+            "SELECT id FROM member_display WHERE tenant_id=? AND deleted=0 AND "
             "(LOWER(display_name)=? OR LOWER(raw_name)=? OR LOWER(match_key)=?)",
             (tenant_id, dn_lower, dn_lower, dn_lower),
-        ).rowcount
-
-        # 2. 计算今日 UTC 起始（MYT 时区：UTC+8）
-        now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
-        today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = today_start_myt - timedelta(hours=8)
-        today_utc_str = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-
-        # 3. zoom_participants — LOWER(name) 匹配，今日内
-        zp_del = conn.execute(
-            "DELETE FROM zoom_participants WHERE tenant_id=? AND "
-            "LOWER(REPLACE(name,' ',''))=? AND action_time>=?",
-            (tenant_id, dn_lower, today_utc_str),
-        ).rowcount
-
-        # 4. zoom_events — payload JSON 中查找 user_name，今日内
-        ze_del = conn.execute(
-            "DELETE FROM zoom_events WHERE tenant_id=? AND "
-            "created_at>=? AND LOWER(payload) LIKE ?",
-            (tenant_id, today_utc_str, f'%{dn_lower}%'),
-        ).rowcount
-
-        # 5. participant_sessions — LOWER(user_name) 匹配名称或别名，今日内
-        ps_del = conn.execute(
-            "DELETE FROM participant_sessions WHERE "
-            "LOWER(REPLACE(user_name,' ',''))=? AND join_time_utc>=?",
-            (dn_lower, today_utc_str),
-        ).rowcount
-
-        # 6. sharing_live — LOWER(user_name) 匹配，今日 active 或今日创建的
-        sl_del = conn.execute(
-            "DELETE FROM sharing_live WHERE tenant_id=? AND "
-            "LOWER(REPLACE(user_name,' ',''))=? AND "
-            "(is_active=1 OR (created_at>=? AND start_time>=?))",
-            (tenant_id, dn_lower, today_utc_str, today_utc_str),
-        ).rowcount
+        ).fetchall()
+        md_count = len(rows)
+        for r in rows:
+            conn.execute(
+                "UPDATE member_display SET deleted=1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                (r["id"],),
+            )
 
         conn.commit()
-        return {
-            "ok": True,
-            "deleted": {
-                "member_display": md_del,
-                "zoom_participants": zp_del,
-                "zoom_events": ze_del,
-                "participant_sessions": ps_del,
-                "sharing_live": sl_del,
-            },
-        }
+
+        # ── 如果 member_display 无记录（纯 zoom_participants 名字），插入 tombstone ──
+        if md_count == 0:
+            mk = display_name.strip().lower().replace(" ", "")
+            conn.execute(
+                "INSERT INTO member_display (tenant_id, raw_name, display_name, match_key, deleted, group_id) "
+                "VALUES (?, ?, ?, ?, 1, NULL)",
+                (tenant_id, display_name.strip(), display_name.strip(), mk),
+            )
+            conn.commit()
+
+        md_count_final = conn.execute(
+            "SELECT COUNT(*) FROM member_display WHERE tenant_id=? AND (LOWER(display_name)=? OR LOWER(raw_name)=? OR LOWER(match_key)=?) AND deleted=1",
+            (tenant_id, dn_lower, dn_lower, dn_lower),
+        ).fetchone()[0]
+
+        return {"ok": True, "deleted": {"member_display": md_count_final}}
 
     @app.delete("/api/v3/members/display/{item_id}")
     async def api_v3_members_del_by_id(item_id: int, request: Request):
-        """按 id 删除成员映射+级联今日数据(带租户校验)"""
-        from datetime import datetime, timezone, timedelta
+        """按 id 软删除成员（标记 deleted=1，保留数据）"""
         conn = db._get_conn()
-
         tenant_id = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
         if not tenant_id:
@@ -2547,100 +2520,19 @@ def build_app() -> "FastAPI":
         if role not in ("super_admin", "admin", "tenant_admin"):
             return {"ok": False, "error": "无权限：需要 admin 以上角色"}
 
-        # 先查出 member_display 记录，获取 display_name
         row = conn.execute(
-            "SELECT display_name, raw_name FROM member_display WHERE id=? AND tenant_id=?",
+            "SELECT id FROM member_display WHERE id=? AND tenant_id=? AND deleted=0",
             (item_id, tenant_id),
         ).fetchone()
         if not row:
-            return {"ok": False, "error": "记录不存在或不属于当前租户"}
+            return {"ok": False, "error": "记录不存在、不属于当前租户或已删除"}
 
-        display_name = row["display_name"]
-        raw_name = row["raw_name"]
-
-        # 1. 删除 member_display
-        md_del = conn.execute(
-            "DELETE FROM member_display WHERE id=? AND tenant_id=?",
-            (item_id, tenant_id),
-        ).rowcount
-
-        # 2. 计算今日 UTC 起始
-        now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
-        today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = today_start_myt - timedelta(hours=8)
-        today_utc_str = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-        dn_lower = display_name.strip().lower().replace(" ", "")
-        rn_lower = raw_name.strip().lower().replace(" ", "")
-
-        # 构造模糊匹配条件的公共部分
-        def name_condition(col):
-            if rn_lower == dn_lower:
-                return f"LOWER(REPLACE({col},' ',''))=?"
-            return f"(LOWER(REPLACE({col},' ',''))=? OR LOWER(REPLACE({col},' ',''))=?)"
-
-        # 3. zoom_participants
-        if rn_lower == dn_lower:
-            zp_del = conn.execute(
-                f"DELETE FROM zoom_participants WHERE tenant_id=? AND "
-                f"LOWER(REPLACE(name,' ',''))=? AND action_time>=?",
-                (tenant_id, dn_lower, today_utc_str),
-            ).rowcount
-        else:
-            zp_del = conn.execute(
-                f"DELETE FROM zoom_participants WHERE tenant_id=? AND "
-                f"(LOWER(REPLACE(name,' ',''))=? OR LOWER(REPLACE(name,' ',''))=?) AND action_time>=?",
-                (tenant_id, dn_lower, rn_lower, today_utc_str),
-            ).rowcount
-
-        # 4. zoom_events — payload LIKE
-        like_pattern = f"%{dn_lower}%"
-        ze_del = conn.execute(
-            "DELETE FROM zoom_events WHERE tenant_id=? AND "
-            "created_at>=? AND LOWER(payload) LIKE ?",
-            (tenant_id, today_utc_str, like_pattern),
-        ).rowcount
-
-        # 5. participant_sessions
-        if rn_lower == dn_lower:
-            ps_del = conn.execute(
-                "DELETE FROM participant_sessions WHERE "
-                "LOWER(REPLACE(user_name,' ',''))=? AND join_time_utc>=?",
-                (dn_lower, today_utc_str),
-            ).rowcount
-        else:
-            ps_del = conn.execute(
-                "DELETE FROM participant_sessions WHERE "
-                "(LOWER(REPLACE(user_name,' ',''))=? OR LOWER(REPLACE(user_name,' ',''))=?) AND join_time_utc>=?",
-                (dn_lower, rn_lower, today_utc_str),
-            ).rowcount
-
-        # 6. sharing_live
-        if rn_lower == dn_lower:
-            sl_del = conn.execute(
-                "DELETE FROM sharing_live WHERE tenant_id=? AND "
-                "LOWER(REPLACE(user_name,' ',''))=? AND "
-                "(is_active=1 OR (created_at>=? AND start_time>=?))",
-                (tenant_id, dn_lower, today_utc_str, today_utc_str),
-            ).rowcount
-        else:
-            sl_del = conn.execute(
-                "DELETE FROM sharing_live WHERE tenant_id=? AND "
-                "(LOWER(REPLACE(user_name,' ',''))=? OR LOWER(REPLACE(user_name,' ',''))=?) AND "
-                "(is_active=1 OR (created_at>=? AND start_time>=?))",
-                (tenant_id, dn_lower, rn_lower, today_utc_str, today_utc_str),
-            ).rowcount
-
+        conn.execute(
+            "UPDATE member_display SET deleted=1, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (item_id,),
+        )
         conn.commit()
-        return {
-            "ok": True,
-            "deleted": {
-                "member_display": md_del,
-                "zoom_participants": zp_del,
-                "zoom_events": ze_del,
-                "participant_sessions": ps_del,
-                "sharing_live": sl_del,
-            },
-        }
+        return {"ok": True, "deleted": {"member_display": 1}}
 
     @app.post("/api/v3/members/clean-test-data")
     async def api_v3_members_clean_test(request: Request):
