@@ -174,8 +174,8 @@ class ParticipantService:
         if tenant_id:
             conn.execute(
                 "UPDATE sharing_live SET is_active=0, end_time=?, updated_at=? "
-                "WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?",
-                (start_time, now_iso, meeting_id, user_id, tenant_id),
+                "WHERE meeting_id=? AND user_name=? AND is_active=1 AND tenant_id=?",
+                (start_time, now_iso, meeting_id, user_name, tenant_id),
             )
 
         cur = conn.execute(

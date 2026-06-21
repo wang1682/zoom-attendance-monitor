@@ -1928,7 +1928,15 @@ def build_app() -> "FastAPI":
                 })
             except: pass
         
-        live_rows = conn.execute("SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=?", (_tenant,)).fetchall()
+        live_rows = conn.execute(
+            "SELECT * FROM sharing_live WHERE is_active=1 AND tenant_id=? "
+            "AND id IN ("
+            "  SELECT MAX(id) FROM sharing_live "
+            "  WHERE is_active=1 AND tenant_id=? "
+            "  GROUP BY tenant_id, meeting_id, user_name"
+            ")",
+            (_tenant, _tenant),
+        ).fetchall()
         live_cols = [c[1] for c in conn.execute("PRAGMA table_info(sharing_live)").fetchall()]
         active_sharing = [dict(zip(live_cols, r)) for r in live_rows]
         
@@ -2859,7 +2867,16 @@ def build_app() -> "FastAPI":
             # ── Fallback: sharing_live + zoom_participants ──
             try:
                 _fb_tenant_id = request.app.state.get_effective_tenant_id(request)
-                live_rows = conn.execute("SELECT meeting_id, user_name, user_id, start_time FROM sharing_live WHERE is_active=1 AND tenant_id=?", (_fb_tenant_id,)).fetchall()
+                live_rows = conn.execute(
+                    "SELECT meeting_id, user_name, user_id, start_time FROM sharing_live "
+                    "WHERE is_active=1 AND tenant_id=? "
+                    "AND id IN ("
+                    "  SELECT MAX(id) FROM sharing_live "
+                    "  WHERE is_active=1 AND tenant_id=? "
+                    "  GROUP BY tenant_id, meeting_id, user_name"
+                    ")",
+                    (_fb_tenant_id, _fb_tenant_id),
+                ).fetchall()
                 online_count = len({(r["meeting_id"], r["user_id"] or r["user_name"]) for r in live_rows})
                 sharing_count = online_count
             except Exception:
