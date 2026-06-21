@@ -308,6 +308,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     "status": "online",
                     "group_name": grp_name,
                     "group_id": None,
+                    "tenant_id": tenant_id or "",
                     "first_join": "—",
                     "last_leave_time": None,
                     "last_activity": metrics_last or "—",
@@ -417,18 +418,19 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     conn = db._get_conn()
     if tenant_id:
         md_rows = conn.execute(
-            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display WHERE tenant_id = ?",
+            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id, tenant_id FROM member_display WHERE tenant_id = ?",
             (tenant_id,)
         ).fetchall()
     else:
         md_rows = conn.execute(
-            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id FROM member_display"
+            "SELECT raw_name, display_name, aliases, note, count_enabled, group_id, tenant_id FROM member_display"
         ).fetchall()
     member_displays = {}
     for r in md_rows:
         raw_name = r[0]
         disp_name = r[1]
         aliases = json.loads(r[2]) if r[2] else []
+        md_tenant = r[6] or ""
         entry = {
             "display_name": disp_name,
             "aliases": aliases,
@@ -436,15 +438,33 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             "count_enabled": bool(r[4]),
             "group_id": r[5],
             "raw_name": raw_name,
+            "tenant_id": md_tenant,
         }
-        member_displays[raw_name] = entry
-        member_displays[disp_name] = entry
+        # 以 (tenant_id, name_key) 为 key，避免跨租户覆盖
+        for name_key in (raw_name.strip().lower().replace(" ", ""),
+                         disp_name.strip().lower().replace(" ", "")):
+            if name_key:
+                member_displays[(md_tenant, name_key)] = entry
 
     for m in members:
         sn = m.get("standard_name", "")
-        md_entry = member_displays.get(sn, {})
+        m_tenant = m.get("tenant_id", "")
+        key = sn.strip().lower().replace(" ", "")
+        # 精确匹配：用 (成员tenant, name_key)
+        md_entry = member_displays.get((m_tenant, key), {})
+        if not md_entry and m_tenant:
+            # 降级：如果成员 tenant 有值但没匹配到，尝试空 tenant
+            md_entry = member_displays.get(("", key), {})
+        if not md_entry:
+            # 降级：任意租户
+            for (t, k), v in member_displays.items():
+                if k == key:
+                    md_entry = v
+                    break
         m["raw_name"] = md_entry.get("raw_name", sn)
-        m["group_id"] = md_entry.get("group_id")
+        # 如果 summary 已经填充了 group_id，不覆盖；没有才从 member_displays 取
+        if m.get("group_id") is None:
+            m["group_id"] = md_entry.get("group_id")
 
     return _render_admin(request, "participants", user, "participants.html",
                          title="成员中心",
@@ -455,7 +475,6 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          search=search,
                          group_filter=group_filter,
                          status_filter=status_filter,
-                         member_displays=json.dumps(member_displays),
                          tenant_id=tenant_id,
                          data_source=data_source,
                          is_realtime=is_realtime,

@@ -636,38 +636,62 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
 
     # ── 批量加载成员→分组映射（一次 JOIN，避免 N+1）──
     _group_map_cache = {}
+    conn = _get_conn()
     if tenant_id:
-        conn = _get_conn()
         grp_rows = conn.execute(
-            "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name "
+            "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name, "
+            "g.id AS group_id "
             "FROM member_display md "
             "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
             "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
             (tenant_id,),
         ).fetchall()
-        for gr in grp_rows:
-            grd = dict(gr)
-            for key in (grd.get("raw_name", "").strip().lower().replace(" ", ""),
-                        grd.get("display_name", "").strip().lower().replace(" ", "")):
-                if key:
-                    _group_map_cache[key] = grd.get("group_name", "")
+    else:
+        grp_rows = conn.execute(
+            "SELECT DISTINCT md.raw_name, md.display_name, COALESCE(g.name, '') AS group_name, "
+            "g.id AS group_id, md.tenant_id "
+            "FROM member_display md "
+            "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
+            "WHERE md.group_id IS NOT NULL"
+        ).fetchall()
+    for gr in grp_rows:
+        grd = dict(gr)
+        grp_name = grd.get("group_name", "")
+        grp_id = grd.get("group_id")
+        t_id = grd.get("tenant_id") or tenant_id
+        # 以 (tenant_id, key) 二元组为 key，避免跨租户覆盖
+        for key in (grd.get("raw_name", "").strip().lower().replace(" ", ""),
+                    grd.get("display_name", "").strip().lower().replace(" ", "")):
+            if key:
+                _group_map_cache[(t_id, key)] = (grp_name, grp_id)
 
-    def _batch_group_lookup(name: str) -> str:
+    def _batch_group_lookup(name: str, member_tenant: str = None) -> tuple:
         key = name.strip().lower().replace(" ", "")
-        return _group_map_cache.get(key, "")
+        # 优先精确匹配 tenant
+        if member_tenant:
+            result = _group_map_cache.get((member_tenant, key))
+            if result:
+                return result
+        # 降级：全量模糊匹配（任意租户）
+        for (t, k), v in _group_map_cache.items():
+            if k == key:
+                return v
+        return ("", None)
 
     # ── 按 resolve_display_name 分组 ──
     members = OrderedDict()
     for e in raw:
         resolved = resolve_display_name(e["name"], tenant_id)
         display_name = resolved["display_name"]
+        ev_tenant = e.get("tenant_id", tenant_id or "")
 
         if display_name not in members:
             members[display_name] = {
                 "standard_name": display_name,
                 "raw_name": resolved.get("raw_name", display_name),
                 "group_id": None,
-                "group_name": _batch_group_lookup(display_name),
+                "group_name": "",
+                "tenant_id": ev_tenant,
                 "status": "offline",
                 "first_join": None,
                 "today_total_seconds": 0,
@@ -781,6 +805,13 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 if row:
                     m["email"] = row[0]
                     break
+
+    # ── 填充 group_id / group_name（带上 tenant_id 精确匹配）──
+    for m in members.values():
+        t_id = m.get("tenant_id", "")
+        grp_name, grp_id = _batch_group_lookup(m["standard_name"], t_id)
+        m["group_name"] = grp_name
+        m["group_id"] = grp_id
 
     # ── 排序：在线优先 → 时长降序 ──
     sorted_members = sorted(
@@ -1309,8 +1340,16 @@ def resolve_display_name(raw_name: str, tenant_id: str = None) -> dict:
     # 2. Match on match_key (lowercase, no spaces)
     key = re.sub(r'\s+', '', name.lower())
     for raw, m in mapping.items():
-        if m["key"] == key:
+        mk = m["key"]
+        if mk and mk == key:
             return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
+    
+    # 2b. Fallback: match_key is empty, try display_name.lower() or raw_name.lower()
+    for raw, m in mapping.items():
+        mk = m["key"]
+        if not mk:
+            if re.sub(r'\s+', '', raw.lower()) == key or re.sub(r'\s+', '', m["display"].lower()) == key:
+                return {"display_name": m["display"], "count_enabled": m["enabled"], "raw_name": name}
 
     # 3. Match on aliases (曾用名匹配)
     name_lower = name.lower().replace(" ", "")

@@ -96,6 +96,7 @@
     </td>
     <td class="td-group">
       <select class="group-select" data-display="{{ m.get('standard_name','') }}"
+              data-tenant="{{ m.get('tenant_id','') }}"
               onchange="changeMemberGroup(this)">
         <option value="">无分组</option>
         {% for g in groups %}
@@ -125,6 +126,7 @@ if (groupsData) groupsData.forEach(function(g){ groupMap[g.id] = g.name; });
 
 function changeMemberGroup(sel) {
   var displayName = sel.getAttribute('data-display');
+  var memberTenant = sel.getAttribute('data-tenant') || '';
   var groupId = sel.value ? parseInt(sel.value) : null;
   var prevOpt = sel.querySelector('[selected]');
   var prevVal = prevOpt ? prevOpt.value : '';
@@ -132,7 +134,7 @@ function changeMemberGroup(sel) {
   fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: groupId})
+    body: JSON.stringify({group_id: groupId, tenant_id: memberTenant})
   }).then(function(r){ return r.json(); }).then(function(j){
     if (j.ok) {
       // 更新 data-group 属性（供筛选器用）

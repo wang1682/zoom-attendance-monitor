@@ -2400,16 +2400,40 @@ def build_app() -> "FastAPI":
         """设置成员的所属分组"""
         data = await request.json()
         group_id = data.get("group_id", None)
+        member_tenant_id = data.get("tenant_id", None) or None
         conn = db._get_conn()
         now = datetime.now(timezone.utc).isoformat()
         tenant_id = request.app.state.get_effective_tenant_id(request)
+        role = request.session.get("role")
         try:
-            if tenant_id:
-                _validate_group_tenant(group_id, tenant_id)
+            # 如果有传入 tenant_id，优先使用；否则回退
+            target_tenant = member_tenant_id or tenant_id
+            if target_tenant:
+                _validate_group_tenant(group_id, target_tenant)
                 conn.execute(
-                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE display_name = ? AND tenant_id = ?",
-                    (group_id, now, display_name, tenant_id)
+                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE LOWER(display_name) = LOWER(?) AND tenant_id = ?",
+                    (group_id, now, display_name, target_tenant)
                 )
+            elif role == "super_admin":
+                # super_admin 且没有 tenant_id 时，查一下该 display_name 有几个租户记录
+                rows = conn.execute(
+                    "SELECT DISTINCT tenant_id FROM member_display WHERE LOWER(display_name) = LOWER(?)",
+                    (display_name,)
+                ).fetchall()
+                if len(rows) == 1:
+                    # 唯一租户，直接更新
+                    t = rows[0][0]
+                    _validate_group_tenant(group_id, t)
+                    conn.execute(
+                        "UPDATE member_display SET group_id = ?, updated_at = ? WHERE LOWER(display_name) = LOWER(?) AND tenant_id = ?",
+                        (group_id, now, display_name, t)
+                    )
+                elif len(rows) > 1:
+                    return {"ok": False, "error": f"同名成员 '{display_name}' 存在于多个租户，请从具体租户页面操作"}
+                else:
+                    return {"ok": False, "error": f"未找到成员 '{display_name}'"}
+            else:
+                return {"ok": False, "error": "无权限"}
             conn.commit()
             return {"ok": True}
         except Exception as e:
@@ -3549,8 +3573,8 @@ def build_app() -> "FastAPI":
 
         role = request.session["role"]
         if role == "super_admin":
-            request.session["selected_tenant"] = "default"
-            request.session["tenant_id"] = "default"
+            request.session["selected_tenant"] = "*"
+            request.session["tenant_id"] = "*"
             return RedirectResponse(url="/dashboard", status_code=303)
 
         if role == "admin":
