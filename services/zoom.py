@@ -602,88 +602,137 @@ class ZoomService(BaseService):
         now_utc = datetime.now(timezone.utc)
         sharers = []
 
-        if live["source"] == "zoom_metrics":
+        # ── 1. 从 Metrics 收集（有 is_sharing 标记的） ──
+        for m in live.get("meetings", []):
+            for p in m.get("participants", []):
+                if p.get("is_sharing"):
+                    resolved = db.resolve_display_name(p.get("name", ""))
+                    jt = p.get("join_time", "")
+                    mins = 0
+                    if jt:
+                        try:
+                            jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
+                            mins = int((now_utc - jd).total_seconds() / 60)
+                        except Exception:
+                            pass
+                    sharers.append({
+                        "name": p.get("name", ""),
+                        "raw_name": p.get("raw_name", ""),
+                        "display_name": resolved.get("display_name", p.get("name", "")),
+                        "meeting_id": m.get("meeting_id", ""),
+                        "meeting_topic": m.get("meeting_topic", ""),
+                        "content": p.get("sharing_content", ""),
+                        "start_time": p.get("join_time", ""),
+                        "start_time_display": p.get("join_time_display", ""),
+                        "duration_minutes": mins,
+                        "duration_display": p.get("online_display", ""),
+                        "group_name": resolved.get("group_name", ""),
+                        "group_id": resolved.get("group_id", ""),
+                        "user_id": p.get("user_id", ""),
+                        "email": p.get("email", ""),
+                    })
+
+        # ── 2. sharing_live fallback：补充 Metrics 没有的 ──
+        #    与在线名单交叉校验：已不在线的标记过期
+        try:
+            conn = self._get_db()
+
+            # 收集当前在线 participants：user_name / user_id 集合
+            online_names = set()
+            online_ids = set()
             for m in live.get("meetings", []):
                 for p in m.get("participants", []):
-                    if p.get("is_sharing"):
-                        resolved = db.resolve_display_name(p.get("name", ""))
-                        jt = p.get("join_time", "")
-                        mins = 0
-                        if jt:
-                            try:
-                                jd = datetime.fromisoformat(jt.replace("Z", "+00:00"))
-                                mins = int((now_utc - jd).total_seconds() / 60)
-                            except Exception:
-                                pass
-                        sharers.append({
-                            "name": p.get("name", ""),
-                            "raw_name": p.get("raw_name", ""),
-                            "display_name": resolved.get("display_name", p.get("name", "")),
-                            "meeting_id": m.get("meeting_id", ""),
-                            "meeting_topic": m.get("meeting_topic", ""),
-                            "content": p.get("sharing_content", ""),
-                            "start_time": p.get("join_time", ""),
-                            "start_time_display": p.get("join_time_display", ""),
-                            "duration_minutes": mins,
-                            "duration_display": p.get("online_display", ""),
-                            "group_name": resolved.get("group_name", ""),
-                            "group_id": resolved.get("group_id", ""),
-                            "user_id": p.get("user_id", ""),
-                            "email": p.get("email", ""),
-                        })
-        else:
-            # Webhook fallback: check sharing_live table
-            try:
-                conn = self._get_db()
-                rows = conn.execute(
-                    "SELECT sl.*, COALESCE(mg.name, '') AS group_name, COALESCE(md.group_id, '') AS group_id "
-                    "FROM sharing_live sl "
-                    "LEFT JOIN member_display md ON (md.raw_name=sl.user_name OR md.display_name=sl.user_name) AND md.tenant_id=sl.tenant_id "
-                    "LEFT JOIN member_groups mg ON mg.id=md.group_id AND mg.tenant_id=md.tenant_id "
-                    "WHERE sl.tenant_id=? AND sl.is_active=1 "
-                    "ORDER BY sl.start_time DESC",
-                    (tenant_id,),
-                ).fetchall()
+                    nm = (p.get("name") or "").strip().lower()
+                    uid = (p.get("user_id") or "").strip()
+                    if nm:
+                        online_names.add(nm)
+                    if uid:
+                        online_ids.add(uid)
 
-                stale_threshold_utc = datetime.now(timezone.utc) - timedelta(hours=6)
-                for r in rows:
-                    d = dict(r)
-                    if d.get("start_time"):
-                        try:
-                            st_dt = datetime.fromisoformat(d["start_time"].replace("Z", "+00:00"))
-                            if st_dt < stale_threshold_utc:
-                                continue  # stale
-                        except Exception:
-                            pass
+            # 查 sharing_live 并交叉校验
+            rows = conn.execute(
+                "SELECT sl.*, COALESCE(mg.name, '') AS group_name, COALESCE(md.group_id, '') AS group_id "
+                "FROM sharing_live sl "
+                "LEFT JOIN member_display md ON (md.raw_name=sl.user_name OR md.display_name=sl.user_name) AND md.tenant_id=sl.tenant_id "
+                "LEFT JOIN member_groups mg ON mg.id=md.group_id AND mg.tenant_id=md.tenant_id "
+                "WHERE sl.tenant_id=? AND sl.is_active=1 "
+                "ORDER BY sl.start_time DESC",
+                (tenant_id,),
+            ).fetchall()
 
-                    resolved = db.resolve_display_name(d.get("user_name", ""))
-                    st = d.get("start_time", "")
-                    mins = 0
-                    if st:
-                        try:
-                            sd = datetime.fromisoformat(st.replace("Z", "+00:00"))
-                            mins = int((now_utc - sd).total_seconds() / 60)
-                        except Exception:
-                            pass
+            seen_raw = {s.get("raw_name", "").lower() for s in sharers}
+            now_str_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            stale_threshold_utc = datetime.now(timezone.utc) - timedelta(hours=6)
+            stale_ids = []  # 需要标记过期的 sharing_live.id 列表
 
-                    sharers.append({
-                        "name": resolved.get("display_name", d.get("user_name", "")),
-                        "raw_name": d.get("user_name", ""),
-                        "display_name": resolved.get("display_name", d.get("user_name", "")),
-                        "meeting_id": d.get("meeting_id", ""),
-                        "meeting_topic": d.get("meeting_topic", ""),
-                        "content": d.get("content", ""),
-                        "start_time": st,
-                        "start_time_display": self._myt_short(st),
-                        "duration_minutes": mins,
-                        "duration_display": f"{mins}分钟" if mins < 60 else f"{mins//60}h{mins%60:02d}",
-                        "group_name": d.get("group_name", ""),
-                        "group_id": d.get("group_id", ""),
-                        "user_id": "",
-                        "email": "",
-                    })
-            except Exception:
-                pass
+            for r in rows:
+                d = dict(r)
+                raw_lower = (d.get("user_name") or "").lower()
+                user_id = (d.get("user_id") or "").strip()
+
+                # 是否在线：name 或 user_id 任一匹配
+                is_online = raw_lower in online_names or user_id in online_ids
+
+                # 不在线的 → 标记 stale，不展示
+                if not is_online:
+                    rid = d.get("id")
+                    if rid:
+                        stale_ids.append(rid)
+                    continue
+
+                # 已在 Metrics 中 → 跳过
+                if raw_lower in seen_raw:
+                    continue
+
+                # 超过 6h 标记过期
+                if d.get("start_time"):
+                    try:
+                        st_dt = datetime.fromisoformat(d["start_time"].replace("Z", "+00:00"))
+                        if st_dt < stale_threshold_utc:
+                            rid = d.get("id")
+                            if rid:
+                                stale_ids.append(rid)
+                            continue
+                    except Exception:
+                        pass
+
+                resolved = db.resolve_display_name(d.get("user_name", ""))
+                st = d.get("start_time", "")
+                mins = 0
+                if st:
+                    try:
+                        sd = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                        mins = int((now_utc - sd).total_seconds() / 60)
+                    except Exception:
+                        pass
+
+                sharers.append({
+                    "name": resolved.get("display_name", d.get("user_name", "")),
+                    "raw_name": d.get("user_name", ""),
+                    "display_name": resolved.get("display_name", d.get("user_name", "")),
+                    "meeting_id": d.get("meeting_id", ""),
+                    "meeting_topic": d.get("meeting_topic", ""),
+                    "content": d.get("content", ""),
+                    "start_time": st,
+                    "start_time_display": self._myt_short(st),
+                    "duration_minutes": mins,
+                    "duration_display": f"{mins}分钟" if mins < 60 else f"{mins//60}h{mins%60:02d}",
+                    "group_name": d.get("group_name", ""),
+                    "group_id": d.get("group_id", ""),
+                    "user_id": "",
+                    "email": "",
+                })
+
+            # ── 批量标记 stale ──
+            if stale_ids:
+                placeholders = ",".join("?" for _ in stale_ids)
+                conn.execute(
+                    f"UPDATE sharing_live SET is_active=0, end_time=? WHERE id IN ({placeholders})",
+                    (now_str_utc, *stale_ids),
+                )
+                conn.commit()
+        except Exception:
+            pass
 
         return sharers
 
