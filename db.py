@@ -605,11 +605,15 @@ def _myt_short(utc_str: str) -> str:
         return utc_str[:5]
 
 
-def get_today_attendance_summary(tenant_id: str = None) -> dict:
+def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, session_start_after: str = None) -> dict:
     """今日参会汇总 — 每人一行，聚合 Join/Leave 事件
     
     用 resolve_display_name 标准化名字，计算累计时长、进出次数、当前状态。
     不修改数据库，不做 schema 变更。
+    
+    如果传入 meeting_id，只统计该会议的进出事件（当前会议统计）。
+    如果传入 session_start_after（UTC ISO 格式），只统计该时间点之后的事件（当前 session）。
+    不传则统计今日全天+6h 回溯。
     """
     from datetime import datetime, timezone, timedelta
     from collections import OrderedDict
@@ -622,7 +626,22 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
     query_start_utc = today_start_utc - timedelta(hours=6)
     today_utc_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
 
-    if tenant_id:
+    # 如果传了 session_start_after，用它作为最小时间（覆盖 query_start）
+    if session_start_after:
+        today_utc_str = session_start_after
+
+    if meeting_id:
+        if tenant_id:
+            rows = _get_conn().execute(
+                "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? AND meeting_id = ? ORDER BY name, action_time",
+                (today_utc_str, tenant_id, meeting_id),
+            ).fetchall()
+        else:
+            rows = _get_conn().execute(
+                "SELECT * FROM zoom_participants WHERE action_time >= ? AND meeting_id = ? ORDER BY name, action_time",
+                (today_utc_str, meeting_id),
+            ).fetchall()
+    elif tenant_id:
         rows = _get_conn().execute(
             "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? ORDER BY name, action_time",
             (today_utc_str, tenant_id),
@@ -643,7 +662,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             "g.id AS group_id "
             "FROM member_display md "
             "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
-            "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL",
+            "WHERE md.tenant_id = ? AND md.group_id IS NOT NULL AND md.deleted=0",
             (tenant_id,),
         ).fetchall()
     else:
@@ -652,7 +671,7 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             "g.id AS group_id, md.tenant_id "
             "FROM member_display md "
             "LEFT JOIN member_groups g ON g.id = md.group_id AND g.tenant_id = md.tenant_id "
-            "WHERE md.group_id IS NOT NULL"
+            "WHERE md.group_id IS NOT NULL AND md.deleted=0"
         ).fetchall()
     for gr in grp_rows:
         grd = dict(gr)
@@ -718,19 +737,21 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             at_dt = datetime.fromisoformat(str(at))
 
         if action in ("enter", "joined"):
-            m["join_count"] += 1
+            m["last_action"] = "enter"
             if at_dt >= today_start_utc:
+                m["join_count"] += 1
                 if m["first_join"] is None or at < m["first_join"]:
                     m["first_join"] = at
-            m["last_action"] = "enter"
         elif action in ("leave", "left"):
-            m["leave_count"] += 1
+            if at_dt >= today_start_utc:
+                m["leave_count"] += 1
             m["last_action"] = "leave"
 
         # ── 更新 email：用今天数据里最新一条（按 action_time） ──
         ev_email = e.get("email", "")
         if ev_email:
             m["email"] = ev_email
+        # ── raw_events 直接追加，不去重（去重放在配对阶段，用基于最近事件隔断的方式）──
         m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": ev_email})
 
         # ── last_activity 只取今天 UTC 00:00 之后的事件 ──
@@ -742,13 +763,47 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         if m["first_join"] is not None and (m["last_activity"] is None or m["last_activity"] < m["first_join"]):
             m["last_activity"] = m["first_join"]
 
+    # ── 加载被软删除的成员名字（用于过滤）──
+    conn_delete = _get_conn()
+    if tenant_id:
+        deleted_rows = conn_delete.execute(
+            "SELECT raw_name, display_name, aliases FROM member_display WHERE tenant_id=? AND deleted=1",
+            (tenant_id,),
+        ).fetchall()
+    else:
+        deleted_rows = conn_delete.execute(
+            "SELECT raw_name, display_name, aliases FROM member_display WHERE deleted=1"
+        ).fetchall()
+    deleted_names = set()
+    for dr in deleted_rows:
+        for n in (dr["raw_name"], dr["display_name"]):
+            if n:
+                deleted_names.add(n.strip().lower().replace(" ", ""))
+        for alias in json.loads(dr["aliases"] or "[]"):
+            if alias:
+                deleted_names.add(alias.strip().lower().replace(" ", ""))
+
     # ── 计算时长 & 状态 ──
     for m in members.values():
         m["raw_events"].sort(key=lambda x: x["action_time"])
-        # ── 用栈配对：只处理 enter/leave ──
+        # ── 用栈配对：相同 meeting 的连续重复 enter/leave 只保留第一个 ──
+        #   连续重复是指 raw_events 中相邻且中间没有被不同 action 隔开
         total_seconds = 0
         enter_stack = []  # store (enter_dt, index) for pairing
+        deduped_events = []
         for ev in m["raw_events"]:
+            if deduped_events and ev["action"] == deduped_events[-1]["action"] and ev["meeting_id"] == deduped_events[-1]["meeting_id"]:
+                # 相同 action + 相同 meeting 且出现在另一个 event 之前——检查中间是否有其它 action
+                # 如果时间差 < 5 秒，视为 webhook 重复
+                try:
+                    cur_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+                    prev_dt = datetime.fromisoformat(str(deduped_events[-1]["action_time"]).replace("Z", "+00:00"))
+                    if abs((cur_dt - prev_dt).total_seconds()) < 5:
+                        continue
+                except:
+                    pass
+            deduped_events.append(ev)
+        for ev in deduped_events:
             try:
                 at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
             except:
@@ -756,12 +811,12 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
             if at_dt.tzinfo is None:
                 at_dt = at_dt.replace(tzinfo=timezone.utc)
             if ev["action"] in ("enter", "joined"):
-                enter_stack.append(at_dt)
+                # 只把今天的 enter 入栈
+                if at_dt >= today_start_utc:
+                    enter_stack.append(at_dt)
             elif ev["action"] in ("leave", "left"):
                 if enter_stack:
                     enter_dt = enter_stack.pop(0)  # FIFO: first enter pairs with first leave
-                    if enter_dt < today_start_utc:
-                        enter_dt = today_start_utc
                     end_dt = at_dt
                     dur = (end_dt - enter_dt).total_seconds()
                     if 0 < dur < 86400:
@@ -818,6 +873,17 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         members.values(),
         key=lambda m: (0 if m["status"] == "online" else 1, -(m["today_total_seconds"] or 0)),
     )
+
+    # ── 过滤被软删除的成员 ──
+    if deleted_names:
+        filtered = []
+        for m in sorted_members:
+            mn = m.get("standard_name", "").strip().lower().replace(" ", "")
+            rn = m.get("raw_name", "").strip().lower().replace(" ", "")
+            if mn in deleted_names or rn in deleted_names:
+                continue
+            filtered.append(m)
+        sorted_members = filtered
 
     for m in sorted_members:
         m.pop("last_action", None)
@@ -1316,9 +1382,9 @@ def resolve_display_name(raw_name: str, tenant_id: str = None) -> dict:
     if not _display_cache["mapping"] or now - _display_cache["ts"] > 30 or _display_cache.get("tenant_id") != tenant_id:
         conn = _get_conn()
         if tenant_id:
-            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display WHERE tenant_id = ?", (tenant_id,)).fetchall()
+            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display WHERE tenant_id = ? AND deleted=0", (tenant_id,)).fetchall()
         else:
-            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display").fetchall()
+            rows = conn.execute("SELECT raw_name, display_name, match_key, count_enabled, aliases FROM member_display WHERE deleted=0").fetchall()
         _display_cache["mapping"] = {
             r[0]: {"display": r[1], "key": r[2], "enabled": bool(r[3]), "aliases": json.loads(r[4] or "[]")}
             for r in rows

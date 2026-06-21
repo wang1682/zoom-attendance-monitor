@@ -259,7 +259,66 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     is_realtime = data_source == "metrics"
     metrics_online = bool(live_map)
 
+    # ── 从 live meetings 或 sharing_live 确定当前会议 meeting_id ──
+    current_meeting_id = None
+    live_meetings = live_data.get("meetings", [])
+    if live_meetings:
+        # Zoom Metrics API 返回的会议 id
+        mid = live_meetings[0].get("id")
+        if mid:
+            current_meeting_id = str(mid)
+    if not current_meeting_id:
+        # fallback: 从 sharing_live 当前活跃取
+        try:
+            from db import _get_conn
+            row = _get_conn().execute(
+                "SELECT meeting_id FROM sharing_live WHERE is_active=1 AND tenant_id=? ORDER BY id DESC LIMIT 1",
+                (tenant_id,),
+            ).fetchone()
+            if row:
+                current_meeting_id = str(row[0])
+        except Exception:
+            pass
+
+    # ── 从 sharing_live 当前活跃确定 session 起点（只算本次入场以来的数据） ──
+    session_start_after = None
+    try:
+        from db import _get_conn
+        share_row = _get_conn().execute(
+            "SELECT MIN(start_time) FROM sharing_live WHERE is_active=1 AND tenant_id=?",
+            (tenant_id,),
+        ).fetchone()
+        if share_row and share_row[0]:
+            # sharing_live 的 start_time 是 ISO 格式，直接作为筛选起点
+            session_start_after = share_row[0].replace("Z", "+00:00")
+    except Exception:
+        pass
+
+    # 如果 sharing_live 没有活跃共享，用当前会议最近的 enter 为起点
+    if not session_start_after and current_meeting_id:
+        try:
+            # 当天进入 time 起点（MYT 00:00 - 6h 回溯，和 db.py 保持一致）
+            from datetime import datetime, timezone, timedelta
+            _now_utc = datetime.now(timezone.utc)
+            _now_myt = _now_utc + timedelta(hours=8)
+            _today_start_myt = _now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+            _today_start_utc = _today_start_myt - timedelta(hours=8)
+            _query_start_utc = _today_start_utc - timedelta(hours=6)
+            _today_utc_start_str = _query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+            
+            row = _get_conn().execute(
+                "SELECT MAX(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
+                (current_meeting_id, tenant_id, _today_utc_start_str),
+            ).fetchone()
+            if row and row[0]:
+                session_start_after = row[0]
+        except Exception:
+            pass
+
     # ── 今日参会汇总（纯成员数据，不含班次） ──
+    # 当前会议统计（传 meeting_id + session_start_after 只统计本次 session）
+    summary_current = get_today_attendance_summary(tenant_id=tenant_id, meeting_id=current_meeting_id, session_start_after=session_start_after) if current_meeting_id else None
+    # 全天统计（不传 meeting_id，保留全量）
     summary = get_today_attendance_summary(tenant_id=tenant_id)
     members = summary.get("members", [])
 
@@ -365,7 +424,35 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         else:
             m["status"] = "offline"
 
-    # ── 格式化时间显示 ──
+    # ── 合并当前会议数据 ──
+    if summary_current:
+        current_members = summary_current.get("members", [])
+        current_map = {}
+        for cm in current_members:
+            sn = cm.get("standard_name", "")
+            if sn:
+                current_map[sn] = cm
+        for m in members:
+            sn = m.get("standard_name", "")
+            cm = current_map.get(sn)
+            if cm:
+                # 当前会议有数据 → 用当前会议的值覆盖第一列字段
+                m["first_join"] = cm.get("first_join", m.get("first_join"))
+                m["last_activity"] = cm.get("last_activity", m.get("last_activity"))
+                m["today_total_duration"] = cm.get("today_total_duration", m.get("today_total_duration"))
+                m["today_total_seconds"] = cm.get("today_total_seconds", 0)
+                m["join_count"] = cm.get("join_count", 0)
+                m["leave_count"] = cm.get("leave_count", 0)
+            else:
+                # 当前会议无数据 → 清空当前会议字段
+                m["first_join"] = None
+                m["last_activity"] = None
+                m["today_total_duration"] = "0m"
+                m["today_total_seconds"] = 0
+                m["join_count"] = 0
+                m["leave_count"] = 0
+
+    # ── 格式化时间显示（所有成员，不受 summary_current 有无影响） ──
     for m in members:
         m["first_join_display"] = _fmt_myt(m.get("first_join", ""))
         # 在线成员离开时间显示 —（不管 DB 有没有离开记录）
