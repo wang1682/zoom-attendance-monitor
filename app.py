@@ -3553,8 +3553,19 @@ def build_app() -> "FastAPI":
             request.session["tenant_id"] = "default"
             return RedirectResponse(url="/dashboard", status_code=303)
 
+        if role == "admin":
+            request.session["selected_tenant"] = "*"
+            request.session["tenant_id"] = "*"
+            return RedirectResponse(url="/dashboard", status_code=303)
+
         user_tenants = db.get_user_tenants(user["id"])
         if len(user_tenants) == 0:
+            # Fallback: use user.tenant_id directly
+            tenant_id = user.get("tenant_id", "")
+            if tenant_id:
+                request.session["selected_tenant"] = tenant_id
+                request.session["tenant_id"] = tenant_id
+                return RedirectResponse(url="/dashboard/tenant", status_code=303)
             db.log_security_event("login_success_no_tenant", user_id=user["id"], username=user["username"],
                                   ip=client_ip, result="failed", details="未分配租户")
             return RedirectResponse(url="/login?error=未分配任何租户，请联系管理员", status_code=303)

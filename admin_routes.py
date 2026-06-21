@@ -1181,9 +1181,9 @@ async def dashboard_admin_center(request: Request, user: dict = Depends(require_
 
 @router.get("/admin/tenants", response_class=HTMLResponse)
 async def admin_tenants(request: Request, user: dict = Depends(require_user)):
-    """Tenant management page."""
+    """Tenant management page — super_admin only."""
     role = user.get("role", "")
-    if role not in ("super_admin", "admin"):
+    if role != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     all_tenants = db.get_all_tenants()
     tenants = [_tenant_dict(t) for t in all_tenants]
