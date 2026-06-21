@@ -1003,9 +1003,9 @@ async def dashboard_alerts_page(request: Request, user: dict = Depends(require_u
 
 @router.get("/settings", response_class=HTMLResponse)
 async def dashboard_settings(request: Request, user: dict = Depends(require_user)):
-    """Settings page — system configuration (super_admin/admin)."""
+    """Settings page — system configuration (super_admin only)."""
     role = user.get("role", "")
-    if role not in ("super_admin", "admin"):
+    if role != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
 
     # Read current settings from DB
@@ -1045,9 +1045,9 @@ async def dashboard_settings(request: Request, user: dict = Depends(require_user
 
 @router.post("/settings/update")
 async def dashboard_settings_update(request: Request, user: dict = Depends(require_user)):
-    """Save system settings."""
+    """Save system settings (super_admin only)."""
     role = user.get("role", "")
-    if role not in ("super_admin", "admin"):
+    if role != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
 
     form = await request.form()
@@ -1314,10 +1314,10 @@ async def admin_users_toggle(request: Request, user_id: int,
 @router.post("/admin/users/{user_id}/delete")
 async def admin_users_delete(request: Request, user_id: int,
                              user: dict = Depends(require_user)):
-    """Delete a user. Only super_admin and admin can delete users."""
+    """Delete a user — super_admin only."""
     actor_role = user.get("role", "")
-    if actor_role not in ("super_admin", "admin"):
-        raise HTTPException(status_code=403, detail="权限不足")
+    if actor_role != "super_admin":
+        raise HTTPException(status_code=403, detail="仅超级管理员可删除用户")
     db.delete_user(user_id)
     return RedirectResponse(url="/dashboard/admin/users", status_code=303)
 
@@ -1427,11 +1427,13 @@ async def dashboard_users_toggle(request: Request, user_id: int,
 @router.post("/users/{user_id}/delete")
 async def dashboard_users_delete(request: Request, user_id: int,
                                  user: dict = Depends(require_user)):
-    """Delete a user — role-gated."""
+    """Delete a user — super_admin only."""
     actor_role = user.get("role", "user")
+    if actor_role != "super_admin":
+        raise HTTPException(status_code=403, detail="仅超级管理员可删除用户")
     target = db.get_user_by_id(user_id)
-    if not target or not _user_can_manage(actor_role, target):
-        raise HTTPException(status_code=403, detail="无权删除此用户")
+    if not target:
+        raise HTTPException(status_code=404, detail="用户不存在")
     # Audit log before deletion
     before = {"username": target.get("username", ""), "role": target.get("role", ""), "tenant_id": target.get("tenant_id", "default")}
     db.audit_log_action(tenant_id=target.get("tenant_id", "default"), action="user.delete",

@@ -158,19 +158,16 @@ class AuthService(BaseService):
     def available_tenants(self) -> list[dict[str, Any]]:
         """Return tenants visible to the current user.
 
-        - super_admin: all tenants
-        - admin: linked tenants (via user_tenants table)
+        - super_admin / admin: all tenants + "全部租户" option
         - user / viewer: own tenant only
         """
         import db  # lazy import to avoid circular dep
 
         ctx = self._require_context()
 
-        if ctx.is_super_admin():
-            return db.get_all_tenants()
-
-        if ctx.role == "admin":
-            return db.get_user_tenants(ctx.user_id)
+        if ctx.is_admin_or_above():
+            tenants = db.get_all_tenants()
+            return [{"id": "*", "display_name": "所有租户", "name": "所有租户"}] + tenants
 
         # user / viewer
         t = db.get_tenant(ctx.tenant_id)

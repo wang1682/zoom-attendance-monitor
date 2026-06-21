@@ -36,8 +36,8 @@
   </a>
   {% endif %}
 
-  <!-- ③ 系统设置 — super_admin / admin -->
-  {% if is_admin %}
+  <!-- ③ 系统设置 — super_admin only -->
+  {% if is_super %}
   <a href="/dashboard/settings" class="admin-card">
     <div class="admin-card-icon">⚙️</div>
     <div class="admin-card-body">

@@ -68,8 +68,8 @@ class AuthContext:
 
     @property
     def effective_tenant(self) -> str:
-        """super_admin uses selected_tenant (switchable), others use own tenant_id."""
-        if self.is_super_admin():
+        """super_admin / admin use selected_tenant (switchable), others use own tenant_id."""
+        if self.is_admin_or_above():
             return self.selected_tenant or self.tenant_id or "default"
         return self.tenant_id or "default"
 

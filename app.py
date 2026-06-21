@@ -3420,11 +3420,14 @@ def build_app() -> "FastAPI":
 
     def _effective_tenant_id(request):
         """统一获取当前请求的有效租户 ID
-        super_admin: 走 selected_tenant(可切换)→ 默认 default
+        super_admin/admin: 走 selected_tenant(可切换)→ 默认 default
+        "*" 表示全部租户（返回 None，下游查询不加过滤）
         tenant/viewer: 走 tenant_id(绑定固定)
         """
-        if request.session.get("role") == "super_admin":
-            return request.session.get("selected_tenant", "default")
+        role = request.session.get("role", "tenant")
+        if role in ("super_admin", "admin"):
+            tid = request.session.get("selected_tenant", "default")
+            return None if tid == "*" else tid
         return request.session.get("tenant_id", "default")
 
     app.state.get_effective_tenant_id = _effective_tenant_id
@@ -3593,16 +3596,17 @@ def build_app() -> "FastAPI":
     async def admin_select_tenant(request: Request,
                                    tenant_id: str = Form(...),
                                    next: str = Form("")):
-        """super_admin 切换当前管理的租户
-        校验:仅 super_admin 可调用，tenant_id 必须存在于 tenants 表
+        """super_admin / admin 切换当前管理的租户
+        支持 "所有租户"（*）选项
         """
         role = request.session.get("role", "tenant")
-        if role != "super_admin":
+        if role not in ("super_admin", "admin"):
             return RedirectResponse(url="/login", status_code=303)
-        # 校验 tenant 存在
-        t = db.get_tenant(tenant_id)
-        if not t:
-            return HTMLResponse("无效的租户 ID", status_code=400)
+        # 校验 tenant 存在（* 代表全部租户，跳过校验）
+        if tenant_id != "*":
+            t = db.get_tenant(tenant_id)
+            if not t:
+                return HTMLResponse("无效的租户 ID", status_code=400)
         request.session["selected_tenant"] = tenant_id
         request.session["tenant_id"] = tenant_id  # 保持兼容
         redirect_url = next or "/dashboard"

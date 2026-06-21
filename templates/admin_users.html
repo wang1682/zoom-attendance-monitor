@@ -129,9 +129,11 @@
             <form method="POST" action="/dashboard/users/{{ u.id }}/toggle" style="display:inline">
               <button class="dropdown-item danger" onclick="return confirm('确认{{ '禁用' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用' }}此用户？')">{{ '禁用用户' if u.is_active == 1 or u.is_active == 'true' or u.active == 'true' else '启用用户' }}</button>
             </form>
+            {% if is_super_admin %}
             <form method="POST" action="/dashboard/users/{{ u.id }}/delete" style="display:inline" onsubmit="return confirm('确认删除用户 {{ u.username|e }}？')">
               <button class="dropdown-item danger">删除用户</button>
             </form>
+            {% endif %}
           </div>
         </div>
         {% endif %}
