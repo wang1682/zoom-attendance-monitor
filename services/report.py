@@ -86,8 +86,10 @@ class ReportService:
                 raw = p.get("name", "").strip()
                 if not raw:
                     continue
-                rm = _db.resolve_display_name(raw, tenant_id)
-                std = rm.get("standard_name") or rm.get("display_name", raw)
+                from services.member import MemberService
+                ms = MemberService()
+                rm = ms.resolve_display(raw, tenant_id)
+                std = rm.get("display_name", raw)
                 grp = rm.get("group_name") or "未分组"
                 mins = p.get("online_minutes", 0)
                 participants.append((std, grp, mins))

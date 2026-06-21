@@ -213,6 +213,7 @@ class AlertService:
         standard_name = rm.get("display_name", ename)
         group_name = rm.get("group_name") or ""
         is_mapped = rm.get("is_configured", False)
+        sys.stderr.write(f"[PUSH] member_resolve tenant={tenant_id} raw={ename} configured={is_mapped} group={group_name}\n")
 
         user_key = pid or standard_name.strip().lower().replace(" ", "")
         dedup_key = f"webhook:{push_event}:{mid}:{user_key}:{event_ts[:16]}"
