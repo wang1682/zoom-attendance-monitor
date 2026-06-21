@@ -82,11 +82,25 @@ class ParticipantService:
             return None
         _PARTICIPANT_DEDUP.add(key)
 
-        return _db.save_participant(
+        result = _db.save_participant(
             meeting_id, name, email,
             action, action_time,
             source=source, tenant_id=tenant_id,
         )
+
+        # ── 同步更新 current_member_sessions（仅常规进出事件） ──
+        if result is not None and action in ("enter", "leave"):
+            _db.update_current_member_session(
+                tenant_id=tenant_id,
+                meeting_id=meeting_id,
+                name=name,
+                action=action,
+                action_time=action_time,
+                email=email,
+                source=source,
+            )
+
+        return result
 
     @staticmethod
     def save_webhook_participant(
