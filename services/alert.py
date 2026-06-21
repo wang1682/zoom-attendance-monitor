@@ -222,6 +222,20 @@ class AlertService:
             sys.stderr.flush()
             return
 
+        # ── sharing_ended: 检查是否存在 active sharing ──
+        if push_event == "sharing_ended":
+            conn_chk = _db._get_conn()
+            active = conn_chk.execute(
+                "SELECT id FROM sharing_live"
+                " WHERE tenant_id=? AND meeting_id=? AND user_name=? AND is_active=1"
+                " LIMIT 1",
+                (tenant_id, mid, ename),
+            ).fetchone()
+            if not active:
+                sys.stderr.write(f"[PUSH] sharing_ended ignored (no active sharing) tenant={tenant_id} mid={mid} user={ename}\n")
+                sys.stderr.flush()
+                return
+
         conn = _db._get_conn()
         already = conn.execute(
             "SELECT 1 FROM alert_sent WHERE alert_key=?", (dedup_key,)
