@@ -65,6 +65,8 @@
 .stat-item{background:var(--card);border:1px solid var(--cb);border-radius:10px;padding:10px 16px;flex:1;min-width:120px;text-align:center}
 .stat-item .stat-num{font-size:20px;font-weight:700;color:var(--text)}
 .stat-item .stat-label{font-size:11px;color:var(--tm);margin-top:2px}
+.danger-btn{color:var(--da)!important;border-color:var(--da)!important}
+.danger-btn:hover{background:var(--da-b)!important;color:#fff!important}
 </style>
 {% endblock %}
 {% block content %}
@@ -72,6 +74,11 @@
 <div class="page-header">
   <h1 class="page-title">成员身份中心</h1>
   <p class="page-subtitle">统一管理 Zoom 用户名映射 — 自动发现、快速映射、统一归并</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+    <button class="btn btn-sm" onclick="openMapModal('')">新增成员</button>
+    <button class="btn btn-sm" onclick="showUnmappedTab()">发现未配置</button>
+    <button class="btn btn-sm danger-btn" onclick="cleanupTestData()">清理测试数据</button>
+  </div>
 </div>
 
 <!-- Stats Bar -->
@@ -448,13 +455,35 @@ async function saveMember(){
 async function deleteMemberById(memberId){
   const member = membersData.find(m => m.id === memberId);
   const name = member ? member.display_name : "";
-  if(!confirm("确认删除成员配置？\n\n此操作只会删除显示名/分组/别名配置，不会删除历史出勤记录。")) return;
+  if(!confirm(\`确认删除成员配置「\${name}」？\\n\\n将删除：\\n✓ display_name\\n✓ group_id\\n✓ aliases\\n\\n不会删除：\\n✗ zoom_participants\\n✗ zoom_events\\n✗ sharing_live\\n✗ 历史出勤记录\`)) return;
   const r = await fetch("/api/v3/members/display/" + memberId, {method: "DELETE"});
   const d = await r.json();
   if(d.ok){
     loadAll();
   } else {
     alert(d.error || "删除失败");
+  }
+}
+
+function showUnmappedTab(){
+  document.querySelector(".ml")?.scrollIntoView({behavior:"smooth"});
+  document.getElementById("unmappedList")?.scrollIntoView({behavior:"smooth"});
+}
+
+async function cleanupTestData(){
+  if(!confirm("确认清理所有测试数据？\\n\\n匹配规则（大小写敏感）：\\n• raw_name LIKE 'TEST_%'\\n• raw_name LIKE 'Test_%'\\n• raw_name LIKE '%_Test'\\n\\n此操作不会删除任何历史出勤记录。")) return;
+  const r = await fetch("/api/v3/members/clean-test-data", {method: "POST"});
+  const d = await r.json();
+  if(d.ok){
+    if(d.deleted > 0){
+      const names = d.items.map(i => i.display_name).join("、");
+      alert(\`已清理 \${d.deleted} 条测试成员配置:\\n\${names}\`);
+    } else {
+      alert("未发现匹配的测试数据");
+    }
+    loadAll();
+  } else {
+    alert(d.error || "清理失败");
   }
 }
 

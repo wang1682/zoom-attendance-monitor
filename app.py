@@ -2455,6 +2455,17 @@ def build_app() -> "FastAPI":
         result = ms.delete_display_name(item_id, tenant_id)
         return result
 
+    @app.post("/api/v3/members/clean-test-data")
+    async def api_v3_members_clean_test(request: Request):
+        """批量清理测试成员数据(只删除 member_display, 不碰历史表)"""
+        from services.member import MemberService
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        if not tenant_id:
+            return {"ok": False, "error": "无法识别租户"}
+        ms = MemberService()
+        result = ms.batch_delete_test_data(tenant_id)
+        return result
+
     @app.get("/members", response_class=HTMLResponse)
     async def members_page(request: Request):
         return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})

@@ -381,6 +381,33 @@ class MemberService:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def batch_delete_test_data(self, tenant_id: str) -> dict:
+        """批量删除测试数据(只清理 member_display, 不碰历史表)
+        
+        匹配规则: raw_name LIKE 'TEST_%' OR 'Test_%' OR '%_Test'
+        """
+        conn = db._get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT id, raw_name, display_name FROM member_display
+                   WHERE tenant_id = ?
+                     AND (raw_name LIKE 'TEST_%' OR raw_name LIKE 'Test_%' OR raw_name LIKE '%_Test')""",
+                (tenant_id,),
+            ).fetchall()
+            if not rows:
+                return {"ok": True, "deleted": 0, "items": []}
+            ids = [r["id"] for r in rows]
+            placeholders = ",".join("?" for _ in ids)
+            conn.execute(
+                f"DELETE FROM member_display WHERE id IN ({placeholders})",
+                ids,
+            )
+            conn.commit()
+            items = [{"id": r["id"], "raw_name": r["raw_name"], "display_name": r["display_name"]} for r in rows]
+            return {"ok": True, "deleted": len(ids), "items": items}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     def assign_group(
         self, display_name: str, group_name: str, tenant_id: str
     ) -> dict:
