@@ -598,6 +598,7 @@ class ZoomService(BaseService):
             group_id: str
         """
         import db
+        import sys
         live = await self.get_live_meetings(tenant_id)
         now_utc = datetime.now(timezone.utc)
         sharers = []
@@ -723,14 +724,89 @@ class ZoomService(BaseService):
                     "email": "",
                 })
 
-            # ── 批量标记 stale ──
+            # ── 批量标记 stale + 补推 sharing_ended ──
             if stale_ids:
+                from datetime import timezone as tz_myt
+                from telegram_push import send_message as _push_msg
+
+                MYT = tz_myt(timedelta(hours=8))
                 placeholders = ",".join("?" for _ in stale_ids)
+
+                # 1. 先查这些 stale 记录的信息（user_name, meeting_id, id）
+                stale_info = conn.execute(
+                    f"SELECT id, user_name, meeting_id, tenant_id, start_time, content, user_id FROM sharing_live WHERE id IN ({placeholders})",
+                    (*stale_ids,),
+                ).fetchall()
+
+                # 2. SQL UPDATE is_active=0,end_time=now
                 conn.execute(
                     f"UPDATE sharing_live SET is_active=0, end_time=? WHERE id IN ({placeholders})",
                     (now_str_utc, *stale_ids),
                 )
                 conn.commit()
+
+                # 3. 逐一补推 sharing_ended（仅限本次从 1→0 的记录）
+                for si in stale_info:
+                    sid, suname, smid, stenant, sstart, scontent, suid = si
+                    try:
+                        stub_resolved = db.resolve_display_name(suname, tenant_id=stenant)
+                        sd_name = stub_resolved.get("display_name", suname)
+                        sd_group = stub_resolved.get("group_name", "")
+
+                        # 构建文案（复用 handle_webhook_event 风格）
+                        sdt = now_utc.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+                        group_tag = f"【{sd_group}】" if sd_group else ""
+                        content_tag = f"\n📄 内容: {scontent}" if scontent else ""
+                        text = (
+                            f"🖥 *🖥 {sd_name} 结束共享屏幕{group_tag}*\n\n"
+                            f"👆 {sd_name}\n"
+                            f"🔔 会议: {smid}\n"
+                            f"⏰ {sdt}"
+                            f"{content_tag}\n"
+                            f"⚙️ 系统自动检测（未收到 Zoom ended 事件）"
+                        )
+
+                        # 获取推送目标
+                        channels = db.get_tenant_channels(stenant) if stenant else []
+                        pushed = False
+                        for ch in channels:
+                            if not ch.get("is_enabled", 1):
+                                continue
+                            c_bot = ch.get("bot_token", "")
+                            c_cid = ch.get("chat_id", "")
+                            if c_bot and c_cid:
+                                _result = _push_msg(text, chat_id=c_cid, bot_token=c_bot)
+                                if _result.get("ok"):
+                                    pushed = True
+
+                        # 写入 alerts 表（复用 handle_webhook_event 风格）
+                        safe_text = lambda v: str(v).encode("utf-8", "ignore").decode("utf-8", "ignore") if v else ""
+                        conn.execute(
+                            "INSERT INTO alerts ("
+                            " alert_type, severity, title, message, related_name,"
+                            " success, created_at, tenant_id, event_type,"
+                            " status, error_message"
+                            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                "webhook_push",
+                                "info",
+                                safe_text(f"{sd_name} 结束共享屏幕（系统检测）"),
+                                safe_text(text),
+                                safe_text(sd_name),
+                                1 if pushed else 0,
+                                now_utc.isoformat(),
+                                stenant or "default",
+                                "sharing_ended",
+                                "sent" if pushed else "failed",
+                                "" if pushed else "no_channel_or_send_failed",
+                            ),
+                        )
+                        conn.commit()
+                        sys.stderr.write(f"[STALE_END_PUSH] sharing_live.id={sid} {sd_name} ended pushed={pushed}\n")
+                    except Exception as e:
+                        sys.stderr.write(f"[STALE_END_PUSH] error for id={sid}: {e}\n")
+
+                sys.stderr.flush()
         except Exception:
             pass
 
