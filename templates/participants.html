@@ -9,6 +9,9 @@
 <style>
 .group-select{font-size:12px;padding:3px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer;max-width:140px}
 .group-select:focus{outline:none;border-color:var(--pr)}
+/* 删除按钮 — 常驻显示，不需要 hover */
+.ma-del{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid rgba(239,68,68,.2);background:rgba(239,68,68,.06);color:#f87171;white-space:nowrap;transition:all .15s ease;font-weight:500}
+.ma-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.35);color:#ef4444;box-shadow:0 1px 4px rgba(239,68,68,.1)}
 </style>
 
   {# ── 标题 ── #}
@@ -58,6 +61,7 @@
     <th>最近活动<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>离开时间<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>邮箱</th>
+    <th style="width:60px">操作</th>
   </tr>
   </thead>
   <tbody id="memberTable">
@@ -105,6 +109,7 @@
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
     <td class="td-mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ m.get("email", "") or "—" }}</td>
+    <td><button class="ma-del" onclick="deleteMember(this)" data-name="{{ m.get('standard_name','') }}">🗑 删除</button></td>
   </tr>
   {% endfor %}
   </tbody>
@@ -285,6 +290,22 @@ function deleteGroup(id, name) {
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// ── 删除成员 ──
+function deleteMember(btn) {
+  var name = btn.getAttribute('data-name');
+  if (!name || !confirm('确定删除成员「' + name + '」？\n该操作只删除显示配置，不影响历史记录。')) return;
+  fetch('/api/v3/members/' + encodeURIComponent(name), {method: 'DELETE'})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if (j.ok) {
+        btn.closest('.member-row').remove();
+      } else {
+        alert(j.error || '删除失败');
+      }
+    })
+    .catch(function(){ alert('请求失败'); });
+}
 </script>
 {% endblock %}
 
