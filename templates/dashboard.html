@@ -143,15 +143,22 @@
     const res = await fetch(BASE);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const d = await res.json();
-    const kpi = d.kpi || {};
+    const live = d.live_kpi || {};
+    const stats = d.stats_kpi || {};
 
-    document.getElementById('kpi-today-participants').textContent = kpi.today_participants ?? 0;
-    document.getElementById('kpi-online-now').textContent = kpi.online_now ?? 0;
-    document.getElementById('kpi-today-alerts').textContent = kpi.today_alerts ?? 0;
-    document.getElementById('kpi-today-events').textContent = kpi.today_events ?? 0;
+    // ── KPI 卡片（按口径标注） ──
+    document.getElementById('kpi-today-participants').textContent = stats.today_participants ?? 0;
+    document.getElementById('kpi-today-participants').dataset.dataSource = 'history';
+    document.getElementById('kpi-today-participants').after(Object.assign(document.createElement('div'), {className:'data-source-tag', textContent:'🏛 history', style:'font-size:9px;color:var(--text-muted);margin-top:1px'}));
+
+    document.getElementById('kpi-online-now').textContent = live.current_online ?? 0;
+    document.getElementById('kpi-online-now').dataset.dataSource = 'live';
+
+    document.getElementById('kpi-today-alerts').textContent = d.stats_kpi?.today_alerts ?? 0;
+    document.getElementById('kpi-today-events').textContent = d.stats_kpi?.today_events ?? 0;
 
     // ── 活跃会议 ──
-    const meetings = d.active_meetings || [];
+    const meetings = live.active_meetings || [];
     const mt = document.getElementById('active-meetings-table');
     if (meetings.length) {
       let h = '<table class="data-table"><thead><tr><th>主题</th><th>在线</th><th>开始</th><th>Meeting ID</th></tr></thead><tbody>';

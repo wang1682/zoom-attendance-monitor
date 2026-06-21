@@ -442,21 +442,18 @@ def build_app() -> "FastAPI":
         ]
         return total_online, meetings
 
-    @app.get("/", response_class=RedirectResponse)
-    async def landing(request: Request):
-        """Landing Page - 重定向到数据看板"""
-        return RedirectResponse(url="/dashboard")
+    # ── 口径分离缓存 ───────────────────────────────────────────────────────
+    _live_cache = {}
+    _live_cache_time = 0
+    _stats_cache = {}
+    _stats_cache_time = 0
 
-    async def _compute_kpi_data(tid: str) -> dict:
-        """Compute KPI data for tenant dashboard - all queries tenant-isolated.
-           Uses Webhook reconstruction as base, Metrics API as Business enhancement."""
-        t_kpi = _t_ms()
+    async def _compute_live_kpi(tid: str) -> dict:
+        """Compute LIVE KPI — current online, active meetings.
+           data_source: metrics / webhook / live.
+           NEVER reads zoom_participants or zoom_events."""
         t0 = _t_ms()
-        today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
-        _log_perf("kpi_today_participants", _t_ms() - t0)
-        t_db = _t_ms()
-        
-        # ── Online - Single Source of Truth ──
+        source = "metrics"
         try:
             if '/app/data' not in sys.path:
                 sys.path.insert(0, '/app/data')
@@ -466,12 +463,184 @@ def build_app() -> "FastAPI":
             )
             current_online = online_data["online_count"]
             active_meetings = online_data["active_meetings"]
-            _log_perf("kpi_service_online", _t_ms() - t_db)
         except Exception:
-            # Fallback to old logic
             online_data = db.get_current_online(tid)
             current_online = online_data["online_count"]
             active_meetings = online_data["active_meetings"]
+            source = "webhook"
+        _log_perf("kpi_live", _t_ms() - t0)
+        return {
+            "current_online": current_online,
+            "active_meetings_count": len(active_meetings) if isinstance(active_meetings, list) else (active_meetings or 0),
+            "active_meetings": active_meetings,
+            "data_source": source,
+        }
+
+    async def _compute_stats_kpi(tid: str) -> dict:
+        """Compute STATS KPI — today accumulated stats.
+           data_source: history / summary.
+           NEVER reads real-time Metrics API or sharing_live for counts."""
+        t0 = _t_ms()
+        today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
+        _log_perf("kpi_stats_participants", _t_ms() - t0)
+
+        conn = db._get_conn()
+        myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        t1 = _t_ms()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+            (myt_day_start_utc, tid),
+        ).fetchone()
+        today_events = row["c"] if row else 0
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ? AND created_at >= ? AND alert_type NOT IN ('webhook_push')",
+            (tid, myt_day_start_utc),
+        ).fetchone()
+        today_alerts = row["c"] if row else 0
+        _log_perf("kpi_stats_counts", _t_ms() - t1)
+
+        t2 = _t_ms()
+        recent_events = db.get_recent_events(limit=5, tenant_id=tid)
+        recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tid)
+        _log_perf("kpi_stats_recent", _t_ms() - t2)
+
+        t3 = _t_ms()
+        participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
+        seen = {}
+        for p in participants:
+            name = p.get("name") or p.get("user_name", "")
+            if name and name not in seen:
+                seen[name] = p
+        participants_deduped = list(seen.values())
+        _log_perf("kpi_stats_participants_dedup", _t_ms() - t3)
+
+        return {
+            "today_participants": today_participants,
+            "today_events": today_events,
+            "today_alerts": today_alerts,
+            "recent_events": recent_events,
+            "recent_alerts": recent_alerts,
+            "participants": participants_deduped,
+            "data_source": "history",
+        }
+
+    @app.get("/dashboard/data")
+    async def dashboard_data_api(request: Request):
+        """口径分离的 KPI 数据:
+           live_kpi = 仅实时源 (Metrics / sharing_live)
+           stats_kpi = 仅历史源 (zoom_participants / zoom_events)"""
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        if not tenant_id:
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"error": "no tenant"}, status_code=400)
+
+        now_ts = time.time()
+        # live cache
+        if tenant_id in _live_cache and (now_ts - _live_cache_time) < 30:
+            live_kpi = _live_cache[tenant_id]
+        else:
+            live_kpi = await _compute_live_kpi(tenant_id)
+            _live_cache[tenant_id] = live_kpi
+            _live_cache_time = now_ts
+        # stats cache
+        if tenant_id in _stats_cache and (now_ts - _stats_cache_time) < 30:
+            stats_kpi = _stats_cache[tenant_id]
+        else:
+            stats_kpi = await _compute_stats_kpi(tenant_id)
+            _stats_cache[tenant_id] = stats_kpi
+            _stats_cache_time = now_ts
+
+        return {"live_kpi": live_kpi, "stats_kpi": stats_kpi}
+
+    @app.get("/", response_class=RedirectResponse)
+    async def landing(request: Request):
+        """Landing Page - 重定向到数据看板"""
+        return RedirectResponse(url="/dashboard")
+
+    async def _compute_live_kpi(tid: str) -> dict:
+        """Compute LIVE KPI — current online, active meetings.
+           data_source: metrics / webhook / live.
+           NEVER reads zoom_participants or zoom_events."""
+        t0 = _t_ms()
+        source = "metrics"
+        try:
+            if '/app/data' not in sys.path:
+                sys.path.insert(0, '/app/data')
+            import service
+            online_data = await asyncio.wait_for(
+                service.get_online_state(tid), timeout=5.0
+            )
+            current_online = online_data["online_count"]
+            active_meetings = online_data["active_meetings"]
+        except Exception:
+            online_data = db.get_current_online(tid)
+            current_online = online_data["online_count"]
+            active_meetings = online_data["active_meetings"]
+            source = "webhook"
+        _log_perf("kpi_live", _t_ms() - t0)
+        return {
+            "current_online": current_online,
+            "active_meetings_count": len(active_meetings) if isinstance(active_meetings, list) else (active_meetings or 0),
+            "active_meetings": active_meetings,
+            "data_source": source,
+        }
+
+    async def _compute_stats_kpi(tid: str) -> dict:
+        """Compute STATS KPI — today accumulated stats.
+           data_source: history / summary.
+           NEVER reads real-time Metrics API or sharing_live for counts."""
+        t0 = _t_ms()
+        today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
+        _log_perf("kpi_stats_participants", _t_ms() - t0)
+
+        conn = db._get_conn()
+        myt_day_start_utc = datetime.now(MYT).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        t1 = _t_ms()
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM zoom_events WHERE created_at >= ? AND tenant_id = ?",
+            (myt_day_start_utc, tid),
+        ).fetchone()
+        today_events = row["c"] if row else 0
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM alerts WHERE tenant_id = ? AND created_at >= ? AND alert_type NOT IN ('webhook_push')",
+            (tid, myt_day_start_utc),
+        ).fetchone()
+        today_alerts = row["c"] if row else 0
+        _log_perf("kpi_stats_counts", _t_ms() - t1)
+
+        t2 = _t_ms()
+        recent_events = db.get_recent_events(limit=5, tenant_id=tid)
+        recent_alerts = db.get_recent_alerts(limit=5, tenant_id=tid)
+        _log_perf("kpi_stats_recent", _t_ms() - t2)
+
+        t3 = _t_ms()
+        participants = dedup_participants(db.get_today_participants(limit=200, tenant_id=tid))
+        seen = {}
+        for p in participants:
+            name = p.get("name") or p.get("user_name", "")
+            if name and name not in seen:
+                seen[name] = p
+        participants_deduped = list(seen.values())
+        _log_perf("kpi_stats_participants_dedup", _t_ms() - t3)
+
+        return {
+            "today_participants": today_participants,
+            "today_events": today_events,
+            "today_alerts": today_alerts,
+            "recent_events": recent_events,
+            "recent_alerts": recent_alerts,
+            "participants": participants_deduped,
+            "data_source": "history",
+        }
+
+    async def _compute_kpi_data(tid: str) -> dict:
+        """Compute KPI data for tenant dashboard — now only stats (history) portion.
+           Live KPI split to /dashboard/data endpoint."""
+        t_kpi = _t_ms()
+        t0 = _t_ms()
+        today_participants = len(dedup_participants(db.get_today_participants(limit=10000, tenant_id=tid)))
+        _log_perf("kpi_today_participants", _t_ms() - t0)
+        t_db = _t_ms()
 
         # ── No longer call per-tenant Metrics API separately — service.get_online_state already handles it
         conn = db._get_conn()
@@ -510,14 +679,13 @@ def build_app() -> "FastAPI":
         _log_perf("kpi_total", _t_ms() - t_kpi)
         return {
             "today_participants": today_participants,
-            "current_online": current_online,
             "today_events": today_events,
             "today_alerts": today_alerts,
-            "active_meetings": active_meetings,
             "recent_events": recent_events,
             "push_configured": push_configured,
             "push_channel_count": push_channel_count,
             "participants": participants_deduped,
+            "data_source": "history",
         }
 
     async def _compute_setup_status(tid: str) -> dict:
@@ -674,45 +842,7 @@ def build_app() -> "FastAPI":
         return demo.get_demo_stats()
 
     # ── Dashboard JSON API (JS polling) ───────────────────────────────────────
-    # In-memory cache for Zoom live data: key=tenant_id, value=cached result
-    _dash_cache: dict = {}
-    _dash_cache_time: dict = {}
-    DASH_CACHE_TTL = 30  # seconds
-
-    @app.get("/dashboard/data")
-    async def dashboard_data_api(request: Request):
-        """JSON endpoint for dashboard JS polling - tenant-scoped."""
-        t_total = time.monotonic()
-
-        if settings.demo_mode:
-            ...
-
-        tid = request.app.state.get_effective_tenant_id(request)
-        now = time.monotonic()
-
-        # ── KPI 级别缓存 ──
-        cached = _dash_cache.get(tid)
-        if cached and (now - _dash_cache_time.get(tid, 0)) < DASH_CACHE_TTL:
-            kpi = cached
-        else:
-            kpi = await _compute_kpi_data(tid)
-            _dash_cache[tid] = kpi
-            _dash_cache_time[tid] = now
-
-        _log_perf("dashboard_total", (time.monotonic() - t_total) * 1000)
-        return {
-            "kpi": {
-                "today_participants": kpi["today_participants"],
-                "online_now": kpi["current_online"],
-                "today_events": kpi["today_events"],
-                "today_alerts": kpi["today_alerts"],
-            },
-            "active_meetings": kpi["active_meetings"],
-            "recent_events": kpi["recent_events"],
-            "participants": kpi["participants"],
-        }
-
-    # ── 生产数据页面 ───────────────────────────────────────────────────────────
+    # In-memory cache for Zoom live data: key=tenant_id, value=cached result    # ── 生产数据页面 ───────────────────────────────────────────────────────────
     @app.get("/events", response_class=HTMLResponse)
     async def events_page(request: Request):
         if settings.demo_mode:
@@ -2201,12 +2331,13 @@ def build_app() -> "FastAPI":
                         break
                 if m["email"]:
                     break
-            m["is_online"] = nm in online_names or any(
-                a in online_names for a in (m.get("aliases") or [])
+            m['is_online'] = nm in online_names or any(
+                a in online_names for a in (m.get('aliases') or [])
             )
+            m['is_online_source'] = '/api/v3/live' if m['is_online'] else '/api/v3/live:no_match'
             total_sec = 0
-            latest = ""
-            aliases_list = [m["raw_name"]] + (m.get("aliases") or [])
+            latest = ''
+            aliases_list = [m['raw_name']] + (m.get('aliases') or [])
             for alias in aliases_list:
                 total_sec += today_secs.get(alias, 0)
                 if not total_sec:
@@ -2215,7 +2346,7 @@ def build_app() -> "FastAPI":
                         if k.lower() == alias.lower():
                             total_sec += v
                             break
-                als = last_activity_map.get(alias, "")
+                als = last_activity_map.get(alias, '')
                 if not als:
                     for k, v in last_activity_map.items():
                         if k.lower() == alias.lower() and v:
@@ -2283,11 +2414,17 @@ def build_app() -> "FastAPI":
                 except:
                     pass
             m["today_seconds"] = total_sec
-            m["today_total_duration"] = fmt_seconds(total_sec)
-            m["last_activity"] = latest
+            m['today_seconds_source'] = today_secs_source
+            m['join_leave_source'] = 'zoom_participants:enter+leave'
+            m['today_total_seconds'] = m['today_seconds']
+            m['today_total_seconds_source'] = today_secs_source
+            m['live_only'] = m['is_online'] and total_sec == 0 and not has_today_event
+            m['data_gap'] = m['live_only']
+            m['data_gap_reason'] = 'online_from_live_but_no_history_session' if m['live_only'] else ''
+            m['last_activity'] = latest
             # 保证 last_activity >= first_join
             if fj and (not latest or fj > latest):
-                m["last_activity"] = fj
+                m['last_activity'] = fj
 
         items.sort(key=lambda m: (
             0 if m.get("is_online") else 1,
@@ -2978,12 +3115,21 @@ def build_app() -> "FastAPI":
         return {
             "ok": True,
             "participant_count": participant_count,
+            "participant_count_source": "historical",  # always from zoom_participants (today range)
             "online_count": online_count,
+            "online_count_source": "live",  # from ZoomService or sharing_live
             "join_count": join_count,
+            "join_count_source": "historical",  # from zoom_participants
             "leave_count": leave_count,
+            "leave_count_source": "historical",  # from zoom_participants
             "participants": participants,
             "sharing_count": sharing_count,
             "meetings": meetings,
+            "data_source_summary": {
+                "online_count": "live (ZoomService or sharing_live)",
+                "participant_count": "historical (zoom_participants today range)",
+                "join/leave_count": "historical (zoom_participants today range)",
+            },
         }
 
     # ── 多租户总览(super_admin 专用) ────────────────────────────────────
