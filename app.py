@@ -2444,6 +2444,17 @@ def build_app() -> "FastAPI":
         conn.commit()
         return {"ok": True}
 
+    @app.delete("/api/v3/members/display/{item_id}")
+    async def api_v3_members_del_by_id(item_id: int, request: Request):
+        """按 id 删除成员映射(带租户校验)"""
+        from services.member import MemberService
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        if not tenant_id:
+            return {"ok": False, "error": "无法识别租户"}
+        ms = MemberService()
+        result = ms.delete_display_name(item_id, tenant_id)
+        return result
+
     @app.get("/members", response_class=HTMLResponse)
     async def members_page(request: Request):
         return tmpl.TemplateResponse(request, "members.html", {"brand": BRAND})

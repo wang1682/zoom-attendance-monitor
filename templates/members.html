@@ -254,7 +254,7 @@ function renderMembers(members){
           <option value="${curVal}">${curLabel}</option>
           ${groupOptsAll}
         </select>
-        <button class="ma-del" onclick="deleteMember('${esc(m.display_name)}')">✕</button>
+        <button class="ma-del" onclick="deleteMemberById(${m.id})">删除</button>
       </div>
       ${aliasTags ? `<div class="member-aliases">${aliasTags}</div>` : ''}
     </div>`;
@@ -445,9 +445,11 @@ async function saveMember(){
   }
 }
 
-async function deleteMember(displayName){
-  if(!confirm("确定删除成员「" + displayName + "」？此操作不可撤销。")) return;
-  const r = await fetch("/api/v3/members/" + encodeURIComponent(displayName), {method: "DELETE"});
+async function deleteMemberById(memberId){
+  const member = membersData.find(m => m.id === memberId);
+  const name = member ? member.display_name : "";
+  if(!confirm("确认删除成员配置？\n\n此操作只会删除显示名/分组/别名配置，不会删除历史出勤记录。")) return;
+  const r = await fetch("/api/v3/members/display/" + memberId, {method: "DELETE"});
   const d = await r.json();
   if(d.ok){
     loadAll();
