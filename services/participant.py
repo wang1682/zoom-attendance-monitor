@@ -165,13 +165,32 @@ class ParticipantService:
         记录 sharing_started 事件。
 
         逻辑：
-        1. 先关闭同租户+同 meeting+同 user_id 的旧 is_active 记录
-        2. 插入新记录
+        1. 先关闭同租户+同 meeting+同 user_name 的旧 is_active 记录
+        2. 如果已经有 active 记录，update start_time 而非 INSERT（防重复）
+        3. 否则插入新记录
         """
         conn = _db._get_conn()
         now_iso = datetime.now(timezone.utc).isoformat()
 
         if tenant_id:
+            # 先检查是否已有 active 记录 → 防重复
+            existing = conn.execute(
+                "SELECT id FROM sharing_live "
+                "WHERE meeting_id=? AND user_name=? AND is_active=1 AND tenant_id=?",
+                (meeting_id, user_name, tenant_id),
+            ).fetchone()
+
+            if existing:
+                # 已有记录 → 更新 start_time，不 INSERT
+                conn.execute(
+                    "UPDATE sharing_live SET start_time=?, content=?, user_id=?, updated_at=? "
+                    "WHERE id=? AND tenant_id=?",
+                    (start_time, content, user_id, now_iso, existing[0], tenant_id),
+                )
+                conn.commit()
+                return existing[0]
+
+            # 先关闭同 meeting+同 user_name 的旧记录（保险）
             conn.execute(
                 "UPDATE sharing_live SET is_active=0, end_time=?, updated_at=? "
                 "WHERE meeting_id=? AND user_name=? AND is_active=1 AND tenant_id=?",

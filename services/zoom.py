@@ -650,15 +650,20 @@ class ZoomService(BaseService):
                     if uid:
                         online_ids.add(uid)
 
-            # 查 sharing_live 并交叉校验
+            # 查 sharing_live 并交叉校验（去重：同 tenant+meeting+user_name 只取最新一条）
             rows = conn.execute(
                 "SELECT sl.*, COALESCE(mg.name, '') AS group_name, COALESCE(md.group_id, '') AS group_id "
                 "FROM sharing_live sl "
                 "LEFT JOIN member_display md ON (md.raw_name=sl.user_name OR md.display_name=sl.user_name) AND md.tenant_id=sl.tenant_id "
                 "LEFT JOIN member_groups mg ON mg.id=md.group_id AND mg.tenant_id=md.tenant_id "
                 "WHERE sl.tenant_id=? AND sl.is_active=1 "
+                "AND sl.id IN ("
+                "  SELECT MAX(id) FROM sharing_live "
+                "  WHERE is_active=1 AND tenant_id=? "
+                "  GROUP BY tenant_id, meeting_id, user_name"
+                ") "
                 "ORDER BY sl.start_time DESC",
-                (tenant_id,),
+                (tenant_id, tenant_id),
             ).fetchall()
 
             seen_raw = {s.get("raw_name", "").lower() for s in sharers}
