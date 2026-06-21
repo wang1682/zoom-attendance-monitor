@@ -206,11 +206,13 @@ class AlertService:
         mid = str(obj.get("id", ""))
         event_ts = sdt or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        # resolve member
-        rm = _db.resolve_display_name(ename, tenant_id)
-        standard_name = rm.get("standard_name") or rm.get("display_name", ename)
+        # resolve member（统一走 MemberService，tenant-aware）
+        from services.member import MemberService
+        ms = MemberService()
+        rm = ms.resolve_display(ename, tenant_id)
+        standard_name = rm.get("display_name", ename)
         group_name = rm.get("group_name") or ""
-        is_mapped = rm.get("is_mapped", False)
+        is_mapped = rm.get("is_configured", False)
 
         user_key = pid or standard_name.strip().lower().replace(" ", "")
         dedup_key = f"webhook:{push_event}:{mid}:{user_key}:{event_ts[:16]}"

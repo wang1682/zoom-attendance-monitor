@@ -78,14 +78,14 @@ class MemberService:
         if name in mapping:
             m = mapping[name]
             return {"display_name": m["display"], "count_enabled": m["enabled"],
-                    "raw_name": name, "group_name": m["group"]}
+                    "raw_name": name, "group_name": m["group"], "is_configured": True}
 
         # 2. Match on match_key (lowercase, no spaces)
         key = re.sub(r"\s+", "", name.lower())
         for raw, m in mapping.items():
             if m["key"] == key:
                 return {"display_name": m["display"], "count_enabled": m["enabled"],
-                        "raw_name": name, "group_name": m["group"]}
+                        "raw_name": name, "group_name": m["group"], "is_configured": True}
 
         # 3. Match on aliases
         name_lower = name.lower().replace(" ", "")
@@ -93,16 +93,16 @@ class MemberService:
             alias_list = [a.lower().replace(" ", "") for a in m.get("aliases", [])]
             if name_lower in alias_list:
                 return {"display_name": m["display"], "count_enabled": m["enabled"],
-                        "raw_name": name, "group_name": m["group"]}
+                        "raw_name": name, "group_name": m["group"], "is_configured": True}
 
         # 4. Fallback — try dedup with same match_key
         for raw, m in mapping.items():
             if m["key"] == key:
                 return {"display_name": m["display"], "count_enabled": m["enabled"],
-                        "raw_name": name, "group_name": m["group"]}
+                        "raw_name": name, "group_name": m["group"], "is_configured": True}
 
-        # 5. Last resort
-        return {"display_name": name, "count_enabled": True, "raw_name": name, "group_name": ""}
+        # 5. Last resort — not configured
+        return {"display_name": name, "count_enabled": True, "raw_name": name, "group_name": "", "is_configured": False}
 
     # ──────────────────────────────────────────
     # 成员列表（含在线状态合并）
