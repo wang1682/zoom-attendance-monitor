@@ -307,7 +307,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             _today_utc_start_str = _query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
             
             row = _get_conn().execute(
-                "SELECT MAX(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
+                "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
                 (current_meeting_id, tenant_id, _today_utc_start_str),
             ).fetchone()
             if row and row[0]:
@@ -439,6 +439,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                 # 当前会议有数据 → 用当前会议的值覆盖第一列字段
                 m["first_join"] = cm.get("first_join", m.get("first_join"))
                 m["last_activity"] = cm.get("last_activity", m.get("last_activity"))
+                m["last_leave_time"] = cm.get("last_leave_time", m.get("last_leave_time"))
                 m["today_total_duration"] = cm.get("today_total_duration", m.get("today_total_duration"))
                 m["today_total_seconds"] = cm.get("today_total_seconds", 0)
                 m["join_count"] = cm.get("join_count", 0)
@@ -447,6 +448,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                 # 当前会议无数据 → 清空当前会议字段
                 m["first_join"] = None
                 m["last_activity"] = None
+                m["last_leave_time"] = None
                 m["today_total_duration"] = "0m"
                 m["today_total_seconds"] = 0
                 m["join_count"] = 0

@@ -718,6 +718,7 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 "join_count": 0,
                 "leave_count": 0,
                 "last_activity": None,
+                "last_leave_time": None,
                 "last_action": None,
                 "email": "",
                 "raw_events": [],
@@ -745,6 +746,8 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         elif action in ("leave", "left"):
             if at_dt >= today_start_utc:
                 m["leave_count"] += 1
+                if m["last_leave_time"] is None or at > m["last_leave_time"]:
+                    m["last_leave_time"] = at
             m["last_action"] = "leave"
 
         # ── 更新 email：用今天数据里最新一条（按 action_time） ──
