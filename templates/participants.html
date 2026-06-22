@@ -38,14 +38,15 @@
     <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
       <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
       <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
-      共 <strong style="color:var(--text)">{{ members|list|length }}</strong> 人
-      {% if data_source == "metrics" %}
-      · 🟢Metrics
-      {% else %}
-      · 🟡Webhook
-      {% endif %}
+      <strong style="color:var(--text)">{{ members|length }}</strong> 总计
     </span>
   </div>
+  {% if current_user.role in ('super_admin','admin') %}
+  <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px 0;padding:6px 10px;background:var(--cb);border-radius:8px;font-size:13px">
+    <input type="checkbox" id="syncAllTenantsCb" style="margin:0">
+    <label for="syncAllTenantsCb" style="color:var(--text);cursor:pointer;user-select:none">同步同名成员到所有租户</label>
+  </div>
+  {% endif %}
 
   {# ── 表格 ── #}
   <div class="panel" style="padding:0;overflow:visible">
@@ -130,11 +131,14 @@ function changeMemberGroup(sel) {
   var groupId = sel.value ? parseInt(sel.value) : null;
   var prevOpt = sel.querySelector('[selected]');
   var prevVal = prevOpt ? prevOpt.value : '';
+  // 同步 checkbox
+  var syncCb = document.getElementById('syncAllTenantsCb');
+  var syncAll = syncCb && syncCb.checked;
 
   fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: groupId, tenant_id: memberTenant})
+    body: JSON.stringify({group_id: groupId, tenant_id: memberTenant, sync_same_name_all_tenants: syncAll})
   }).then(function(r){ return r.json(); }).then(function(j){
     if (j.ok) {
       // 更新 data-group 属性（供筛选器用）
@@ -142,13 +146,37 @@ function changeMemberGroup(sel) {
       if (row) {
         var gname = groupId ? (groupMap[groupId] || '') : '';
         row.setAttribute('data-group', gname);
+        row.setAttribute('data-group-id', groupId || '');
       }
+      // 更新所有被同步行的 title（跨租户同步后 select 可能变了）
+      if (syncAll && j.saved_tenants && j.saved_tenants.length > 1) {
+        var allRows = document.querySelectorAll('.member-row');
+        allRows.forEach(function(rw){
+          if (rw.getAttribute('data-name') === row.getAttribute('data-name')) {
+            rw.setAttribute('data-group', gname);
+            rw.setAttribute('data-group-id', groupId || '');
+          }
+        });
+      }
+      // 轻提示
+      showToast('✅ 已保存');
     } else {
       sel.value = prevVal;
+      showToast('❌ ' + (j.error || '保存失败'));
     }
   }).catch(function(){
     sel.value = prevVal;
+    showToast('❌ 网络错误');
   });
+}
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;background:#1a1a2e;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s;opacity:0';
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity = '1'; });
+  setTimeout(function(){ t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 300); }, 2000);
 }
 
 function switchTab(tab) {

@@ -2405,45 +2405,99 @@ def build_app() -> "FastAPI":
 
     @app.post("/api/v3/members/{display_name}/group")
     async def api_v3_set_member_group(display_name: str, request: Request):
-        """设置成员的所属分组"""
+        """设置成员的所属分组
+
+        增强功能：
+        - 按行 tenant_id 精确保存
+        - sync_same_name_all_tenants（super_admin/admin 可选）：跨租户同步同名成员
+        - 跨租户时按 group_name 找目标租户自己的 group_id，不会写错租户
+        """
         data = await request.json()
         group_id = data.get("group_id", None)
         member_tenant_id = data.get("tenant_id", None) or None
+        sync_all = data.get("sync_same_name_all_tenants", False)
         conn = db._get_conn()
         now = datetime.now(timezone.utc).isoformat()
-        tenant_id = request.app.state.get_effective_tenant_id(request)
+        session_tenant = request.app.state.get_effective_tenant_id(request)
         role = request.session.get("role")
         try:
-            # 如果有传入 tenant_id，优先使用；否则回退
-            target_tenant = member_tenant_id or tenant_id
-            if target_tenant:
-                _validate_group_tenant(group_id, target_tenant)
+            # 决定目标租户：优先行级 tenant_id
+            target_tenant = member_tenant_id or session_tenant
+            if not target_tenant:
+                return {"ok": False, "error": "缺少 tenant_id"}
+
+            # 1. 根据 group_id 查当前 group_name
+            group_name = None
+            if group_id is not None:
+                row = conn.execute(
+                    "SELECT name FROM member_groups WHERE id = ? AND tenant_id = ?",
+                    (group_id, target_tenant)
+                ).fetchone()
+                if row is not None:
+                    group_name = row["name"]
+                # row is None: group 可能已被删除，允许置空
+
+            # 2. 正常保存到当前租户
+            _validate_group_tenant(group_id, target_tenant)
+            match_key = display_name.strip().lower().replace(" ", "")
+            cur = conn.execute(
+                "UPDATE member_display SET group_id = ?, updated_at = ? WHERE tenant_id = ? AND deleted=0 AND (LOWER(display_name) = LOWER(?) OR LOWER(raw_name) = LOWER(?) OR LOWER(match_key) = LOWER(?))",
+                (group_id, now, target_tenant, display_name, display_name, match_key)
+            )
+            if cur.rowcount == 0:
                 conn.execute(
-                    "UPDATE member_display SET group_id = ?, updated_at = ? WHERE LOWER(display_name) = LOWER(?) AND tenant_id = ?",
-                    (group_id, now, display_name, target_tenant)
+                    "INSERT INTO member_display (tenant_id, raw_name, display_name, match_key, group_id, deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                    (target_tenant, display_name, display_name, match_key, group_id, now, now)
                 )
-            elif role == "super_admin":
-                # super_admin 且没有 tenant_id 时，查一下该 display_name 有几个租户记录
-                rows = conn.execute(
-                    "SELECT DISTINCT tenant_id FROM member_display WHERE LOWER(display_name) = LOWER(?)",
-                    (display_name,)
+
+            saved_tenants = [target_tenant]
+            skipped_tenants = []
+
+            # 3. sync_same_name_all_tenants：跨租户同步
+            if sync_all and role in ("super_admin", "admin") and group_name is not None:
+                # 找出同名成员在所有租户的分布
+                same_rows = conn.execute(
+                    "SELECT DISTINCT tenant_id FROM member_display "
+                    "WHERE deleted=0 AND tenant_id != ? AND ("
+                    "  LOWER(display_name) = LOWER(?)"
+                    "  OR LOWER(raw_name) = LOWER(?)"
+                    "  OR LOWER(match_key) = LOWER(?)"
+                    ")",
+                    (target_tenant, display_name, display_name, match_key)
                 ).fetchall()
-                if len(rows) == 1:
-                    # 唯一租户，直接更新
-                    t = rows[0][0]
-                    _validate_group_tenant(group_id, t)
-                    conn.execute(
-                        "UPDATE member_display SET group_id = ?, updated_at = ? WHERE LOWER(display_name) = LOWER(?) AND tenant_id = ?",
-                        (group_id, now, display_name, t)
+
+                for (t,) in same_rows:
+                    # 在目标租户找同名 group_id
+                    grp = conn.execute(
+                        "SELECT id FROM member_groups WHERE name = ? AND tenant_id = ?",
+                        (group_name, t)
+                    ).fetchone()
+                    if grp is None:
+                        skipped_tenants.append(t)
+                        continue
+                    target_gid = grp["id"]
+                    # 更新
+                    sub = conn.execute(
+                        "UPDATE member_display SET group_id = ?, updated_at = ? "
+                        "WHERE tenant_id = ? AND deleted=0 AND ("
+                        "  LOWER(display_name) = LOWER(?)"
+                        "  OR LOWER(raw_name) = LOWER(?)"
+                        "  OR LOWER(match_key) = LOWER(?)"
+                        ")",
+                        (target_gid, now, t, display_name, display_name, match_key)
                     )
-                elif len(rows) > 1:
-                    return {"ok": False, "error": f"同名成员 '{display_name}' 存在于多个租户，请从具体租户页面操作"}
-                else:
-                    return {"ok": False, "error": f"未找到成员 '{display_name}'"}
-            else:
-                return {"ok": False, "error": "无权限"}
+                    if sub.rowcount == 0:
+                        conn.execute(
+                            "INSERT INTO member_display (tenant_id, raw_name, display_name, match_key, group_id, deleted, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                            (t, display_name, display_name, match_key, target_gid, now, now)
+                        )
+                    saved_tenants.append(t)
+
             conn.commit()
-            return {"ok": True}
+            result = {"ok": True, "saved_tenants": saved_tenants}
+            if skipped_tenants:
+                result["skipped_tenants"] = skipped_tenants
+            return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -3515,7 +3569,12 @@ def build_app() -> "FastAPI":
         role = request.session.get("role", "tenant")
         if role in ("super_admin", "admin"):
             tid = request.session.get("selected_tenant", "default")
-            return None if tid == "*" else tid
+            # 防止旧 session 一直停在“所有租户”
+            if tid == "*":
+                request.session["selected_tenant"] = "default"
+                request.session["tenant_id"] = "default"
+                return "default"
+            return tid or "default"
         return request.session.get("tenant_id", "default")
 
     app.state.get_effective_tenant_id = _effective_tenant_id
@@ -3637,13 +3696,15 @@ def build_app() -> "FastAPI":
 
         role = request.session["role"]
         if role == "super_admin":
-            request.session["selected_tenant"] = "*"
-            request.session["tenant_id"] = "*"
+            # super_admin 默认进入 default，避免一登录就看到全部租户数据
+            # 仍然保留后续在租户切换里选择 * 查看全部的能力
+            request.session["selected_tenant"] = "default"
+            request.session["tenant_id"] = "default"
             return RedirectResponse(url="/dashboard", status_code=303)
 
         if role == "admin":
-            request.session["selected_tenant"] = "*"
-            request.session["tenant_id"] = "*"
+            request.session["selected_tenant"] = "default"
+            request.session["tenant_id"] = "default"
             return RedirectResponse(url="/dashboard", status_code=303)
 
         user_tenants = db.get_user_tenants(user["id"])
@@ -3701,7 +3762,13 @@ def build_app() -> "FastAPI":
         role = request.session.get("role", "tenant")
         if role not in ("super_admin", "admin"):
             return RedirectResponse(url="/login", status_code=303)
-        # 校验 tenant 存在（* 代表全部租户，跳过校验）
+        # admin 只能切换 default / nolan；只有 super_admin 可以选择 *
+        if role == "admin" and tenant_id not in ("default", "nolan"):
+            return HTMLResponse("无权限", status_code=403)
+
+        # 校验 tenant 存在（* 代表全部租户，仅 super_admin 可用，跳过校验）
+        if tenant_id == "*" and role != "super_admin":
+            return HTMLResponse("无权限", status_code=403)
         if tenant_id != "*":
             t = db.get_tenant(tenant_id)
             if not t:

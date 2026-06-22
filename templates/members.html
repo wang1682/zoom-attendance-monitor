@@ -89,6 +89,13 @@
   <div class="stat-item" id="statGroupTemplate" style="display:none"><div class="stat-num">0</div><div class="stat-label"></div></div>
 </div>
 
+{% if current_user.role in ('super_admin','admin') %}
+<div style="display:flex;align-items:center;gap:8px;margin:0 0 12px 0;padding:8px 12px;background:var(--cb);border-radius:8px;font-size:13px">
+  <input type="checkbox" id="syncAllTenantsCb" style="margin:0">
+  <label for="syncAllTenantsCb" style="color:var(--text);cursor:pointer;user-select:none">同步同名成员到所有租户</label>
+</div>
+{% endif %}
+
 <div class="ml">
   <!-- LEFT: Configured Members -->
   <div class="mc">
@@ -257,7 +264,7 @@ function renderMembers(members){
         <span class="mn">${badge}${esc(m.display_name)}</span>
         <span class="ms">← ${esc(m.raw_name)}</span>
         <button class="ma-edit" onclick="editMember('${esc(m.display_name)}')">编辑</button>
-        <select class="ma-group" onchange="changeGroup('${esc(m.display_name)}', this.value)">
+        <select class="ma-group" onchange="changeGroup('${esc(m.display_name)}', this.value)" data-tenant="${esc(m.tenant_id || '')}">
           <option value="${curVal}">${curLabel}</option>
           ${groupOptsAll}
         </select>
@@ -270,14 +277,31 @@ function renderMembers(members){
 
 async function changeGroup(displayName, groupId){
   if(groupId === "") groupId = null;
+  // 从当前行取 tenant_id
+  var selEl = event && event.target;
+  var tenantId = selEl ? (selEl.getAttribute('data-tenant') || '') : '';
+  var syncCb = document.getElementById('syncAllTenantsCb');
+  var syncAll = syncCb && syncCb.checked;
   const r = await fetch(`/api/v3/members/${encodeURIComponent(displayName)}/group`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({group_id: groupId})
+    body: JSON.stringify({group_id: groupId, tenant_id: tenantId, sync_same_name_all_tenants: syncAll})
   });
   const d = await r.json();
-  if(d.ok) loadAll();
-  else alert(d.error || "分组失败");
+  if(d.ok) {
+    loadAll();
+    showToast('✅ 已保存');
+  }
+  else showToast('❌ ' + (d.error || "分组失败"));
+}
+
+function showToast(msg) {
+  var t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;background:#1a1a2e;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s;opacity:0';
+  document.body.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity = '1'; });
+  setTimeout(function(){ t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 300); }, 2000);
 }
 
 // ── Modal functions ───────────────────────────────────────────────────
