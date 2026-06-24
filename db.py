@@ -1346,7 +1346,20 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         m = members[display_name]
         action, at = e["action"], e["action_time"]
 
-        # ── 跳过 breakout 事件 ──
+        # ── 跳过非参与/离开事件 ──
+        # breakout_enter/breakout_leave 记录到 raw_events（用于在线判断），但不配对
+        if action in ("breakout_enter", "breakout_leave"):
+            m["last_action"] = action
+            m["last_activity"] = at
+            m["first_join"] = m["first_join"] or at
+            m["raw_events"].append({
+                "action": action,
+                "action_time": at,
+                "meeting_id": e.get("meeting_id", ""),
+                "email": e.get("email", ""),
+            })
+            continue
+
         if action not in ("enter", "joined", "leave", "left"):
             continue
 
@@ -1421,6 +1434,14 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
     # ── 计算时长 & 状态 ──
     for m in members.values():
         m["raw_events"].sort(key=lambda x: x["action_time"])
+
+        # 过滤掉 today_start_utc 之前的 raw_events（避免跨天孤立事件干扰配对）
+        today_start_utc_dt = datetime(today_start_utc.year, today_start_utc.month, today_start_utc.day,
+                              today_start_utc.hour, today_start_utc.minute, today_start_utc.second, tzinfo=timezone.utc)
+        m["raw_events"] = [ev for ev in m["raw_events"]
+                          if datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+                          >= today_start_utc_dt]
+
         total_seconds = 0
         session_count = 0
         disconnects = 0
@@ -1437,6 +1458,9 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 ev_dt = datetime.fromisoformat(str(ev["action_time"]))
             if ev_dt.tzinfo is None:
                 ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+            # breakout_* 不参与清洗和配对（只用于在线状态判断）
+            if ev["action"] in ("breakout_enter", "breakout_leave"):
+                continue
             if not cleaned:
                 cleaned.append({"action": ev["action"], "dt": ev_dt, "raw": ev})
                 continue
@@ -1509,12 +1533,64 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         session_count = len(merged_sessions)
 
         # ── 在线状态判断（Step 4 需要 is_online，同时也给 status 用） ──
-        if m["last_action"] == "enter" and m["last_activity"]:
+        # 从原始 raw_events 看最后一条事件的 action（不是 cleaned）
+        _last_action = m["last_action"]
+        _last_activity = m["last_activity"]
+        for ev in reversed(m.get("raw_events", [])):
             try:
-                last_dt = datetime.fromisoformat(m["last_activity"])
+                a = ev.get("action", "")
+                if a in ("enter", "joined"):
+                    _last_action = "enter"
+                    _last_activity = ev.get("action_time", _last_activity)
+                    # 如果前面有 breakout_enter 且这是 enter（同秒 follow-up），保留 breakout_enter 为 last_action
+                    break
+                if a == "breakout_enter":
+                    _last_action = "breakout_enter"
+                    _last_activity = ev.get("action_time", _last_activity)
+                    break
+                if a in ("leave", "left"):
+                    _last_action = "leave"
+                    _last_activity = ev.get("action_time", _last_activity)
+                    # 检查 leave 后面是否跟了同秒 enter（breakout re-enter）
+                    break
+                if a == "breakout_leave":
+                    _last_action = "breakout_leave"
+                    _last_activity = ev.get("action_time", _last_activity)
+                    break
+            except:
+                pass
+        # 强化：即使倒序查到 enter 作为 last_action，如果前面有同秒的 breakout_enter，
+        # 说明 enter 只是进 breakout room 的 re-enter，用户实际在 break room 中
+        if _last_action == "enter":
+            # 检查最后的 enter 是不是 break room 进入模式的一部分（breakout_enter 后 5 秒内的 re-enter）
+            has_breakout_enter = any(ev.get("action", "") == "breakout_enter" for ev in m.get("raw_events", []))
+            if has_breakout_enter:
+                # 找到最后一次 breakout_enter 时间
+                last_bo_time = None
+                for ev in reversed(m.get("raw_events", [])):
+                    if ev.get("action", "") == "breakout_enter":
+                        last_bo_time = ev.get("action_time")
+                        break
+                if last_bo_time and _last_activity:
+                    try:
+                        enter_dt = datetime.fromisoformat(str(_last_activity).replace("Z", "+00:00"))
+                        bo_dt = datetime.fromisoformat(str(last_bo_time).replace("Z", "+00:00"))
+                        gap = (enter_dt - bo_dt).total_seconds()
+                        if 0 <= gap <= 5:
+                            # 最后的 enter 是 breakout_enter 后 5 秒内的 re-enter → 实际在 break room 中
+                            _last_action = "breakout_enter"
+                            _last_activity = last_bo_time
+                    except:
+                        pass
+        if _last_action == "enter" and _last_activity:
+            try:
+                last_dt = datetime.fromisoformat(str(_last_activity).replace("Z", "+00:00"))
                 is_online = (now_utc - last_dt).total_seconds() < 900
             except Exception:
                 is_online = False
+        elif _last_action == "breakout_enter":
+            # breakout_enter 表示仍在会议中（分组讨论），不受 15 分钟限制
+            is_online = True
         else:
             is_online = False
 
@@ -1531,6 +1607,16 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                     "duration": open_sec,
                     "open_session": True,
                 })
+        elif pending_enter_dt is None and is_online:
+            # 在线但 pending_enter 已被关闭（breakout_enter 未进入配对逻辑）
+            # 从已闭合 sessions 取最后一次 enter_dt 作为起点
+            if merged_sessions:
+                last_enter = merged_sessions[-1]["enter_dt"]
+                open_sec = int((now_utc - last_enter).total_seconds())
+                if open_sec > 0:
+                    total_seconds = max(total_seconds, open_sec)
+                    merged_sessions[-1]["leave_dt"] = now_utc
+                    merged_sessions[-1]["duration"] = open_sec
 
         m["today_total_seconds"] = int(total_seconds)
         m["today_total_duration"] = _fmt_dur(int(total_seconds))
