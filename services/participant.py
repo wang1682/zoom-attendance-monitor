@@ -220,30 +220,21 @@ class ParticipantService:
         记录 sharing_ended 事件。
 
         逻辑：
-        1. 优先按 meeting_id + user_id 匹配 active 记录
-        2. 如果没找到，按 user_name 回退匹配
+        1. 优先按 meeting_id + user_name + tenant_id 匹配 active 记录
+        2. 如果没找到，返回 False（无 active session 被关闭）
 
         Returns:
-            True: 有记录被关闭
-            False: 无匹配记录
+            True: 有 active session 被关闭
+            False: 无匹配 active session（残留/过期 sharing_ended）
         """
         conn = _db._get_conn()
         now_iso = datetime.now(timezone.utc).isoformat()
-        affected = 0
 
-        if tenant_id:
-            affected = conn.execute(
-                "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? "
-                "WHERE meeting_id=? AND user_id=? AND is_active=1 AND tenant_id=?",
-                (end_time, now_iso, meeting_id, user_id, tenant_id),
-            ).rowcount
-
-        if affected == 0:
-            conn.execute(
-                "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? "
-                "WHERE user_name=? AND is_active=1 AND tenant_id=?",
-                (end_time, now_iso, user_name, tenant_id or "unknown"),
-            )
+        affected = conn.execute(
+            "UPDATE sharing_live SET end_time=?, is_active=0, updated_at=? "
+            "WHERE meeting_id=? AND user_name=? AND is_active=1 AND tenant_id=?",
+            (end_time, now_iso, meeting_id, user_name, tenant_id or "unknown"),
+        ).rowcount
 
         conn.commit()
         return affected > 0

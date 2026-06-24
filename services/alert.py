@@ -225,9 +225,11 @@ class AlertService:
             sys.stderr.flush()
             return
 
-        # ── sharing_ended: 检查是否存在 active sharing ──
+        # ── sharing_ended: 两层防御防误报 ──
         if push_event == "sharing_ended":
             conn_chk = _db._get_conn()
+
+            # 第一层: 检查是否有 active sharing session
             active = conn_chk.execute(
                 "SELECT id FROM sharing_live"
                 " WHERE tenant_id=? AND meeting_id=? AND user_name=? AND is_active=1"
@@ -235,8 +237,35 @@ class AlertService:
                 (tenant_id, mid, ename),
             ).fetchone()
             if not active:
-                sys.stderr.write(f"[PUSH] sharing_ended no active sharing, continue push tenant={tenant_id} mid={mid} user={ename}\n")
+                sys.stderr.write(
+                    f"[SHARING_SKIP] stale ended event "
+                    f"tenant={tenant_id} meeting={mid} user={ename} "
+                    f"reason=no_active_session\n"
+                )
                 sys.stderr.flush()
+                return
+
+            # 第二层: 检查此 sharing_ended 是否在 participant_joined 附近 5 秒内
+            # 如果是 → Zoom 残留 session 清理，跳过推送
+            JOIN_NEARBY_WINDOW = 5  # 秒
+            event_time_str = sdt  # Zoom 提供的 event time
+            nearby = conn_chk.execute(
+                "SELECT COUNT(*) FROM zoom_events"
+                " WHERE event_type IN ('meeting.participant_joined', 'meeting.participant_joined_waiting_room')"
+                " AND tenant_id=?"
+                " AND payload LIKE ?"
+                " AND created_at BETWEEN datetime(?, '-' || ? || ' seconds') AND datetime(?, '+' || ? || ' seconds')",
+                (tenant_id, f'%{ename}%', event_time_str, str(JOIN_NEARBY_WINDOW),
+                 event_time_str, str(JOIN_NEARBY_WINDOW)),
+            ).fetchone()
+            if nearby and nearby[0] > 0:
+                sys.stderr.write(
+                    f"[SHARING_SKIP] join_nearby ended event "
+                    f"tenant={tenant_id} meeting={mid} user={ename} "
+                    f"nearby_join_count={nearby[0]} window={JOIN_NEARBY_WINDOW}s\n"
+                )
+                sys.stderr.flush()
+                return
 
         conn = _db._get_conn()
         already = conn.execute(
@@ -247,36 +276,48 @@ class AlertService:
             sys.stderr.flush()
             return
 
-        # ── 构建消息 ──
+        # ── 构建消息（新模板：清洗格式、统一层级）──
         content_type = sd.get("content", "") if push_event in ("sharing_started", "sharing_ended") else ""
-        extra_line = f"\n📄 内容: {content_type}" if content_type else ""
 
-        # 自定义标题(子类型)
-        if group_name:
-            if push_event == "participant_joined":
-                title_line = f"📌 {standard_name} 进入【{group_name}】主会议"
-            elif push_event == "participant_left":
-                title_line = f"🚪 {standard_name} 离开【{group_name}】"
-            elif push_event == "waiting_room_joined":
-                title_line = f"⏳ {standard_name} 在等候室"
-            elif push_event == "sharing_started":
-                title_line = f"🖥 {standard_name} 开始共享屏幕"
-            elif push_event == "sharing_ended":
-                title_line = f"🖥 {standard_name} 结束共享屏幕"
-            else:
-                title_line = push_title
-        elif is_mapped:
-            title_line = push_title
+        # 按事件类型组装
+        event_emoji = push_icon
+        if push_event == "participant_joined":
+            event_title = "进入会议"
+            event_sub = "🟢 成员进入"
+            footer = f"\n\n📍 {'主会议' if not group_name else group_name}"
+        elif push_event == "participant_left":
+            event_title = "离开会议"
+            event_sub = "🔴 成员离开"
+            footer = f"\n\n📍 {'主会议' if not group_name else group_name}"
+        elif push_event == "waiting_room_joined":
+            event_title = "等候室"
+            event_sub = "🟡 等候室"
+            footer = "\n\n等待主持人准入"
+        elif push_event == "sharing_started":
+            event_title = "开始共享"
+            event_sub = "🖥 开始共享"
+            content_line = f"\n\n内容：{content_type}" if content_type else ""
+            footer = content_line
+        elif push_event == "sharing_ended":
+            event_title = "结束共享"
+            event_sub = "🖥 结束共享"
+            footer = ""
         else:
-            title_line = f"未配置成员 {standard_name} {push_title}"
+            event_title = push_title
+            event_sub = f"{push_icon} {push_title}"
+            footer = ""
+
+        # 时间只显示 HH:MM:SS
+        time_only = now_myt_str.split(" ")[-1] if " " in now_myt_str else now_myt_str
 
         text = (
-            f"{push_icon} *{title_line}*\n\n"
-            f"👆 {standard_name}\n"
-            f"🔔 会议: {mid}\n"
-            f"⏰ {now_myt_str}"
-            f"{extra_line}"
+            f"{event_title}\n"
+            f"{event_sub}\n\n"
+            f"👤 {standard_name}\n"
         )
+        if group_name:
+            text += f"🏷 {group_name}\n"
+        text += f"🕒 {time_only}{footer}"
 
         # ── 解析推送目标 ──
         targets = []
