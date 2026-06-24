@@ -41,11 +41,31 @@ def to_myt_str(dt_str: str) -> str:
     try:
         s = dt_str.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+        return dt.astimezone(TZ_MYT).strftime("%m-%d %H:%M:%S")
     except Exception:
         return dt_str[:16]
+
+
+def get_zoom_account(tenant_id: str) -> dict | None:
+    """从 zoom_accounts 表查当前租户的 Zoom 账号"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT id, tenant_id, account_id, client_id, client_secret, host_email "
+        "FROM zoom_accounts WHERE tenant_id = ? AND is_active = 1 "
+        "ORDER BY id DESC LIMIT 1",
+        (tenant_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0],
+        "tenant_id": row[1],
+        "account_id": row[2],
+        "client_id": row[3],
+        "client_secret": row[4],
+        "host_email": row[5],
+    }
+
 
 DB_PATH = settings.database_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
 _local = threading.local()
@@ -288,6 +308,28 @@ def init_db(readonly: bool = False):
         "CREATE INDEX IF NOT EXISTS idx_shift_asgn_date ON shift_assignments(shift_date)",
         "CREATE INDEX IF NOT EXISTS idx_shift_asgn_tenant ON shift_assignments(tenant_id)",
 
+        # ── identity stability analysis ──
+        "CREATE TABLE IF NOT EXISTS member_identity_stats ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  tenant_id TEXT NOT NULL,"
+        "  member_key TEXT NOT NULL,"
+        "  raw_name TEXT NOT NULL,"
+        "  raw_name_count INTEGER NOT NULL DEFAULT 1,"
+        "  last_raw_name_seen TEXT,"
+        "  public_ip TEXT,"
+        "  ip_count INTEGER NOT NULL DEFAULT 1,"
+        "  last_ip_seen TEXT,"
+        "  user_id TEXT,"
+        "  participant_uuid TEXT,"
+        "  email TEXT,"
+        "  session_date TEXT,"
+        "  join_time TEXT,"
+        "  leave_time TEXT,"
+        "  duration_minutes REAL,"
+        "  updated_at TEXT DEFAULT (datetime('now'))"
+        ")",
+        "CREATE INDEX IF NOT EXISTS idx_mis_tenant_member ON member_identity_stats(tenant_id, member_key)",
+        "CREATE INDEX IF NOT EXISTS idx_mis_tenant_date ON member_identity_stats(tenant_id, session_date)",
     ]
     for sql in statements:
         try:
@@ -435,8 +477,585 @@ def init_db(readonly: bool = False):
         "  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
         ")")
 
+    # ── official_attendance_sessions (Zoom 官方 Attendance CSV 导入) ──
+    conn.execute("CREATE TABLE IF NOT EXISTS official_attendance_sessions ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        "  tenant_id TEXT NOT NULL,"
+        "  meeting_id TEXT,"
+        "  topic TEXT,"
+        "  host_name TEXT,"
+        "  host_email TEXT,"
+        "  meeting_start_time TEXT,"
+        "  meeting_end_time TEXT,"
+        "  participant_name TEXT NOT NULL,"
+        "  email TEXT,"
+        "  join_time TEXT NOT NULL,"
+        "  leave_time TEXT NOT NULL,"
+        "  duration_minutes REAL,"
+        "  guest TEXT,"
+        "  in_waiting_room TEXT,"
+        "  source_file TEXT,"
+        "  imported_at TEXT DEFAULT (datetime('now'))"
+        ")")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_tenant_name ON official_attendance_sessions(tenant_id, participant_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_tenant_date ON official_attendance_sessions(tenant_id, join_time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_meeting   ON official_attendance_sessions(meeting_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_import    ON official_attendance_sessions(source_file)")
 
-# ── zoom_events ──────────────────────────────────────────────────────────────
+
+# ── official_attendance_sessions 导入 & 查询 ──
+# Zoom 官方 Attendance CSV → official_attendance_sessions 表
+# 不与 zoom_participants 混用
+
+def import_official_attendance_csv(
+    csv_path: str,
+    tenant_id: str = "default",
+    source_file: str = "",
+) -> dict:
+    """导入 Zoom 官方 Attendance CSV 到 official_attendance_sessions。
+
+    CSV 格式：UTF-8 BOM，中文列名，Zoom 官方 Attendance Report。
+
+    列名（按顺序）：
+        主题,类型,ID,主持人名称,主持人电子邮件,开始时间,结束时间,
+        参会者,持续时间（分钟）,参会者总分钟数,
+        名称（原名）,电子邮件,加入时间,离开时间,持续时间（分钟）,
+        访客,在等候室中
+
+    注意：有重复列名 "持续时间（分钟）"（会议级 + 参与者级），
+    我们用 raw header 定位最后一个（参与者级）。
+
+    时间格式：2026/06/21 07:05:20 AM（UTC）
+    """
+    import csv
+
+    conn = _get_conn()
+    rows_raw = []
+
+    # 先读 header 行 - 找参与者级持续时间列的位置
+    with open(csv_path, encoding="utf-8-sig") as f:
+        raw_header = f.readline().strip().split(",")
+
+    # Python csv.DictReader 遇到重复列名会保留第一个，丢弃后续同名列
+    # 所以需要用原始 header 定位参与者级 "持续时间（分钟）"
+    dur_key = "持续时间（分钟）"
+    dur_indices = [i for i, h in enumerate(raw_header) if dur_key in h]
+    participant_dur_idx = dur_indices[-1] if dur_indices else -1
+
+    # ── 用 csv.reader 而非 DictReader ──
+    # 因为列名有重复（"持续时间（分钟）" 出现 2 次），DictReader 会丢失第二列
+    # 改用 reader + dict zipped header，按最后列索引取值
+    with open(csv_path, encoding="utf-8-sig") as f:
+        reader = csv.reader(f)
+        csv_header = next(reader)
+        for row in reader:
+            rows_raw.append(row)
+
+    if not rows_raw:
+        return {"ok": False, "imported": 0, "errors": ["CSV 为空或无数据行"]}
+
+    # 建立列名→索引映射（保留最后出现的位置，解决重复列名问题）
+    col_index = {}
+    for ci, name in enumerate(csv_header):
+        col_index[name] = ci  # 后出现的覆盖前面的
+
+    # 帮助函数：按列名取值
+    def _val_or_none(row, name):
+        idx = col_index.get(name)
+        if idx is not None and idx < len(row):
+            return row[idx].strip()
+        return ""
+
+    imported = 0
+    skipped = 0
+    errors = []
+
+    for i, row in enumerate(rows_raw):
+        try:
+            # 基础字段
+            meeting_id = _val_or_none(row, "ID").replace(" ", "")
+            topic = _val_or_none(row, "主题")
+            host_name = _val_or_none(row, "主持人名称")
+            host_email = _val_or_none(row, "主持人电子邮件")
+            meeting_start = _val_or_none(row, "开始时间")
+            meeting_end = _val_or_none(row, "结束时间")
+            participant_name = _val_or_none(row, "名称（原名）")
+            email = _val_or_none(row, "电子邮件")
+            join_time = _val_or_none(row, "加入时间")
+            leave_time = _val_or_none(row, "离开时间")
+            guest = _val_or_none(row, "访客")
+            in_waiting = _val_or_none(row, "在等候室中")
+
+            # 参与者级持续时间 — 按列名取（index 对应最后一个 duration 列）
+            duration_minutes = None
+            dur_str = _val_or_none(row, "持续时间（分钟）")
+            if dur_str:
+                try:
+                    duration_minutes = float(dur_str)
+                except (ValueError, TypeError):
+                    pass
+
+            # 时间标准化: "2026/06/21 07:05:20 AM" → ISO UTC isoformat
+            def _fmt_zoom_time(t: str) -> str:
+                if not t:
+                    return ""
+                t = t.strip()
+                try:
+                    dt = datetime.strptime(t, "%Y/%m/%d %I:%M:%S %p")
+                    return dt.isoformat()
+                except ValueError:
+                    return t
+
+            join_dt = _fmt_zoom_time(join_time)
+            leave_dt = _fmt_zoom_time(leave_time)
+
+            if not participant_name or not join_dt:
+                skipped += 1
+                continue
+
+            conn.execute(
+                """INSERT INTO official_attendance_sessions
+                   (tenant_id, meeting_id, topic, host_name, host_email,
+                    meeting_start_time, meeting_end_time,
+                    participant_name, email, join_time, leave_time,
+                    duration_minutes, guest, in_waiting_room, source_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tenant_id, meeting_id, topic, host_name, host_email,
+                    meeting_start, meeting_end,
+                    participant_name, email, join_dt, leave_dt,
+                    duration_minutes, guest, in_waiting, source_file or csv_path,
+                ),
+            )
+            imported += 1
+        except Exception as e:
+            errors.append(f"row {i + 2}: {e}")
+            skipped += 1
+
+    conn.commit()
+    return {"ok": True, "imported": imported, "skipped": skipped, "errors": errors}
+
+
+def get_official_sessions_for_member(
+    tenant_id: str,
+    participant_name: str,
+    date_from: str = None,
+    date_to: str = None,
+    limit: int = 500,
+) -> list[dict]:
+    """查询 official_attendance_sessions 中某个成员的数据（大小写不敏感）。"""
+    conn = _get_conn()
+    conditions = ["tenant_id = ?", "LOWER(participant_name) = LOWER(?)"]
+    params = [tenant_id, participant_name]
+    if date_from:
+        conditions.append("join_time >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("join_time < ?")
+        params.append(date_to)
+    sql = f"SELECT * FROM official_attendance_sessions WHERE {' AND '.join(conditions)} ORDER BY join_time ASC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def get_official_session_daily_summary(
+    tenant_id: str,
+    participant_name: str,
+    limit: int = 60,
+) -> dict:
+    """按天汇总某个成员的官方 Session，返回每日聚合 + sessions 明细。
+
+    返回: {
+        "member": name,
+        "total_days": N,        # 出勤天数
+        "total_duration": N,    # 累计在线分钟数
+        "daily": [
+            {
+                "date": "2026-06-22",
+                "date_display": "06-22",
+                "session_count": N,
+                "duration_minutes": N,
+                "duration_display": "9h12m",
+                "first_join": iso,
+                "last_leave": iso,
+                "sessions": [{...}]
+            },
+            ...
+        ]
+    }
+    """
+    conn = _get_conn()
+    # 先查该成员所有 session，关联 member_display 做 canonical 匹配
+    rows = get_official_sessions_for_member(tenant_id, participant_name, limit=10000)
+    if not rows:
+        return {"member": participant_name, "total_days": 0, "total_duration": 0, "daily": []}
+
+    import re
+    # 按 MYT 日期分组（join_time 是 UTC 时间）
+    from collections import OrderedDict
+    daily_map = OrderedDict()
+
+    for r in rows:
+        jt = r.get("join_time")
+        if not jt:
+            continue
+        lt = r.get("leave_time") or jt
+        dur_min = r.get("duration_minutes", 0) or 0
+
+        # UTC → MYT 转日期
+        # join_time 格式如 "2026-06-22T07:24:00+00:00" 或 "2026-06-22 07:24:00"
+        jt_str = str(jt).replace("T", " ").replace("Z", "").replace("+00:00", "").replace("+08:00", "")
+        if "." in jt_str:
+            jt_str = jt_str.split(".")[0]
+        try:
+            from datetime import datetime, timedelta
+            utc_dt = datetime.strptime(jt_str, "%Y-%m-%d %H:%M:%S")
+            myt_dt = utc_dt + timedelta(hours=8)
+            date_key = myt_dt.strftime("%Y-%m-%d")
+            date_display = myt_dt.strftime("%m-%d")
+        except (ValueError, IndexError):
+            date_key = jt_str[:10]
+            date_display = date_key[5:] if len(date_key) >= 10 else date_key
+
+        if date_key not in daily_map:
+            daily_map[date_key] = {
+                "date": date_key,
+                "date_display": date_display,
+                "sessions": [],
+                "duration_minutes": 0,
+            }
+        daily_map[date_key]["sessions"].append({
+            "meeting_id": r.get("meeting_id", ""),
+            "topic": r.get("topic", ""),
+            "join_time": r.get("join_time"),
+            "leave_time": r.get("leave_time"),
+            "duration_minutes": int(dur_min),
+            "duration_display": _fmt_dur_min(int(dur_min)),
+        })
+        daily_map[date_key]["duration_minutes"] += int(dur_min)
+
+    # 构建 daily 列表（逆序，最新在前）
+    daily = []
+    for dk in reversed(list(daily_map.keys())):
+        d = daily_map[dk]
+        d["duration_display"] = _fmt_dur_min(d["duration_minutes"])
+        d["session_count"] = len(d["sessions"])
+        if d["sessions"]:
+            d["first_join"] = d["sessions"][0]["join_time"]
+            d["last_leave"] = d["sessions"][-1]["leave_time"]
+        daily.append(d)
+
+        # 只返回最近 limit 天
+        if len(daily) >= limit:
+            break
+
+    total_days = len(daily)
+    total_duration = sum(d["duration_minutes"] for d in daily)
+
+    return {
+        "member": participant_name,
+        "total_days": total_days,
+        "total_duration": total_duration,
+        "total_duration_display": _fmt_dur_min(total_duration),
+        "avg_daily_display": _fmt_dur_min(total_duration // total_days) if total_days > 0 else "0m",
+        "last_active_display": daily[0]["date_display"] if daily else "—",
+        "daily": daily,
+    }
+
+
+def _fmt_dur_min(total_min: int) -> str:
+    """分钟转可读时长"""
+    total_min = total_min or 0
+    if total_min >= 1440:
+        d = total_min // 1440
+        h = (total_min % 1440) // 60
+        m = total_min % 60
+        return f"{d}d {h}h {m}m" if m else f"{d}d {h}h"
+    elif total_min >= 60:
+        h = total_min // 60
+        m = total_min % 60
+        return f"{h}h {m}m" if m else f"{h}h"
+    else:
+        return f"{total_min}m"
+
+
+def normalize_member_name(name: str) -> tuple:
+    """归一化成员名称
+
+    返回 (display_name, member_key)
+    display_name: 保留格式，仅清理身份括号
+    member_key:   完全压缩，用于聚合去重
+
+    规则：
+    1. 去掉 Host 标记：(Host)（Host）
+    2. 去掉括号内容包含身份关键词的括号
+       （关键词：DC、值班号、duty、host、admin、room、Duty、Room）
+    3. 去掉前后空格
+    4. 转小写
+    5. 全角半角统一（〜→~）
+    6. 连续空格压缩
+    7. 重复单词去重（"patheon patheon" → "patheon"，至少 3 字符防误伤）
+    8. member_key 额外：去除所有空格
+    """
+    import re
+    # Step 1: 精确去 Host 标记
+    name = re.sub(r"[（(]\s*[Hh][Oo][Ss][Tt]\s*[）)]", "", name)
+    # Step 2: 去掉括号内容包含身份关键词的括号
+    kw_pattern = re.compile(
+        r"[（(][^）)]*"
+        r"(DC|值班号|duty|host|admin|room)"
+        r"[^）)]*[）)]",
+        re.IGNORECASE,
+    )
+    prev = None
+    while prev != name:
+        prev = name
+        name = kw_pattern.sub("", name)
+    name = (name or "").strip()
+    display_name = name.strip()
+    name = name.lower()
+    name = name.replace("〜", "~")
+    name = re.sub(r"\s{2,}", " ", name)
+    # Step 7: 重复单词去重（"patheon patheon" → "patheon"）
+    name = re.sub(r"\b(\w{3,})\s+\1\b", r"\1", name)
+    # member_key: 去所有空格 + 去纯标点符号（如 ~）
+    member_key = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", name)
+    return display_name, member_key
+
+
+def get_matrix(tenant_id, year, month):
+    import calendar
+    conn = _get_conn()
+    _, total_days = calendar.monthrange(year, month)
+    ds = f"{year:04d}-{month:02d}-01"
+    de = f"{year:04d}-{month:02d}-{total_days:02d}"
+    # Build dates list: show up to actual last data day, not the full month
+    last_data_date = max(
+        conn.execute(
+            "SELECT DATE(MAX(join_time)) FROM official_attendance_sessions WHERE tenant_id=?",
+            (tenant_id,)
+        ).fetchone()[0] or ds,
+        conn.execute(
+            "SELECT DATE(MAX(action_time)) FROM zoom_participants WHERE tenant_id=?",
+            (tenant_id,)
+        ).fetchone()[0] or ds
+    )
+    last_day = int(last_data_date.split("-")[2]) if last_data_date >= ds else total_days
+    display_days = last_day
+    dates = [f"{month:02d}-{d:02d}" for d in range(1, display_days + 1)]
+
+    # 获取带有 email 的详细记录
+    rows = conn.execute(
+        "SELECT participant_name, email, DATE(join_time), SUM(duration_minutes) "
+        "FROM official_attendance_sessions "
+        "WHERE tenant_id=? AND DATE(join_time)>=? AND DATE(join_time)<=? "
+        "GROUP BY participant_name, email, DATE(join_time) ORDER BY participant_name",
+        (tenant_id, ds, de)
+    ).fetchall()
+
+    MIN_ATTENDANCE_MINUTES = 360  # 6 小时
+
+    from collections import OrderedDict
+
+    def make_identity_key(raw_name: str, email: str) -> tuple:
+        """返回 (identity_key, fallback_identity_key)
+        
+        primary: 有 email 则用 email，无则用 name key
+        但 email 聚合仅在同组 name key 收敛时才跨 raw_name 合并
+        
+        业务确认的 alias 映射表（仅当规则无法合并时才添加）
+        """
+        ALIAS = {
+            "antheafk": "anthea",
+            "harysonharyson": "haryson",
+            "crispin": "crispini",
+            "dcyoungest": "youngest",
+            "dcoceanus": "oceanus",
+        }
+        name_key = normalize_member_name(raw_name)[1]
+        name_key = ALIAS.get(name_key, name_key)
+        if email and email.strip():
+            email_key = f"{tenant_id}:email:{email.strip().lower()}"
+            return (email_key, f"{tenant_id}:name:{name_key}")
+        return (f"{tenant_id}:name:{name_key}", None)
+
+    # identity_key -> {dates: set, raw_names: [str], emails: [str], name_counts: {raw_name: int} [, name_keys: set]}
+    member_groups = OrderedDict()
+
+    total_raw = 0
+
+    for raw_name, email, d, total_min in rows:
+        if total_min is None or total_min < MIN_ATTENDANCE_MINUTES:
+            continue
+        total_raw += 1
+
+        email_key, fallback_key = make_identity_key(raw_name, email)
+        name_key = normalize_member_name(raw_name)[1]
+
+        # 决定用哪个 key
+        if email_key is not None and fallback_key is not None:
+            # 有 email: 先看这个 email key 是否已有同 name key 的成员
+            if email_key in member_groups:
+                existing_name_keys = member_groups[email_key].get("name_keys", set())
+                # 只有当 name key 收敛到已有 keys 时才合并
+                if name_key in existing_name_keys or not existing_name_keys:
+                    identity_key = email_key
+                else:
+                    identity_key = fallback_key
+            else:
+                identity_key = email_key
+        else:
+            identity_key = email_key  # 无 email 时 email_key 就是 name key
+
+        if identity_key not in member_groups:
+            member_groups[identity_key] = {
+                "dates": set(),
+                "raw_names": [],
+                "emails": set(),
+                "name_counts": {},
+                "first_canon": None,
+                "name_keys": set() if email_key else None,
+            }
+
+        # Track name keys
+        if email_key and member_groups[identity_key].get("name_keys") is not None:
+            member_groups[identity_key]["name_keys"].add(name_key)
+
+        # Track raw names
+        stripped = raw_name.strip()
+        if stripped not in member_groups[identity_key]["raw_names"]:
+            member_groups[identity_key]["raw_names"].append(stripped)
+            if member_groups[identity_key]["first_canon"] is None:
+                canon, _ = normalize_member_name(stripped)
+                member_groups[identity_key]["first_canon"] = canon
+
+        # Track email
+        if email and email.strip():
+            member_groups[identity_key]["emails"].add(email.strip().lower())
+
+        # Count appearances for this identity (same raw_name may appear multiple days)
+        member_groups[identity_key]["name_counts"][stripped] = member_groups[identity_key]["name_counts"].get(stripped, 0) + 1
+
+        # Add date
+        day_num = int(d.split("-")[2])
+        member_groups[identity_key]["dates"].add(day_num)
+
+    # 用最常出现的 raw_name 作为显示名
+    for g in member_groups.values():
+        best_name = max(g["name_counts"], key=g["name_counts"].get)
+        canon, _ = normalize_member_name(best_name)
+        g["display_name"] = canon or g["first_canon"] or best_name
+
+    # 统计
+    merged_count = len(member_groups)
+    duplicate_group_count = sum(1 for g in member_groups.values() if len(g["raw_names"]) > 1)
+    valid_members = merged_count
+    raw_name_count = sum(len(g["raw_names"]) for g in member_groups.values())
+
+    # Build members list with sort by total desc → name asc
+    members = []
+    for identity_key, g in member_groups.items():
+        ad = sorted(g["dates"])
+        members.append({
+            "name": g["display_name"],
+            "attendance_dates": ad,
+            "total": len(ad),
+            "raw_names": g["raw_names"],
+            "identity_key": identity_key,
+            "emails": sorted(g["emails"]),
+        })
+
+    members.sort(key=lambda x: (-x["total"], x["name"]))
+    return {
+        "year": year,
+        "month": month,
+        "total_days": total_days,
+        "display_days": display_days,
+        "last_data_date": last_data_date,
+        "dates": dates,
+        "members": members,
+        # 新增统计
+        "stats": {
+            "raw_member_count": raw_name_count,  # 原始名称去重数量（去重后的原始名条目）
+            "valid_members": valid_members,  # 有效去重成员数
+            "duplicate_group_count": duplicate_group_count,  # 包含多个原始名的组数
+            "merged_member_count": merged_count,  # 合并后的唯一成员数
+            "duplicate_total": sum(len(g["raw_names"]) - 1 for g in member_groups.values() if len(g["raw_names"]) > 1),  # 累计重复名称条数
+        },
+    }
+
+
+def get_official_session_summary(
+    tenant_id: str,
+    meeting_id: str = None,
+    date_from: str = None,
+    date_to: str = None,
+) -> list[dict]:
+    """从 official_attendance_sessions 获取聚合摘要。
+
+    返回: [{participant_name, email, session_count, total_duration_minutes, first_join, last_leave}]
+    """
+    conn = _get_conn()
+    conditions = ["tenant_id = ?"]
+    params = [tenant_id]
+    if meeting_id:
+        conditions.append("meeting_id = ?")
+        params.append(meeting_id)
+    if date_from:
+        conditions.append("join_time >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("join_time < ?")
+        params.append(date_to)
+    sql = f"""SELECT
+        participant_name,
+        email,
+        COUNT(*) as session_count,
+        SUM(duration_minutes) as total_duration_minutes,
+        MIN(join_time) as first_join,
+        MAX(leave_time) as last_leave
+    FROM official_attendance_sessions
+    WHERE {' AND '.join(conditions)}
+    GROUP BY LOWER(participant_name), COALESCE(email, '')
+    ORDER BY total_duration_minutes DESC"""
+    rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def upsert_official_attendance_session(
+    tenant_id: str,
+    meeting_id: str,
+    topic: str,
+    host_name: str,
+    host_email: str,
+    meeting_start: str,
+    meeting_end: str,
+    participant_name: str,
+    email: str,
+    join_time: str,
+    leave_time: str,
+    duration_minutes: float,
+) -> int:
+    """写入一条官方报表 session，去重 key = tenant_id + meeting_id + participant_name + join_time + leave_time"""
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT OR IGNORE INTO official_attendance_sessions
+        (tenant_id, meeting_id, topic, host_name, host_email,
+         meeting_start_time, meeting_end_time,
+         participant_name, email, join_time, leave_time,
+         duration_minutes, source_file)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'report_api')""",
+        (tenant_id, meeting_id, topic, host_name, host_email,
+         meeting_start, meeting_end,
+         participant_name, email, join_time, leave_time,
+         duration_minutes),
+    )
+    conn.commit()
+    return cur.lastrowid or 0
+
+
+# ── History 上传页路由 ──
+# (在 build_app() 中注入，不在此文件中定义)
 
 def save_webhook_event(event_type: str, payload: dict, tenant_id: str = "unknown") -> int:
     import json
@@ -737,6 +1356,16 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         except:
             at_dt = datetime.fromisoformat(str(at))
 
+        # ── leave_reason 过滤逻辑 ──
+        is_genuine_leave = False
+        if action in ("leave", "left"):
+            reason = (e.get("leave_reason") or "").lower()
+            is_genuine_leave = True
+            # 1. breakout 相关 / 主持人暂停会议 不视为真实离开
+            breakout_keywords = ["breakout", "left the meeting to join", "joining breakout room", "leaving breakout room"]
+            if any(kw in reason for kw in breakout_keywords):
+                is_genuine_leave = False
+
         if action in ("enter", "joined"):
             m["last_action"] = "enter"
             if at_dt >= today_start_utc:
@@ -744,13 +1373,16 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 if m["first_join"] is None or at < m["first_join"]:
                     m["first_join"] = at
         elif action in ("leave", "left"):
-            if at_dt >= today_start_utc:
+            if at_dt >= today_start_utc and is_genuine_leave:
                 m["leave_count"] += 1
                 if m["last_leave_time"] is None or at > m["last_leave_time"]:
                     m["last_leave_time"] = at
             m["last_action"] = "leave"
 
-        # ── 更新 email：用今天数据里最新一条（按 action_time） ──
+        # ── raw_events 只存真实事件 ──
+        if not is_genuine_leave and action in ("leave", "left"):
+            # breakout leave 不进入配对栈
+            continue
         ev_email = e.get("email", "")
         if ev_email:
             m["email"] = ev_email
@@ -789,46 +1421,94 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
     # ── 计算时长 & 状态 ──
     for m in members.values():
         m["raw_events"].sort(key=lambda x: x["action_time"])
-        # ── 用栈配对：相同 meeting 的连续重复 enter/leave 只保留第一个 ──
-        #   连续重复是指 raw_events 中相邻且中间没有被不同 action 隔开
         total_seconds = 0
-        enter_stack = []  # store (enter_dt, index) for pairing
-        deduped_events = []
-        for ev in m["raw_events"]:
-            if deduped_events and ev["action"] == deduped_events[-1]["action"] and ev["meeting_id"] == deduped_events[-1]["meeting_id"]:
-                # 相同 action + 相同 meeting 且出现在另一个 event 之前——检查中间是否有其它 action
-                # 如果时间差 < 5 秒，视为 webhook 重复
-                try:
-                    cur_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
-                    prev_dt = datetime.fromisoformat(str(deduped_events[-1]["action_time"]).replace("Z", "+00:00"))
-                    if abs((cur_dt - prev_dt).total_seconds()) < 5:
-                        continue
-                except:
-                    pass
-            deduped_events.append(ev)
-        for ev in deduped_events:
-            try:
-                at_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
-            except:
-                at_dt = datetime.fromisoformat(str(ev["action_time"]))
-            if at_dt.tzinfo is None:
-                at_dt = at_dt.replace(tzinfo=timezone.utc)
-            if ev["action"] in ("enter", "joined"):
-                # 只把今天的 enter 入栈
-                if at_dt >= today_start_utc:
-                    enter_stack.append(at_dt)
-            elif ev["action"] in ("leave", "left"):
-                if enter_stack:
-                    enter_dt = enter_stack.pop(0)  # FIFO: first enter pairs with first leave
-                    end_dt = at_dt
-                    dur = (end_dt - enter_dt).total_seconds()
-                    if 0 < dur < 86400:
-                        total_seconds += dur
-                # 没有未配对 enter 的 leave 直接丢弃（不异常）
+        session_count = 0
+        disconnects = 0
 
-        m["today_total_seconds"] = int(total_seconds)
-        m["today_total_duration"] = _fmt_dur(int(total_seconds))
-        # ── 状态判断：最后动作是 enter 且最近 activity 在 15 分钟内才算在线 ──
+        # Step 1: 合并同秒 leave→enter（breakout 切换）
+        # 并过滤 <5秒重复事件
+        cleaned = []
+        raw_events = m["raw_events"]
+        RECONNECT_WINDOW = 300  # 5分钟断线重连窗口
+        for ev in raw_events:
+            try:
+                ev_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+            except:
+                ev_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if ev_dt.tzinfo is None:
+                ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+            if not cleaned:
+                cleaned.append({"action": ev["action"], "dt": ev_dt, "raw": ev})
+                continue
+            prev = cleaned[-1]
+            gap = (ev_dt - prev["dt"]).total_seconds()
+            # 同秒 leave→enter：合并为持续在线（breakout 切换，不产生新 leave）
+            if prev["action"] == "leave" and ev["action"] == "enter" and abs(gap) <= 2:
+                cleaned.pop()  # 移除 leave
+                # 不追加 enter（enter 由前面未配对的 enter 延续）
+                continue
+            # 同秒 enter→leave：丢弃较早的 enter，保留 leave（leave 是更可靠的时间标记）
+            if prev["action"] == "enter" and ev["action"] == "leave" and abs(gap) <= 2:
+                cleaned.pop()  # 丢弃较早的 enter
+                cleaned.append({"action": ev["action"], "dt": ev_dt, "raw": ev})
+                continue
+            # 连续相同 action <5秒：去重
+            if ev["action"] == prev["action"] and abs(gap) < 5:
+                continue
+            cleaned.append({"action": ev["action"], "dt": ev_dt, "raw": ev})
+
+        # Step 2: 用 cleaned 生成 sessions（enter→leave 配对）
+        # 合并断线重连：如果只离开 5 分钟内又回来，算一个 session
+        # 规则：enter 不覆盖前一个 pending_enter，leave 优先关最早的 enter
+        pending_enter = None
+        pending_enter_dt = None
+        pending_enter_raw = None
+        sessions = []
+        for ev in cleaned:
+            if ev["action"] in ("enter", "joined"):
+                # 已有 pending_enter → 不覆盖，保留最早的
+                if pending_enter is None:
+                    pending_enter = ev["raw"]
+                    pending_enter_dt = ev["dt"]
+                    pending_enter_raw = ev
+                # else: 保留现有的 pending_enter，忽略后续 enter
+                continue
+            if ev["action"] in ("leave", "left") and pending_enter is not None:
+                # 配对：enter → leave
+                dur = (ev["dt"] - pending_enter_dt).total_seconds()
+                if 0 < dur < 86400:
+                    sessions.append({
+                        "enter": pending_enter,
+                        "enter_dt": pending_enter_dt,
+                        "leave": ev["raw"],
+                        "leave_dt": ev["dt"],
+                        "duration": dur,
+                    })
+                pending_enter = None
+                pending_enter_dt = None
+                pending_enter_raw = None
+
+        # Step 3: 合并相邻 session 的断线重连（只离开 <5分钟）
+        merged_sessions = []
+        for s in sessions:
+            if not merged_sessions:
+                merged_sessions.append(s)
+                continue
+            prev_s = merged_sessions[-1]
+            gap = (s["enter_dt"] - prev_s["leave_dt"]).total_seconds()
+            if 0 < gap <= RECONNECT_WINDOW:
+                # 合并：延长前一个 session
+                disconnects += 1
+                prev_s["leave"] = s["leave"]
+                prev_s["leave_dt"] = s["leave_dt"]
+                prev_s["duration"] = (s["leave_dt"] - prev_s["enter_dt"]).total_seconds()
+            else:
+                merged_sessions.append(s)
+
+        total_seconds = int(sum(s["duration"] for s in merged_sessions))
+        session_count = len(merged_sessions)
+
+        # ── 在线状态判断（Step 4 需要 is_online，同时也给 status 用） ──
         if m["last_action"] == "enter" and m["last_activity"]:
             try:
                 last_dt = datetime.fromisoformat(m["last_activity"])
@@ -837,6 +1517,25 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 is_online = False
         else:
             is_online = False
+
+        # Step 4: 如果最终仍有 pending_enter（在线未离开），计入 open session 时长
+        if pending_enter_dt is not None and is_online:
+            open_sec = int((now_utc - pending_enter_dt).total_seconds())
+            if open_sec > 0:
+                total_seconds += open_sec
+                session_count += 1  # 开放 session 也算一个 session
+                # 在 sessions 里追加一条 open_session 记录
+                merged_sessions.append({
+                    "enter_dt": pending_enter_dt,
+                    "leave_dt": now_utc,
+                    "duration": open_sec,
+                    "open_session": True,
+                })
+
+        m["today_total_seconds"] = int(total_seconds)
+        m["today_total_duration"] = _fmt_dur(int(total_seconds))
+        m["session_count"] = session_count
+        m["disconnect_count"] = disconnects
         m["status"] = "online" if is_online else "offline"
 
         # ── 策略C：从今天 raw_events 取最新一条有 email 的记录 ──
@@ -1462,6 +2161,7 @@ DEFAULT_TELEGRAM_RULES = [
     {"event_type": "participant_joined_waiting_room",   "title": "有人在等候室",       "enabled": 1},
     {"event_type": "frequent_join_leave",                 "title": "短时间频繁进出",     "enabled": 1},
     {"event_type": "periodic_online_report",                 "title": "定时在线报告（每3小时）", "enabled": 1},
+    {"event_type": "online_timeout_alert",                       "title": "连续在线超时预警（3小时）", "enabled": 1},
 ]
 
 
@@ -2210,8 +2910,292 @@ def update_member_group(group_id: int, name: str, description: str = "") -> bool
 def normalize_identity_name(name: str) -> str:
     """归一化姓名：去空格、大小写、连字符"""
     import re
-    return re.sub(r"[\s\-\._']+", "", (name or "").strip().lower())
+    return re.sub(r"[\\s\\-\\._']+", "", (name or "").strip().lower())
 
+
+# ── identity stability analysis (direct from zoom_events) ──
+
+def _parse_participant_from_payload(payload_json):
+    """从 zoom_events payload JSON 解析 participant 字段"""
+    try:
+        import json
+        p = json.loads(payload_json)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    # zoom_events.payload stores the raw webhook JSON, which has
+    # {"payload": {"object": {"participant": {...}}}, "event": "...", "event_ts": "..."}
+    inner = p.get("payload", p)
+    obj = inner.get("object", {}) if isinstance(inner, dict) else {}
+    part = obj.get("participant", {}) or {}
+    if not part.get("user_name"):
+        return None
+    return {
+        "raw_name": part.get("user_name", ""),
+        "public_ip": part.get("public_ip", "") or "",
+        "user_id": part.get("user_id", "") or "",
+        "participant_uuid": part.get("participant_uuid", "") or "",
+        "email": part.get("email", "") or "",
+        "join_time": part.get("join_time", "") or "",
+        "event_time": None,
+    }
+
+
+def get_identity_stability(tenant_id: str, member_key: str, days: int = 30):
+    """从 zoom_events 直接查询成员身份稳定性数据，不依赖中间表"""
+    import json
+    from collections import defaultdict
+    conn = _get_conn()
+
+    rows = conn.execute("""
+        SELECT payload, event_type, created_at
+        FROM zoom_events
+        WHERE tenant_id = ?
+          AND event_type IN ('meeting.participant_joined', 'meeting.participant_left')
+          AND created_at >= datetime('now', ?)
+        ORDER BY created_at ASC
+    """, (tenant_id, f'-{days} days')).fetchall()
+
+    name_variants = []  # list of {raw_name, count, last_seen}
+    seen_names = {}
+    ip_counter = defaultdict(int)
+    last_ip = ""
+    user_ids = set()
+    participant_uuids = set()
+    emails = set()
+    sessions = []
+    session_dates = set()
+    first_joins = []
+    last_leaves = []
+    durations = []
+
+    for r in rows:
+        part = _parse_participant_from_payload(r["payload"])
+        if not part:
+            continue
+        raw_name = part["raw_name"]
+        dn, mk = normalize_member_name(raw_name)
+        if mk != member_key:
+            continue
+
+        event_time = r["created_at"] or ""
+        event_date = event_time[:10] if event_time else ""
+        part["event_time"] = event_time
+
+        # name variants
+        if raw_name not in seen_names:
+            seen_names[raw_name] = {"raw_name": raw_name, "count": 0, "last_seen": ""}
+        seen_names[raw_name]["count"] += 1
+        if event_time > seen_names[raw_name]["last_seen"]:
+            seen_names[raw_name]["last_seen"] = event_time
+
+        # IP
+        ip = part["public_ip"]
+        if ip:
+            ip_counter[ip] += 1
+            last_ip = ip
+
+        # zoom IDs
+        if part["user_id"]:
+            user_ids.add(part["user_id"])
+        if part["participant_uuid"]:
+            participant_uuids.add(part["participant_uuid"])
+        if part["email"]:
+            emails.add(part["email"])
+
+        # join time & duration (from joined events)
+        jt = part.get("join_time", "")
+        if jt and "T" in jt:
+            time_part = jt.split("T")[1][:5]
+            first_joins.append(time_part)
+
+        # duration: look for paired leave event
+        leave_time = ""
+        if r["event_type"] == "meeting.participant_left":
+            leave_part = _parse_participant_from_payload(r["payload"])
+            if leave_part and leave_part.get("join_time"):
+                lt = leave_part["join_time"]
+                if lt and "T" in lt:
+                    last_leaves.append(lt.split("T")[1][:5])
+                    leave_time = lt
+
+        sessions.append({
+            "date": event_date,
+            "join_time": jt,
+            "leave_time": leave_time,
+            "duration_minutes": 0,
+        })
+        if event_date:
+            session_dates.add(event_date)
+
+    total_ips = sum(ip_counter.values())
+    main_ip = max(ip_counter, key=ip_counter.get) if ip_counter else ""
+    ip_list = sorted(
+        [{"ip": k, "count": v, "pct": round(v / total_ips * 100, 1) if total_ips else 0}
+         for k, v in ip_counter.items()],
+        key=lambda x: -x["count"]
+    )
+
+    # duration: estimate from session min/max per date
+    date_session_ranges = defaultdict(lambda: {"first": "", "last": ""})
+    for s in sessions:
+        d = s["date"]
+        if s["join_time"] and (not date_session_ranges[d]["first"] or s["join_time"] < date_session_ranges[d]["first"]):
+            date_session_ranges[d]["first"] = s["join_time"]
+        if s["leave_time"] and s["leave_time"] > date_session_ranges[d]["last"]:
+            date_session_ranges[d]["last"] = s["leave_time"]
+
+    for d, rng in date_session_ranges.items():
+        if rng["first"] and rng["last"]:
+            try:
+                fh, fm = rng["first"].split("T")[1][:5].split(":")
+                lh, lm = rng["last"].split("T")[1][:5].split(":")
+                dur = (int(lh) * 60 + int(lm)) - (int(fh) * 60 + int(fm))
+                if dur > 0:
+                    durations.append(dur)
+            except (ValueError, IndexError):
+                pass
+
+    return {
+        "name_variants": sorted(seen_names.values(), key=lambda x: -x["count"]),
+        "ip_summary": {
+            "ip_list": ip_list,
+            "main_ip": main_ip,
+            "main_ip_pct": round(ip_counter.get(main_ip, 0) / total_ips * 100, 1) if total_ips else 0,
+            "last_ip": last_ip,
+            "unique_ip_count": len(ip_counter),
+        },
+        "zoom_ids": {
+            "user_ids": sorted(user_ids),
+            "participant_uuids": sorted(list(participant_uuids))[:50],
+            "emails": sorted(emails),
+        },
+        "sessions": sessions,
+        "total_sessions": len(sessions),
+        "attendance_summary": {
+            "total_days": len(session_dates),
+            "avg_first_join": _avg_time(first_joins) if first_joins else "",
+            "avg_last_leave": _avg_time(last_leaves) if last_leaves else "",
+            "avg_duration_minutes": round(sum(durations) / len(durations), 1) if durations else 0,
+        },
+    }
+
+
+def _avg_time(times):
+    """计算 HH:MM 列表的平均时间"""
+    total_sec = 0
+    for t in times:
+        parts = t.split(":")
+        if len(parts) >= 2:
+            total_sec += int(parts[0]) * 3600 + int(parts[1]) * 60
+    if not times:
+        return ""
+    avg_sec = total_sec // len(times)
+    return f"{avg_sec // 3600:02d}:{(avg_sec % 3600) // 60:02d}"
+
+
+def find_similar_members(tenant_id: str, member_key: str, days: int = 30):
+    """寻找与目标成员相似的其他成员（只推荐，不自动合并）"""
+    from collections import defaultdict
+    import json
+
+    target = get_identity_stability(tenant_id, member_key, days)
+    if not target or target["total_sessions"] == 0:
+        return []
+
+    conn = _get_conn()
+
+    # Get all unique member_keys from zoom_events
+    all_rows = conn.execute("""
+        SELECT payload, created_at FROM zoom_events
+        WHERE tenant_id = ?
+          AND event_type IN ('meeting.participant_joined', 'meeting.participant_left')
+          AND created_at >= datetime('now', ?)
+        ORDER BY created_at ASC
+    """, (tenant_id, f'-{days} days')).fetchall()
+
+    # Group raw data by member_key
+    member_data = defaultdict(lambda: {
+        "ips": set(), "session_dates": set(), "durations": [],
+        "first_joins": [],
+    })
+
+    for r in all_rows:
+        part = _parse_participant_from_payload(r["payload"])
+        if not part:
+            continue
+        raw_name = part["raw_name"]
+        dn, mk = normalize_member_name(raw_name)
+        if mk == member_key:
+            continue
+
+        md = member_data[mk]
+        if part["public_ip"]:
+            md["ips"].add(part["public_ip"])
+        md["session_dates"].add(r["created_at"][:10] if r["created_at"] else "")
+
+    target_ips = set()
+    for ip_info in target["ip_summary"]["ip_list"]:
+        if ip_info["ip"]:
+            target_ips.add(ip_info["ip"])
+    target_dates = set(s["date"] for s in target["sessions"] if s["date"])
+    target_avg_dur = target["attendance_summary"]["avg_duration_minutes"]
+
+    results = []
+    for mk, md in member_data.items():
+        score = 0
+        reasons = []
+
+        # 1. Name similarity (Levenshtein)
+        if len(member_key) >= 3 and len(mk) >= 3:
+            dist = _levenshtein_distance(member_key, mk)
+            max_len = max(len(member_key), len(mk))
+            if max_len > 0:
+                sim = 1 - (dist / max_len)
+                if sim > 0.5:
+                    score += 20
+                    reasons.append("名称相似")
+
+        # 2. Shared IP
+        common_ips = target_ips & md["ips"]
+        if common_ips:
+            score += 40
+            reasons.append("主IP相同")
+
+        # 3. Never co-present
+        if target_dates.isdisjoint(md["session_dates"]):
+            score += 20
+            reasons.append("从未同时在线")
+
+        if score >= 20:
+            results.append({
+                "member_key": mk,
+                "score": min(score, 100),
+                "reasons": reasons,
+            })
+
+    results.sort(key=lambda x: -x["score"])
+    return results[:10]
+
+
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    prev_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = prev_row[j + 1] + 1
+            deletions = curr_row[j] + 1
+            substitutions = prev_row[j] + (c1 != c2)
+            curr_row.append(min(insertions, deletions, substitutions))
+        prev_row = curr_row
+    return prev_row[-1]
+
+
+import secrets
+import hashlib
 import secrets
 import hashlib
 
@@ -2947,14 +3931,6 @@ def get_active_zoom_accounts_for_tenant(tenant_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_zoom_account(account_db_id: int) -> dict | None:
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT * FROM zoom_accounts WHERE id = ?", (account_db_id,)
-    ).fetchone()
-    return dict(row) if row else None
-
-
 def delete_zoom_account(account_id: int) -> bool:
     conn = _get_conn()
     conn.execute("DELETE FROM zoom_accounts WHERE id = ?", (account_id,))
@@ -3168,41 +4144,108 @@ def get_live_meetings(tenant_id: str) -> list[dict]:
     return sorted(meetings_map.values(), key=lambda m: m["last_activity"], reverse=True)
 
 
-def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0) -> tuple:
-    """获取历史会议列表（按 meeting_id 聚合）"""
+def get_meeting_history(tenant_id: str, limit: int = 50, offset: int = 0,
+                        show_test: bool = False) -> tuple:
+    """获取历史会议列表（按 meeting_id 聚合），仅统计 webhook 的 enter/leave 事件
+
+    参数:
+        show_test: True 时包含 test_/TEST/concurrent_test 开头的测试会议
+    """
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT meeting_id, name, action, action_time "
+        "SELECT meeting_id, name, email, action, action_time "
         "FROM zoom_participants "
-        "WHERE tenant_id = ? "
+        "WHERE tenant_id = ? AND source = 'webhook' AND action IN ('enter','joined','leave','left') "
         "ORDER BY meeting_id, action_time",
         (tenant_id,),
     ).fetchall()
     
     meetings = {}
+    last_key = None
+    last_action = None
     for r in rows:
         mid = r["meeting_id"]
+        name = r["name"]
+        action = r["action"]
+        action_time = r["action_time"]
+
+        # 跳过测试会议（除非 show_test=True）
+        if not show_test and (mid.lower().startswith("test_") or mid.upper().startswith("TEST") or mid.lower().startswith("concurrent_test_")):
+            continue
+
+        # 标准化 action
+        if action in ("joined",):
+            action = "enter"
+        elif action in ("left",):
+            action = "leave"
+
+        # 同 meeting + 同 name + 同秒 + 同 action → 去重
+        cur_key = (mid, name, action_time)
+        if cur_key == last_key and action == last_action:
+            continue
+        last_key, last_action = cur_key, action
+
         if mid not in meetings:
-            meetings[mid] = {"meeting_id": mid, "first_event": r["action_time"], "last_event": r["action_time"], "participant_names": set(), "total_events": 0}
-        meetings[mid]["participant_names"].add(r["name"])
-        meetings[mid]["total_events"] += 1
-        if r["action_time"] < meetings[mid]["first_event"]: meetings[mid]["first_event"] = r["action_time"]
-        if r["action_time"] > meetings[mid]["last_event"]: meetings[mid]["last_event"] = r["action_time"]
+            meetings[mid] = {
+                "meeting_id": mid,
+                "first_event": action_time,
+                "last_event": action_time,
+                "participants": {},
+                "total_events": 0,
+            }
+        m = meetings[mid]
+        try:
+            email = r["email"]
+        except (KeyError, IndexError):
+            email = ""
+        if name not in m["participants"]:
+            m["participants"][name] = {
+                "name": name,
+                "email": email,
+                "first_seen": action_time,
+                "last_seen": action_time,
+                "enter_count": 0,
+                "leave_count": 0,
+                "other_count": 0,
+            }
+        p = m["participants"][name]
+        if action_time < p["first_seen"]:
+            p["first_seen"] = action_time
+        if action_time > p["last_seen"]:
+            p["last_seen"] = action_time
+        if action == "enter":
+            p["enter_count"] += 1
+        elif action == "leave":
+            p["leave_count"] += 1
+        else:
+            p["other_count"] += 1
+        m["total_events"] += 1
+        if action_time < m["first_event"]:
+            m["first_event"] = action_time
+        if action_time > m["last_event"]:
+            m["last_event"] = action_time
     
     for mid in meetings:
-        topic = conn.execute("SELECT topic FROM meeting_topics WHERE meeting_id = ? LIMIT 1", (mid,)).fetchone()
-        meetings[mid]["topic"] = topic[0] if topic else mid
-        meetings[mid]["participant_count"] = len(meetings[mid]["participant_names"])
-        del meetings[mid]["participant_names"]
+        m = meetings[mid]
+        topic = conn.execute(
+            "SELECT topic FROM meeting_topics WHERE meeting_id = ? LIMIT 1", (mid,)
+        ).fetchone()
+        m["topic"] = topic[0] if topic else mid
+        m["participant_count"] = len(m["participants"])
+        participants_list = sorted(m["participants"].values(), key=lambda p: p["first_seen"])
+        for p in participants_list:
+            p["first_seen_display"] = _myt_short(p["first_seen"])
+            p["last_seen_display"] = _myt_short(p["last_seen"])
+        m["participants"] = participants_list
         try:
-            f = datetime.fromisoformat(meetings[mid]["first_event"].replace("Z", "+00:00"))
-            l = datetime.fromisoformat(meetings[mid]["last_event"].replace("Z", "+00:00"))
+            f = datetime.fromisoformat(m["first_event"].replace("Z", "+00:00"))
+            l = datetime.fromisoformat(m["last_event"].replace("Z", "+00:00"))
             dur = int((l - f).total_seconds())
-            meetings[mid]["duration_seconds"] = dur
-            meetings[mid]["duration_display"] = _fmt_dur(dur)
-        except:
-            meetings[mid]["duration_seconds"] = 0
-            meetings[mid]["duration_display"] = "—"
+            m["duration_seconds"] = dur
+            m["duration_display"] = _fmt_dur(dur)
+        except Exception:
+            m["duration_seconds"] = 0
+            m["duration_display"] = "—"
     
     sorted_list = sorted(meetings.values(), key=lambda m: m["last_event"], reverse=True)
     total = len(sorted_list)
