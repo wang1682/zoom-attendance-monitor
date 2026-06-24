@@ -87,6 +87,20 @@ class ParticipantService:
             action, action_time,
             source=source, tenant_id=tenant_id,
         )
+        # 同步写入 participant_sessions
+        try:
+            _session_id = _db.save_participant_session(
+                meeting_id, name, action, action_time,
+                tenant_id=tenant_id, source=source,
+            )
+            # shadow mode 对比日志（仅 enter/leave 动作触发）
+            if _session_id is not None and action in ("enter", "joined", "leave", "left"):
+                _log_session_comparison(tenant_id, name)
+        except Exception:
+            # participant_sessions 是辅助，不影响主流程
+            pass
+
+        return result
 
     @staticmethod
     def save_webhook_participant(
@@ -353,3 +367,61 @@ class ParticipantService:
             related_name=name,
             related_email=email,
         )
+
+
+# ──────────────────────────────────────────
+# shadow mode 对比日志
+# ──────────────────────────────────────────
+
+def _get_session_summary(tenant_id: str, name: str) -> dict | None:
+    """从 participant_sessions 获取某人的今日累计"""
+    try:
+        user_key = _db._make_user_key(name)
+        rows = _db._get_conn().execute("""
+            SELECT
+                COALESCE(SUM(duration_seconds), 0) +
+                CASE WHEN MAX(CASE WHEN leave_time_utc IS NULL THEN join_time_utc END) IS NOT NULL
+                    THEN CAST((JULIANDAY('now') - JULIANDAY(MAX(CASE WHEN leave_time_utc IS NULL THEN join_time_utc END))) * 86400 AS INTEGER)
+                    ELSE 0
+                END AS total_seconds,
+                MAX(CASE WHEN leave_time_utc IS NULL THEN 1 ELSE 0 END) AS is_online
+            FROM participant_sessions
+            WHERE tenant_id=? AND user_key=?
+        """, (tenant_id, user_key)).fetchone()
+        if rows:
+            return {"total_seconds": rows[0], "is_online": bool(rows[1])}
+    except Exception:
+        pass
+    return None
+
+
+def _log_session_comparison(tenant_id: str, name: str):
+    """对比旧算法 vs session 算法并输出到日志"""
+    from io import StringIO
+    import sys
+    try:
+        # 旧算法
+        old = _db.get_today_attendance_summary(tenant_id=tenant_id)
+        old_display = _db.resolve_display_name(name, tenant_id)["display_name"]
+        old_row = old.get(old_display)
+        old_total = old_row["today_total_seconds"] if old_row else 0
+        old_online = old_row["status"] == "online" if old_row else False
+
+        # 新算法
+        new = _get_session_summary(tenant_id, name)
+        if new is None:
+            return
+        new_total = new["total_seconds"]
+        new_online = new["is_online"]
+
+        diff = new_total - old_total
+        buf = StringIO()
+        buf.write(f"[SESSION_COMPARE] {name:<20s} tenant={tenant_id}")
+        buf.write(f" | old={old_total:>6d}s online={old_online}")
+        buf.write(f" | session={new_total:>6d}s online={new_online}")
+        buf.write(f" | diff={diff:>+6d}s")
+        if abs(diff) > 60:
+            buf.write(" *** LARGE DIFF ***")
+        print(buf.getvalue(), file=sys.stderr)
+    except Exception:
+        pass

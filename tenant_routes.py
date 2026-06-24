@@ -779,26 +779,24 @@ async def _compute_setup_status(tenant_id: str) -> dict:
             zm = ZoomMetrics(active)
         else:
             from zoom_metrics import ZoomMetrics
-            zm = ZoomMetrics()
-        live_data = await zm.get_live()
-        meetings = live_data.get("meetings", [])
-        has_active_meetings = any(
-            m.get("participants") and len(m.get("participants", [])) > 0
-            for m in meetings
-        )
-    except Exception:
-        # Tenant Zoom account may lack Metrics API scope — fallback to global
-        try:
-            from zoom_metrics import ZoomMetrics
-            zm_global = ZoomMetrics()
-            live_data = await zm_global.get_live()
+            from db import get_zoom_account
+            za = get_zoom_account("default")
+            if not za:
+                zm = None
+            else:
+                zm = ZoomMetrics(za)
+        if zm is None:
+            has_active_meetings = False
+        else:
+            live_data = await zm.get_live()
             meetings = live_data.get("meetings", [])
             has_active_meetings = any(
                 m.get("participants") and len(m.get("participants", [])) > 0
                 for m in meetings
             )
-        except Exception:
-            has_active_meetings = False
+    except Exception:
+        # Tenant Zoom account may lack Metrics API scope — fallback to default
+        has_active_meetings = False
     checks["meetings"] = has_active_meetings
 
     # 4. Participants data (15 pts)

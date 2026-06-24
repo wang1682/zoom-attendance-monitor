@@ -343,23 +343,27 @@ select option{background:var(--bg3);color:var(--text)}
 /* ═══════  TAB  ═══════ */
 .tab-bar{
   display:flex;
-  gap:1px;
-  margin-bottom:12px;
+  gap:0;
+  margin-bottom:14px;
   border-bottom:1px solid var(--border-light);
+  background:rgba(255,255,255,0.02);
+  border-radius:10px 10px 0 0;
+  padding:4px 4px 0 4px;
 }
 .tab-item{
   padding:6px 16px;
   font-size:11px;
   color:var(--nav-text);
   text-decoration:none;
-  border-bottom:1px solid transparent;
+  border-bottom:2px solid transparent;
   margin-bottom:-1px;
-  transition:all .12s;
+  transition:all .15s ease;
   cursor:pointer;
   letter-spacing:.3px;
+  border-radius:6px 6px 0 0;
 }
-.tab-item:hover{color:var(--nav-text-hover)}
-.tab-item.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-item:hover{color:var(--nav-text-hover);background:rgba(255,255,255,0.04)}
+.tab-item.active{color:var(--accent);border-bottom-color:var(--accent);background:rgba(0,168,255,0.06);font-weight:500}
 
 /* ═══════  EMPTY STATE  ═══════ */
 .empty-state{text-align:center;padding:32px 16px}

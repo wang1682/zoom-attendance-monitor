@@ -11,4 +11,6 @@ old/
 .git/
 .gitignore
 *.md
+*.bak
+*.diff
 *.log

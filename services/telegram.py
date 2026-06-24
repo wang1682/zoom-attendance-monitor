@@ -258,27 +258,52 @@ class TelegramService(BaseService):
             return {"ok": False, "error": str(e)}
 
     def _do_send_sync_retry(self, text: str, chat_id: str) -> dict:
-        """Send with print-debug style (for monitor.py compatibility)."""
-        from httpx import AsyncClient, HTTPError
-
+        """Send with print-debug style (for monitor.py compatibility).
+        已在 async context 中时走 create_task，否则 asyncio.run。
+        """
         import asyncio
-
-        async def _send():
-            try:
-                async with AsyncClient(timeout=10) as cl:
-                    r = await cl.post(
-                        f"{self.base_url}/sendMessage",
-                        json={"chat_id": chat_id, "text": text},
-                    )
-                    if r.status_code != 200:
-                        sys.stderr.write(f"[TG ERROR] {chat_id}: {r.status_code} {r.text[:100]}\n")
-                        return {"ok": False, "error": r.text[:100]}
-                    return {"ok": True}
-            except Exception as e:
-                sys.stderr.write(f"[TG EXCEPTION] {chat_id}: {e}\n")
-                return {"ok": False, "error": str(e)}
-
-        return asyncio.run(_send())
+        try:
+            loop = asyncio.get_running_loop()
+            # 已有 event loop → create_task + run_until_complete
+            # 不能直接在本 loop 上 run_until_complete（会阻塞），用 run_coroutine_threadsafe
+            import httpx
+            async def _send_inner():
+                try:
+                    async with httpx.AsyncClient(timeout=10) as cl:
+                        r = await cl.post(
+                            f"{self.base_url}/sendMessage",
+                            json={"chat_id": chat_id, "text": text},
+                        )
+                        if r.status_code != 200:
+                            sys.stderr.write(f"[TG ERROR] {chat_id}: {r.status_code} {r.text[:100]}\n")
+                            return {"ok": False, "error": r.text[:100]}
+                        return {"ok": True}
+                except Exception as e:
+                    sys.stderr.write(f"[TG EXCEPTION] {chat_id}: {e}\n")
+                    return {"ok": False, "error": str(e)}
+            fut = asyncio.run_coroutine_threadsafe(_send_inner(), loop)
+            result = fut.result(timeout=15)
+            if not result.get("ok"):
+                sys.stderr.write(f"[TG ERROR] {chat_id}: {result.get('error','')}\n")
+            return result
+        except RuntimeError:
+            # 无 event loop → asyncio.run (原始方案)
+            import httpx
+            async def _send():
+                try:
+                    async with httpx.AsyncClient(timeout=10) as cl:
+                        r = await cl.post(
+                            f"{self.base_url}/sendMessage",
+                            json={"chat_id": chat_id, "text": text},
+                        )
+                        if r.status_code != 200:
+                            sys.stderr.write(f"[TG ERROR] {chat_id}: {r.status_code} {r.text[:100]}\n")
+                            return {"ok": False, "error": r.text[:100]}
+                        return {"ok": True}
+                except Exception as e:
+                    sys.stderr.write(f"[TG EXCEPTION] {chat_id}: {e}\n")
+                    return {"ok": False, "error": str(e)}
+            return asyncio.run(_send())
 
     async def _do_send_async(self, text: str, chat_id: str, **kwargs) -> dict:
         """Async sendMessage via httpx."""

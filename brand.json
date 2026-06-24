@@ -16,9 +16,9 @@
   "header_emoji": "📊",
   "footer_text": "Zoom Monitor v2 · 内部工具",
   "telegram_templates": {
-    "participant_enter": "👤 {name} 进入了自习室",
-    "participant_leave": "👤 {name} 离开了自习室",
-    "stranger_alert": "⚠️ 陌生人进入自习室\n👤 {name}\n📧 {email}\n⏰ {time}",
+    "participant_enter": "进入会议\n🟢 成员进入\n\n👤 {name}\n🏷 {team}\n🕒 {time}\n\n📍 {room}",
+    "participant_leave": "离开会议\n🔴 成员离开\n\n👤 {name}\n🏷 {team}\n🕒 {time}\n\n📍 {room}",
+    "stranger_alert": "新面孔\n🆕 陌生成员\n\n👤 {name}\n🏷 <暂无>\n🕒 {time}\n\n📍 {room}",
     "daily_summary": "📊 <b>今日自习室汇总</b>\n📅 {date}\n\n👥 总人数: {total}\n🆕 新人: {new_count}\n⏱ 最早: {first_enter}\n⏱ 最晚: {last_leave}",
     "overtime_alert": "⏰ <b>超时提醒</b>\n自习室仍在进行中\n当前时间: {time}\n已持续: {duration}",
     "meeting_start": "🔔 自习室已开启\n⏰ {time}",

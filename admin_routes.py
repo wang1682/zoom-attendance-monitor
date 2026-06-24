@@ -5,6 +5,7 @@ Mounted as an APIRouter under /dashboard in the main app.
 import json
 import re
 import time
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, Query
@@ -13,6 +14,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 import db
 from config import settings
 from zoom_api import ZoomAPI
+
+logger = logging.getLogger(__name__)
+from zoom_metrics import ZoomMetrics
 from services.auth import AuthService
 
 router = APIRouter()
@@ -230,6 +234,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     search = request.query_params.get("search", "").strip()
     group_filter = request.query_params.get("group", "").strip()
     status_filter = request.query_params.get("status", "").strip()
+    source = request.query_params.get("source", "live").strip()
 
     # ── 获取当前在线数据（live source） ──
     live_map = {}
@@ -280,21 +285,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         except Exception:
             pass
 
-    # ── 从 sharing_live 当前活跃确定 session 起点（只算本次入场以来的数据） ──
+    # ── 当前会议 session 起点：只能来自 zoom_participants 的最早 enter
+    # 不要用 sharing_live.start_time；共享开始时间不是会议开始时间，会导致成员统计全部归零
     session_start_after = None
-    try:
-        from db import _get_conn
-        share_row = _get_conn().execute(
-            "SELECT MIN(start_time) FROM sharing_live WHERE is_active=1 AND tenant_id=?",
-            (tenant_id,),
-        ).fetchone()
-        if share_row and share_row[0]:
-            # sharing_live 的 start_time 是 ISO 格式，直接作为筛选起点
-            session_start_after = share_row[0].replace("Z", "+00:00")
-    except Exception:
-        pass
 
-    # 如果 sharing_live 没有活跃共享，用当前会议最近的 enter 为起点
+    # 用当前会议当天最早 enter 为起点
     if not session_start_after and current_meeting_id:
         try:
             # 当天进入 time 起点（MYT 00:00 - 6h 回溯，和 db.py 保持一致）
@@ -567,7 +562,10 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          tenant_id=tenant_id,
                          data_source=data_source,
                          is_realtime=is_realtime,
-                         metrics_online=metrics_online)
+                         source=source,
+                         metrics_online=metrics_online,
+                         current_meeting_id=current_meeting_id,
+                         session_start_after=session_start_after)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -947,11 +945,13 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                     "participant_count": len(participants),
                     "online_count": sum(1 for p in participants if p.get("status") == "in_meeting"),
                     "last_activity": last_join,
+                    "participants": participants,
                 })
     except Exception:
         pass
 
-    history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0)
+    show_test = request.query_params.get("show_test", "0") == "1"
+    history, total_meetings = get_meeting_history(tenant_id, limit=100, offset=0, show_test=show_test)
     sharing_search = request.query_params.get("search", "")
     sharing_group_id = request.query_params.get("group_id", "")
     sharing, sharing_total, sharing_meta = get_sharing_records(
@@ -1067,10 +1067,500 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
     else:
         range_label = "全部"
 
+    # ── Official summary (for tab=official) ──
+    from app import fmt_myt
+    from db import get_official_session_summary as _get_official_summary
+    _search = request.query_params.get('search', '')
+    _date_from = request.query_params.get('date_from', '')
+    _date_to = request.query_params.get('date_to', '')
+    _raw_summary = _get_official_summary(tenant_id, date_from=_date_from or None, date_to=_date_to or None)
+
+    # ── 构建 member_display 名→主名映射 ──
+    import db as _db
+    import json as _json
+    _mconn = _db._get_conn()
+    _name_map = {}          # participant_name → canonical_name
+    _canonical_aliases = {} # canonical_name → [alias1, alias2, ...]
+    _canonical_emails = {}  # canonical_name → {set of emails}
+    _md_rows = _mconn.execute(
+        "SELECT display_name, raw_name, match_key, aliases "
+        "FROM member_display WHERE tenant_id=? AND deleted=0",
+        (tenant_id,)
+    ).fetchall()
+
+    # Step 1: 预构建 alias → canonical 字典
+    # 先建立 display_name/raw_name/match_key 的自映射
+    from db import normalize_member_name as _nmn
+    _alias_to_canonical = {}  # normalize(key) → canonical display_name
+    _canonical_aliases = {}   # canonical_name → [alias1, alias2, ...]
+    _canonical_emails = {}    # canonical_name → {set of emails}
+    for md in _md_rows:
+        _canonical = md["display_name"]
+        for k in [_canonical, md["raw_name"], md["match_key"]]:
+            if k:
+                nk = _nmn(k)[1]  # 使用完整 normalize（去Host、全角半角、去空格等）
+                if nk and nk not in _alias_to_canonical:
+                    _alias_to_canonical[nk] = _canonical
+        # 额外注册 match_key 原始值（不经 normalize），用于 member_display 中 match_key 与预期不同的情形
+        _mk_raw = md["match_key"]
+        if _mk_raw and _mk_raw not in _alias_to_canonical:
+            _alias_to_canonical[_mk_raw] = _canonical
+    # 再处理 aliases JSON，不覆盖已有映射
+    for md in _md_rows:
+        _canonical = md["display_name"]
+        try:
+            al = _json.loads(md["aliases"]) if md["aliases"] else []
+            if isinstance(al, list):
+                for a in al:
+                    nk = _nmn(a)[1]
+                    if nk and nk not in _alias_to_canonical:
+                        _alias_to_canonical[nk] = _canonical
+        except (ValueError, TypeError):
+            pass
+
+    # Step 2: 注册 raw_name → display 精确映射（用于 match_key 覆盖 normalize 规则的情形）
+    _raw_name_to_display = {}
+    for md in _md_rows:
+        _rn = md["raw_name"]
+        _disp = md["display_name"]
+        if _rn and _rn != _disp:
+            # 只有 raw_name → display 有变动时才注册
+            _raw_name_to_display[_rn] = _disp
+
+    # Step 2: 预构建 canonical_name → 别名列表
+    for md in _md_rows:
+        cname = md["display_name"]
+        if cname not in _canonical_aliases:
+            _canonical_aliases[cname] = []
+        if md["raw_name"] and md["raw_name"] != cname:
+            rn = md["raw_name"]
+            if rn not in _canonical_aliases[cname]:
+                _canonical_aliases[cname].append(rn)
+        try:
+            al = _json.loads(md["aliases"]) if md["aliases"] else []
+            if isinstance(al, list):
+                for a in al:
+                    if a != cname and a not in _canonical_aliases[cname]:
+                        _canonical_aliases[cname].append(a)
+        except (ValueError, TypeError):
+            pass
+
+    def _resolve_canonical(pname):
+        """通过 alias_to_canonical + member_key 映射查找"""
+        if not pname:
+            return pname
+        # Step 0: 精确 raw_name 查 member_display（优先于 normalize，支持手动拆分）
+        _rd = _raw_name_to_display.get(pname)
+        if _rd:
+            return _rd
+        # Step 0: 内置 alias 映射（同 db.py make_identity_key 保持一致）
+        _ALIAS = {
+            "antheafk": "anthea",
+            "harysonharyson": "haryson",
+            "crispin": "crispini",
+            "dcyoungest": "youngest",
+            "dcoceanus": "oceanus",
+        }
+        # Step 1: 完整 normalize 后的 member_key 查别名
+        mk = _nmn(pname)[1]
+        mk = _ALIAS.get(mk, mk)
+        found = _alias_to_canonical.get(mk)
+        if found:
+            return found
+        # Step 2: member_key 查首次出现的最常见名称
+        found = _member_key_to_canonical.get(mk)
+        if found:
+            return found
+        return pname
+
+    def _get_member_key(name: str) -> str:
+        from db import normalize_member_name as _nmn
+        return _nmn(name)[1]
+
+    # ────────────────────────────────────────────────
+    # Step 3: 预构建 member_key → display_name 映射（来自 _raw_summary 的最常见写法）
+    # ────────────────────────────────────────────────
+    _member_key_to_canonical = {}   # member_key → 最常出现/首条 canonical_name
+    _raw_name_to_member_key = {}    # raw_name → member_key
+    for r in _raw_summary:
+        pname = r.get("participant_name", "")
+        if not pname:
+            continue
+        mk = _get_member_key(pname)
+        _raw_name_to_member_key[pname] = mk
+        # 以该组中第一条记录的主显示名作为 canonical
+        if mk not in _member_key_to_canonical:
+            _member_key_to_canonical[mk] = pname
+
+    # 也注册 member_key 缓存（如果 raw_name 本身就在 member_key_to_canonical 中则直接使用）
+    # 确保 _resolve_canonical 能通过 raw_name 找到 member_key 映射
+    for r in _raw_summary:
+        pname = r.get("participant_name", "")
+        if pname:
+            mk = _raw_name_to_member_key[pname]
+            canon = _member_key_to_canonical.get(mk, pname)
+            if canon != pname:
+                # 注册 pname → canon 到 _alias_to_canonical（让 _resolve_canonical 命中）
+                nk = pname.lower().replace(" ", "")
+                if nk not in _alias_to_canonical:
+                    _alias_to_canonical[nk] = canon
+
+    # Step 3: 按 canonical_name 聚合 _raw_summary
+    _canonical_groups = {}  # canonical_name → {sessions, dur, first, last, emails, aliases, raw_names}
+    for r in _raw_summary:
+        pname = r.get("participant_name", "")
+        cname = _resolve_canonical(pname)
+        if cname not in _canonical_groups:
+            _canonical_groups[cname] = {
+                "session_count": 0,
+                "total_duration_minutes": 0,
+                "first_join": None,
+                "last_leave": None,
+                "emails": set(),
+                "raw_names": set(),
+            }
+        g = _canonical_groups[cname]
+        g["session_count"] += r.get("session_count", 0)
+        g["total_duration_minutes"] += r.get("total_duration_minutes", 0) or 0
+        fj = r.get("first_join")
+        ll = r.get("last_leave")
+        if fj and (g["first_join"] is None or fj < g["first_join"]):
+            g["first_join"] = fj
+        if ll and (g["last_leave"] is None or ll > g["last_leave"]):
+            g["last_leave"] = ll
+        if r.get("email"):
+            g["emails"].add(r["email"])
+        g["raw_names"].add(pname)
+
+    _members_list = []
+    _total_sessions = 0
+    _earliest = None
+    _latest = None
+
+    # ── 补充实时数据到 canonical_groups ──
+    if _canonical_groups:
+        _import_conn2 = _db._get_conn()
+        for _cname, _g in list(_canonical_groups.items()):
+            _rn = list(_g["raw_names"])
+            # 如果 canonical_name 不在 raw_names 中，加上去
+            if _cname not in _rn:
+                _rn.insert(0, _cname)
+            _ph = ", ".join(["?" for _ in _rn])
+            _rt_row = _import_conn2.execute(
+                f"""
+                SELECT
+                    MIN(action_time) as first_time,
+                    MAX(action_time) as last_time
+                FROM zoom_participants
+                WHERE name IN ({_ph})
+                  AND action IN ('enter','leave','joined','left')
+                """,
+                _rn,
+            ).fetchone()
+            if _rt_row:
+                _rt_first = _rt_row["first_time"]
+                _rt_last = _rt_row["last_time"]
+                if _rt_first and (not _g["first_join"] or _rt_first < _g["first_join"]):
+                    _g["first_join"] = _rt_first
+                if _rt_last and (not _g["last_leave"] or _rt_last > _g["last_leave"]):
+                    _g["last_leave"] = _rt_last
+        del _import_conn2
+
+    # ── 考勤视角帮助函数 ──
+    def _fmt_dur_cn(total_min):
+        """分钟 → X天X小时格式 (中文)"""
+        total_min = total_min or 0
+        if total_min >= 1440:
+            d = total_min // 1440
+            h = (total_min % 1440) // 60
+            return f"{d}天{h}小时" if h else f"{d}天"
+        elif total_min >= 60:
+            h = total_min // 60
+            m = total_min % 60
+            return f"{h}小时{m}分" if m else f"{h}小时"
+        else:
+            return f"{total_min}分"
+
+    def _fmt_dur_min(total_min):
+        total_min = total_min or 0
+        if total_min >= 1440:
+            d = total_min // 1440
+            h = (total_min % 1440) // 60
+            m = total_min % 60
+            return f"{d}d {h}h {m}m" if m else f"{d}d {h}h"
+        elif total_min >= 60:
+            h = total_min // 60
+            m = total_min % 60
+            return f"{h}h {m}m" if m else f"{h}h"
+        else:
+            return f"{total_min}m"
+
+    def _calc_attendance_days(_tid, _cname, _raw_names_set):
+        """从实时 + 官方数据计算出勤天数和累计时长（按 MYT 日期去重）"""
+        _import_conn = _db._get_conn()
+        _names = [_cname] + list(_raw_names_set)
+        _placeholders = ", ".join(["?" for _ in _names])
+
+        # 1. 实时数据：zoom_participants 中 enter→leave 配对，按 MYT 日期计算时长
+        _realtime_sql = f"""
+            WITH paired AS (
+                SELECT
+                    LAG(action_time) OVER (PARTITION BY name, meeting_id ORDER BY action_time) AS prev_time,
+                    LAG(action) OVER (PARTITION BY name, meeting_id ORDER BY action_time) AS prev_action,
+                    action_time,
+                    action,
+                    name
+                FROM zoom_participants
+                WHERE name IN ({_placeholders})
+                  AND action IN ('enter','leave','joined','left')
+            )
+            SELECT
+                SUBSTR(prev_time, 1, 10) as utc_date,
+                CAST(ROUND(SUM(
+                    CASE WHEN prev_action IN ('enter','joined') AND action IN ('leave','left')
+                         THEN (julianday(action_time) - julianday(prev_time)) * 86400.0 / 60.0
+                         ELSE 0 END
+                )) AS INTEGER) as day_minutes
+            FROM paired
+            WHERE prev_action IN ('enter','joined')
+              AND action IN ('leave','left')
+            GROUP BY utc_date
+        """
+        _realtime_rows = _import_conn.execute(_realtime_sql, _names).fetchall()
+
+        # 2. 官方数据：official_attendance_sessions
+        _official_sql = f"""
+            SELECT
+                SUBSTR(join_time, 1, 10) as utc_date,
+                SUM(duration_minutes) as day_minutes
+            FROM official_attendance_sessions
+            WHERE tenant_id = ?
+              AND ({ " OR ".join(["LOWER(participant_name) = LOWER(?)" for _ in _names]) })
+            GROUP BY utc_date
+        """
+        _official_rows = _import_conn.execute(_official_sql, [_tid] + _names).fetchall()
+
+        # 3. 合并：按 utc_date 去重，取 max 时长
+        _merged = {}
+        for _r in _realtime_rows:
+            _d = _r["utc_date"]
+            _merged[_d] = max(_merged.get(_d, 0), _r["day_minutes"] or 0)
+        for _r in _official_rows:
+            _d = _r["utc_date"]
+            _merged[_d] = max(_merged.get(_d, 0), _r["day_minutes"] or 0)
+
+        _total_min = sum(_merged.values())
+        _days = len(_merged)
+        return {"days": _days, "total_minutes": _total_min, "duration_display": _fmt_dur_min(_total_min)}
+
+    def _calc_last_active(_tid, _cname, _raw_names_set):
+        """从实时 + 官方数据查最近出勤，返回人性化时间（实时优先）"""
+        _import_conn = _db._get_conn()
+        _names = [_cname] + list(_raw_names_set)
+        _placeholders = ", ".join(["?" for _ in _names])
+
+        # 1. 实时数据：查最后一条 enter/leave 事件
+        _rt = _import_conn.execute(
+            f"""
+            SELECT MAX(action_time) as last_time
+            FROM zoom_participants
+            WHERE name IN ({_placeholders})
+              AND action IN ('enter','leave','joined','left')
+            """,
+            _names,
+        ).fetchone()
+        _rt_ts = _rt["last_time"] if _rt else None
+
+        # 1b. current_member_sessions 补查（正在进行的会话）
+        _ms = _import_conn.execute(
+            f"""
+            SELECT MAX(last_activity_at) as last_activity
+            FROM current_member_sessions
+            WHERE display_name IN ({_placeholders})
+            """,
+            _names,
+        ).fetchone()
+        _ms_ts = _ms["last_activity"] if _ms else None
+
+        # 2. 官方数据：查最后 join_time
+        _like_clauses2 = " OR ".join(["LOWER(participant_name) = LOWER(?)" for _ in _names])
+        _of = _import_conn.execute(
+            f"""
+            SELECT MAX(join_time) as last_join
+            FROM official_attendance_sessions
+            WHERE tenant_id = ?
+              AND ({_like_clauses2})
+            """,
+            [_tid] + _names,
+        ).fetchone()
+        _of_ts = _of["last_join"] if _of else None
+
+        # 3. 取所有来源中较新的那个
+        _candidates = [t for t in [_rt_ts, _ms_ts, _of_ts] if t]
+        _raw_ts = max(_candidates) if _candidates else None
+        if not _raw_ts:
+            return "—"
+
+        # 4. 格式化为友好时间
+        if callable(fmt_myt):
+            myt_str = fmt_myt(_raw_ts)
+            import datetime as _dt
+            _now = _dt.datetime.now(_dt.timezone.utc)
+            _now_myt = _now.astimezone(_dt.timezone(_dt.timedelta(hours=8)))
+            try:
+                _ts = _dt.datetime.strptime(myt_str, "%m-%d %H:%M:%S").replace(
+                    year=_now_myt.year,
+                    tzinfo=_dt.timezone(_dt.timedelta(hours=8))
+                )
+                _diff = _now_myt - _ts
+                if _diff.days == 0:
+                    return f"今天 {myt_str[6:11]}"
+                elif _diff.days == 1:
+                    return f"昨天 {myt_str[6:11]}"
+                elif _diff.days <= 7:
+                    return f"{_diff.days}天前 {myt_str[6:11]}"
+            except:
+                pass
+            return myt_str[:16]
+        return str(_raw_ts)[:16]
+
+
+    def _calc_official_last(_tid, _cname, _raw_names_set):
+        """仅查官方最后时间（用于对比显示）"""
+        _import_conn = _db._get_conn()
+        _names = [_cname] + list(_raw_names_set)
+        _like_clauses = " OR ".join(["LOWER(participant_name) = LOWER(?)" for _ in _names])
+        _of = _import_conn.execute(
+            f"""
+            SELECT MAX(join_time) as last_join
+            FROM official_attendance_sessions
+            WHERE tenant_id = ?
+              AND ({_like_clauses})
+            """,
+            [_tid] + _names,
+        ).fetchone()
+        _of_ts = _of["last_join"] if _of else None
+        if not _of_ts:
+            return None
+        if callable(fmt_myt):
+            myt_str = fmt_myt(_of_ts)
+            import datetime as _dt
+            _now = _dt.datetime.now(_dt.timezone.utc)
+            _now_myt = _now.astimezone(_dt.timezone(_dt.timedelta(hours=8)))
+            try:
+                _ts = _dt.datetime.strptime(myt_str, "%m-%d %H:%M:%S").replace(
+                    year=_now_myt.year,
+                    tzinfo=_dt.timezone(_dt.timedelta(hours=8))
+                )
+                _diff = _now_myt - _ts
+                if _diff.days == 0:
+                    return f"今天 {myt_str[6:11]}"
+                elif _diff.days == 1:
+                    return f"昨天 {myt_str[6:11]}"
+                elif _diff.days <= 7:
+                    return f"{_diff.days}天前 {myt_str[6:11]}"
+            except:
+                pass
+            return myt_str[:16]
+        return str(_of_ts)[:16]
+
+
+    for cname, g in sorted(_canonical_groups.items()):
+        _total_sessions += g["session_count"]
+        _earliest_tmp = g["first_join"]
+        _latest_tmp = g["last_leave"]
+        dur_min = g["total_duration_minutes"]
+        dur_disp = _fmt_dur_cn(dur_min)
+
+        # 搜索过滤：搜索词匹配 canonical_name 或别名
+        if _search:
+            _search_lower = _search.lower()
+            _matches_search = (
+                _search_lower in cname.lower()
+                or any(_search_lower in (a or "").lower() for a in _canonical_aliases.get(cname, []))
+                or any(_search_lower in (rn or "").lower() for rn in g["raw_names"])
+            )
+            if not _matches_search:
+                continue
+
+        # 构建别名列表（去重，排除主名）
+        _all_aliases = list(g["raw_names"] - {cname})
+        for a in _canonical_aliases.get(cname, []):
+            if a != cname and a not in _all_aliases:
+                _all_aliases.append(a)
+        # 排序：短的在前
+        _all_aliases.sort(key=lambda x: (len(x), x))
+
+        _email = ", ".join(sorted(g["emails"])) if g["emails"] else ""
+
+        # 计算考勤视角指标：出勤天数、日均时长、最近出勤
+        _attendance_days = _calc_attendance_days(tenant_id, cname, g["raw_names"])
+        _last_active = _calc_last_active(tenant_id, cname, g["raw_names"])
+        _avg_daily_disp = _fmt_dur_min(_attendance_days["total_minutes"] // _attendance_days["days"]) if _attendance_days["days"] > 0 else "0m"
+
+        # 纯官方 last_seen
+        _official_last = _calc_official_last(tenant_id, cname, g["raw_names"])
+
+        _members_list.append(dict(
+            name=cname,
+            aliases=_all_aliases,
+            email=_email,
+            session_count=g["session_count"],
+            total_duration_minutes=dur_min,
+            total_duration_display=dur_disp,
+            first_join=_earliest_tmp,
+            first_join_display=fmt_myt(_earliest_tmp) if callable(fmt_myt) else (_earliest_tmp or "—"),
+            last_leave=_latest_tmp,
+            last_leave_display=fmt_myt(_latest_tmp) if callable(fmt_myt) else (_latest_tmp or "—"),
+            attendance_days=_attendance_days["days"],
+            total_duration_display_attendance=_attendance_days["duration_display"],
+            avg_daily_display=_avg_daily_disp,
+            last_active_display=_last_active,
+            official_last_display=_official_last,
+        ))
+
+    # 顶层统计：考勤视角
+    _total_attendance_days = sum(m.get("attendance_days", 0) for m in _members_list)
+    _total_attendance_min = sum(m.get("total_duration_minutes", 0) for m in _members_list)
+    _avg_daily_total = _fmt_dur_min(_total_attendance_min // _total_attendance_days) if _total_attendance_days > 0 else "0m"
+    _last_active_overall = max((m.get("last_active_display", "") for m in _members_list if m.get("last_active_display") and m["last_active_display"] != "—"), default="—")
+
+    summary_official = {
+        "member_count": len(_members_list),
+        "total_sessions": _total_sessions,
+        "attendance_days": _total_attendance_days,
+        "total_duration_display": _fmt_dur_min(_total_attendance_min),
+        "avg_daily_display": _avg_daily_total,
+        "last_active_display": _last_active_overall,
+        "members": _members_list,
+    }
+    # ── Imported files ──
+    import db as _db
+    _conn = _db._get_conn()
+    imported_files = [
+        dict(r)
+        for r in _conn.execute(
+            """SELECT source_file, COUNT(*) as row_count,
+                      MIN(imported_at) as imported_at,
+                      COUNT(DISTINCT participant_name) as participant_count,
+                      SUM(duration_minutes) as total_minutes
+               FROM official_attendance_sessions
+               WHERE tenant_id = ?
+               GROUP BY source_file
+               ORDER BY imported_at DESC""",
+            (tenant_id,),
+        ).fetchall()
+    ]
+    for f in imported_files:
+        f["imported_at_display"] = fmt_myt(f.get("imported_at")) if callable(fmt_myt) else (f.get("imported_at","—"))
+
     return _render_admin(request, "meetings", user, "meetings.html",
                          title="会议中心",
                          live_meetings=live,
                          history_meetings=history,
+                         live_count=len(live) if live else 0,
+                         history_count=len(history) if history else 0,
+                         sharing_count=len(sharing) if sharing else 0,
                          total_meetings=total_meetings,
                          sharing_records=sharing,
                          sharing_total=sharing_total,
@@ -1083,7 +1573,9 @@ async def dashboard_meetings(request: Request, user: dict = Depends(require_user
                          sharing_search=sharing_search,
                          sharing_group_id=sharing_group_id,
                          sharing_groups=groups_stats,
-                         tab=tab)
+                         summary=dict(official=summary_official, imported_files=imported_files),
+                         tab=tab,
+                         imported_files=imported_files)
 
 
 @router.get("/overview", response_class=HTMLResponse)
@@ -2203,3 +2695,343 @@ def _render_admin(request: Request, active: str, user: dict, template_name: str,
     context["current_user"] = current_user
 
     return templates.TemplateResponse(request, template_name, context)
+
+
+# ── History — Zoom 官方 Attendance CSV 上传与导入 ──
+
+@router.get("/history", response_class=HTMLResponse)
+async def dashboard_history_page(request: Request, user: dict = Depends(require_user)):
+    """302 Redirect to meetings?tab=official"""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/dashboard/meetings?tab=official", status_code=302)
+
+@router.post("/history/delete")
+async def history_delete_csv(request: Request, user: dict = Depends(require_user)):
+    """删除某个导入的 CSV 文件所有记录"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    form = await request.form()
+    source_file = (form.get("source_file") or "").strip()
+    if not source_file:
+        return JSONResponse({"success": False, "error": "缺少 source_file 参数"}, status_code=400)
+
+    import db as _db
+    conn = _db._get_conn()
+    deleted = conn.execute(
+        "DELETE FROM official_attendance_sessions WHERE tenant_id=? AND source_file=?",
+        (tenant_id, source_file)
+    ).rowcount
+    conn.commit()
+    return JSONResponse({"success": True, "deleted": deleted})
+
+
+@router.post("/history/upload")
+async def history_upload_csv(request: Request, user: dict = Depends(require_user)):
+    import os
+    import tempfile
+
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+
+    form = await request.form()
+    csv_file = form.get("file")
+    if not csv_file or not hasattr(csv_file, "filename") or not csv_file.filename:
+        return JSONResponse({"success": False, "error": "请选择 CSV 文件"}, status_code=400)
+
+    if not csv_file.filename.lower().endswith(".csv"):
+        return JSONResponse({"success": False, "error": "仅支持 .csv 文件"}, status_code=400)
+
+    suffix = os.path.splitext(csv_file.filename)[1] or ".csv"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await csv_file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        from db import import_official_attendance_csv
+
+        result = import_official_attendance_csv(
+            tmp_path, tenant_id=tenant_id, source_file=csv_file.filename
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "error": f"{type(e).__name__}: {str(e)[:500]}"},
+            status_code=500,
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+@router.get("/api/v3/history/member-sessions")
+async def history_member_sessions_api(
+    request: Request,
+    name: str = "",
+    user: dict = Depends(require_user),
+):
+    """返回某个成员的所有官方历史 session 明细"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    from db import get_official_sessions_for_member
+    rows = get_official_sessions_for_member(tenant_id, name, limit=1000)
+    from app import fmt_myt
+    def _d(dm):
+        dm = dm or 0
+        if dm >= 1440:
+            return f"{dm//1440}d {dm%1440//60}h"
+        elif dm >= 60:
+            return f"{dm//60}h {dm%60}m"
+        else:
+            return f"{dm}m"
+    return JSONResponse({
+        "ok": True,
+        "member": name,
+        "sessions": [
+            dict(
+                meeting_id=r.get("meeting_id", ""),
+                topic=r.get("topic", ""),
+                join_time=r.get("join_time"),
+                join_time_display=fmt_myt(r.get("join_time")),
+                leave_time=r.get("leave_time"),
+                leave_time_display=fmt_myt(r.get("leave_time")),
+                duration_minutes=r.get("duration_minutes", 0),
+                duration_display=_d(r.get("duration_minutes", 0)),
+            )
+            for r in rows
+        ],
+    })
+
+
+@router.get("/api/v3/history/member-daily")
+async def history_member_daily_api(
+    request: Request,
+    name: str = "",
+    limit: int = 60,
+    user: dict = Depends(require_user),
+):
+    """返回某个成员的按天汇总数据（考勤视角）"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    from db import get_official_session_daily_summary
+    result = get_official_session_daily_summary(tenant_id, name, limit=limit)
+    return JSONResponse({"ok": True, **result})
+
+
+@router.get("/api/v3/attendance-matrix")
+async def attendance_matrix_api(
+    request: Request,
+    year: int = 0,
+    month: int = 0,
+    user: dict = Depends(require_user),
+):
+    """返回考勤矩阵"""
+    import datetime
+    now = datetime.datetime.utcnow()
+    y = year or now.year
+    m = month or now.month
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    from db import get_matrix
+    result = get_matrix(tenant_id, y, m)
+    return JSONResponse({"ok": True, **result})
+
+
+# ── Report API 同步 ──
+
+async def _resolve_zoom_for_tenant(tenant_id: str) -> ZoomMetrics:
+    """根据 tenant_id 获取 Zoom 账号并返回 ZoomMetrics 实例
+    无账号时抛 ValueError
+    """
+    za = db.get_zoom_account(tenant_id)
+    if not za:
+        raise ValueError(f"当前租户「{tenant_id}」未配置 Zoom 账号")
+    logger.info(
+        "[OFFICIAL_SYNC] tenant=%s zoom_account=%s host=%s",
+        tenant_id, za["account_id"], za["host_email"]
+    )
+    return ZoomMetrics(za)
+
+
+async def _sync_meeting_participants(
+    zm: ZoomMetrics, tenant_id: str, meeting: dict
+) -> tuple[int, int, int]:
+    """同步单个会议的所有参与者到 official_attendance_sessions
+    返回 (inserted, skipped, errors)
+    """
+    mid = str(meeting.get("id", ""))
+    topic = meeting.get("topic", mid)
+    host_name = meeting.get("host_name", "")
+    host_email = meeting.get("host_email", "")
+    meeting_start = meeting.get("start_time", "") or meeting.get("meeting_start_time", "")
+    meeting_end = meeting.get("end_time", "") or meeting.get("meeting_end_time", "")
+    if not meeting_end and meeting.get("duration", 0):
+        from datetime import datetime, timedelta, timezone
+        try:
+            st = datetime.fromisoformat(meeting_start.replace("Z", "+00:00"))
+            meeting_end = (st + timedelta(minutes=int(meeting["duration"]))).isoformat()
+        except Exception:
+            meeting_end = ""
+    try:
+        participants = await zm.get_report_meeting_participants(mid)
+    except Exception:
+        return 0, 0, 1
+    inserted = skipped = errors = 0
+    for p in participants:
+        dur = p.get("duration", 0) or 0
+        dur_min = dur // 60  # Report API 返回秒，存分钟
+        try:
+            rid = db.upsert_official_attendance_session(
+                tenant_id=tenant_id,
+                meeting_id=mid,
+                topic=topic,
+                host_name=host_name,
+                host_email=host_email,
+                meeting_start=meeting_start,
+                meeting_end=meeting_end,
+                participant_name=p["name"],
+                email=p.get("email", ""),
+                join_time=p.get("join_time", ""),
+                leave_time=p.get("leave_time", ""),
+                duration_minutes=float(dur_min),
+            )
+            if rid:
+                inserted += 1
+            else:
+                skipped += 1
+        except Exception:
+            errors += 1
+    return inserted, skipped, errors
+
+
+@router.post("/api/v3/sync-official-yesterday")
+async def sync_official_yesterday(
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    """同步昨天所有会议参与者（Report API）"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    try:
+        zm = await _resolve_zoom_for_tenant(tenant_id)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    yesterday_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_end = yesterday_start + timedelta(days=1)
+    try:
+        meetings = await zm.get_past_meetings(page_size=50)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"获取会议列表失败: {e}"}, status_code=500)
+    total_i = total_s = total_e = 0
+    meeting_count = 0
+    seen_mids = set()
+    for m in meetings:
+        mid = str(m.get("id", ""))
+        if mid and mid in seen_mids:
+            continue
+        seen_mids.add(mid)
+        # 过滤只同步昨天开始的会议
+        st = m.get("start_time", "")
+        if st:
+            try:
+                st_dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                if st_dt < yesterday_start or st_dt >= yesterday_end:
+                    continue
+            except Exception:
+                pass
+        i, s, e = await _sync_meeting_participants(zm, tenant_id, m)
+        total_i += i
+        total_s += s
+        total_e += e
+        meeting_count += 1
+    return JSONResponse({
+        "ok": True,
+        "tenant": tenant_id,
+        "meetings": meeting_count,
+        "inserted": total_i,
+        "skipped": total_s,
+        "errors": total_e,
+    })
+
+
+@router.post("/api/v3/sync-official-month")
+async def sync_official_month(
+    request: Request,
+    year: int = 0,
+    month: int = 0,
+    user: dict = Depends(require_user),
+):
+    """同步本月（或指定月）所有会议参与者（Report API）"""
+    from datetime import datetime, timezone, timedelta
+    import calendar
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    try:
+        zm = await _resolve_zoom_for_tenant(tenant_id)
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    now = datetime.now(timezone.utc)
+    y = year or now.year
+    m = month or now.month
+    _, total_days = calendar.monthrange(y, m)
+    month_start = now.replace(year=y, month=m, day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_end = month_start + timedelta(days=total_days)
+    try:
+        meetings = await zm.get_past_meetings(page_size=50, from_days=total_days + 2)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"获取会议列表失败: {e}"}, status_code=500)
+    total_i = total_s = total_e = 0
+    meeting_count = 0
+    seen_mids = set()
+    for m in meetings:
+        mid = str(m.get("id", ""))
+        if mid and mid in seen_mids:
+            continue
+        seen_mids.add(mid)
+        st = m.get("start_time", "")
+        if st:
+            try:
+                st_dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                if st_dt < month_start or st_dt >= month_end:
+                    continue
+            except Exception:
+                pass
+        i, s, e = await _sync_meeting_participants(zm, tenant_id, m)
+        total_i += i
+        total_s += s
+        total_e += e
+        meeting_count += 1
+    return JSONResponse({
+        "ok": True,
+        "tenant": tenant_id,
+        "meetings": meeting_count,
+        "inserted": total_i,
+        "skipped": total_s,
+        "errors": total_e,
+    })
+
+# ── Identity Stability API ──────────────────────────────────────────────
+
+@router.get("/api/member/identity-stability/{member_key}", response_class=JSONResponse)
+async def api_member_identity_stability(member_key: str,
+                                         days: int = 30,
+                                         request: Request = None):
+    """获取成员身份稳定性数据"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    try:
+        data = db.get_identity_stability(tenant_id, member_key, days)
+        return JSONResponse({"ok": True, "data": data})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+
+@router.get("/api/member/similar/{member_key}", response_class=JSONResponse)
+async def api_member_similar(member_key: str,
+                              days: int = 30,
+                              request: Request = None):
+    """寻找相似成员"""
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    try:
+        data = db.find_similar_members(tenant_id, member_key, days)
+        return JSONResponse({"ok": True, "data": data})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+

@@ -727,3 +727,121 @@ select option { background: var(--bg3); color: var(--text); }
   margin-bottom: 12px;
 }
 @media (max-width: 640px) { .stats-wrapper { grid-template-columns: repeat(2, 1fr); } }
+
+/* ══════════════════════════════════════════════════════
+   官方数据 Tab — compact table
+   ══════════════════════════════════════════════════════ */
+.official-wrap { max-width: 1180px; margin: 0 auto; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+@media (max-width: 640px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.s-card {
+  background: var(--bg3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.s-icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
+.s-body { min-width: 0; }
+.s-num { font-size: 16px; font-weight: 700; color: var(--text); line-height: 1.2; font-family: var(--mono); }
+.s-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .4px; }
+
+.official-table-wrap { overflow-x: auto; background: var(--bg3); border: 1px solid var(--border-light); border-radius: 4px; }
+.official-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+.official-table thead { position: sticky; top: 0; z-index: 2; }
+.official-table th {
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  white-space: nowrap;
+}
+.official-table th.stat-col { padding-right: 16px !important; text-align: right; }
+.official-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(0,183,255,0.08);
+  color: var(--text);
+  vertical-align: middle;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.official-table tr { height: 36px; }
+.official-table tr:last-child td { border-bottom: none; }
+.official-table tr:hover td { background: rgba(0,217,255,0.04); }
+
+.official-table .name-col { font-weight: 500; }
+.official-table .stat-col { text-align: right; font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
+.official-table .stat-col .duration { color: var(--accent); font-weight: 600; }
+.official-table .last-col { white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--text-secondary) !important; }
+
+/* 官方数据列宽比例 — 成员 35%, 出勤天数 10%, 累计时长 18%, 日均 12%, 最近出勤 20%, 操作 5% */
+.official-table th:nth-child(1),
+.official-table td:nth-child(1) { width: 35%; min-width: 220px; }
+.official-table th:nth-child(2),
+.official-table td:nth-child(2) { width: 10%; min-width: 50px; padding-right: 8px !important; text-align: right; }
+.official-table th:nth-child(3),
+.official-table td:nth-child(3) { width: 18%; min-width: 64px; padding-right: 8px !important; text-align: right; }
+.official-table th:nth-child(4),
+.official-table td:nth-child(4) { width: 12%; min-width: 48px; padding-right: 8px !important; text-align: right; }
+.official-table th:nth-child(5),
+.official-table td:nth-child(5) { width: 20%; min-width: 76px; }
+.official-table th:nth-child(6),
+.official-table td:nth-child(6) { width: 5%; min-width: 30px; text-align: center; }
+
+.expand-btn {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .12s;
+  line-height: 1;
+  padding: 0;
+}
+.expand-btn:hover { color: var(--accent); border-color: var(--border); background: var(--accent-dim); }
+
+.workspace-panel {
+  background: var(--bg3);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  overflow: visible;
+  margin-top: 10px;
+}
+
+.filters-bar {
+  padding: 6px 10px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg);
+}
+
+/* ══════════════════════════════════════════════════════
+   详情卡 — member-detail-card
+   ══════════════════════════════════════════════════════ */
+.detail-card { background: var(--bg); border: 1px solid var(--border-light); border-radius: 4px; padding: 10px 12px; }
+.detail-card-name { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+.detail-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--border-light); font-size: 12px; }
+.detail-row:last-child { border-bottom: none; }
+.detail-label { color: var(--text-muted); }
+.detail-value { color: var(--text); font-family: var(--mono); }

@@ -167,7 +167,8 @@ class AuthService(BaseService):
 
         if ctx.is_admin_or_above():
             tenants = db.get_all_tenants()
-            return [{"id": "*", "display_name": "所有租户", "name": "所有租户"}] + tenants
+            # 默认不显示“所有租户”，避免误进入全租户视图
+            return tenants
 
         # user / viewer
         t = db.get_tenant(ctx.tenant_id)
@@ -252,7 +253,7 @@ class AuthService(BaseService):
         import db
 
         ctx = self._require_context()
-        tenant_id = ctx.effective_tenant
+        tenant_id = self.request.app.state.get_effective_tenant_id(self.request) if hasattr(self.request.app.state, "get_effective_tenant_id") else ctx.effective_tenant
 
         # Fresh user from DB
         fresh_user = db.get_user_by_id(ctx.user_id) or {}

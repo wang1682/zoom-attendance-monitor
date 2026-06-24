@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta
 from config import settings
 from db import (should_send_telegram, get_all_active_zoom_accounts)
 from alerts import TelegramNotifier
+from zoom_metrics import ZoomMetrics
 from zoom_api import ZoomAPI
 import templates as tmpl
 
@@ -172,58 +173,130 @@ async def _push_entries(entries: list[tuple], entry_type: str, tenant_id: str,
     if not entries or not push_now:
         return
     if entry_type == "stranger":
-        lines = []
         for name, email, utc_dt, mid in entries:
             room = get_room_label(mid)
             myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
-            lines.append(
-                tmpl.render("stranger_alert",
-                            name=name, email=email,
-                            time=myt_time) +
-                (f" [{room}]" if name else "")
-            )
-        msg = (tmpl.render("stranger_header", count=str(len(entries))) +
-               "\n".join(lines))
-        _fut = _push_by_rule("unknown_user", msg, tenant_id, default_tg)
-        if not _fut:
-            return  # 没有配置 channels，不推
+            msg = tmpl.render("stranger_alert",
+                              name=name, email=email,
+                              time=myt_time, room=room)
+            _fut = _push_by_rule("unknown_user", msg, tenant_id, default_tg)
+            if not _fut:
+                return
 
     elif entry_type == "enter":
         entries.sort(key=lambda x: x[1])
-        lines = [tmpl.render("participant_enter_header", count=str(len(entries)))]
         for name, utc_dt, mid, _ in entries:
             room = get_room_label(mid)
             myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
             late = " ⚠️迟到" if is_late(utc_dt.astimezone(MYT)) else ""
-            lines.append(
-                tmpl.render("participant_enter",
-                            name=name, time=myt_time,
-                            room=room) + late
-            )
-        msg = "\n".join(filter(None, lines))
-        _fut = _push_by_rule("participant_joined", msg, tenant_id, default_tg)
-        if not _fut:
-            return
+            msg = tmpl.render("participant_enter",
+                              name=name, time=myt_time,
+                              room=room) + late
+            _fut = _push_by_rule("participant_joined", msg, tenant_id, default_tg)
+            if not _fut:
+                return
 
     elif entry_type == "leave":
-        lines = [tmpl.render("participant_leave_header", count=str(len(entries)))]
         for name, utc_dt, mid in entries:
             room = get_room_label(mid)
             myt_time = utc_dt.astimezone(MYT).strftime("%H:%M")
-            lines.append(
-                tmpl.render("participant_leave",
-                            name=name, time=myt_time,
-                            room=room)
-            )
-        msg = "\n".join(filter(None, lines))
-        _fut = _push_by_rule("participant_left", msg, tenant_id, default_tg)
-        if not _fut:
-            return
+            msg = tmpl.render("participant_leave",
+                              name=name, time=myt_time,
+                              room=room)
+            _fut = _push_by_rule("participant_left", msg, tenant_id, default_tg)
+            if not _fut:
+                return
+
+
+# ── Official 报表同步 ──
+
+_OFFICIAL_SYNC_CYCLE = 0       # 当前循环计数
+_OFFICIAL_SYNC_INTERVAL = 12   # 每 12 个 tick 触发一次（≈ 60 分钟）
+
+async def _run_official_sync(tenant_id: str, zoom_acct: dict | None = None) -> dict:
+    """同步 tenant 的昨天+今天官方报表数据到 official_attendance_sessions。
+    返回 {tenant, inserted, skipped, errors, date_str, meetings}。
+
+    无 zoom_acct 时尝试从 zoom_accounts 表自动获取。
+    """
+    import db as _db
+    za = zoom_acct or _db.get_zoom_account(tenant_id)
+    if not za:
+        return {"tenant": tenant_id, "error": "no zoom account"}
+    zm = ZoomMetrics(za)
+    from datetime import datetime, timezone, timedelta as _td
+    now = datetime.now(timezone.utc)
+    yesterday_start = (now - _td(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + _td(days=1)
+    try:
+        meetings = await zm.get_past_meetings(page_size=50, from_days=2)
+    except Exception as e:
+        return {"tenant": tenant_id, "error": f"get_past_meetings: {e}"}
+    total_i = total_s = total_e = 0
+    meeting_count = 0
+    seen_mids = set()
+    for m in meetings:
+        mid = str(m.get("id", ""))
+        if mid and mid in seen_mids:
+            continue
+        seen_mids.add(mid)
+        # 只处理昨天和今天开始的会议
+        st = m.get("start_time", "")
+        if st:
+            try:
+                st_dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+                if st_dt < yesterday_start or st_dt >= today_end:
+                    continue
+            except Exception:
+                pass
+        try:
+            participants = await zm.get_report_meeting_participants(mid)
+        except Exception:
+            total_e += 1
+            continue
+        for p in participants:
+            dur = p.get("duration", 0) or 0
+            dur_min = dur // 60
+            try:
+                rid = _db.upsert_official_attendance_session(
+                    tenant_id=tenant_id,
+                    meeting_id=mid,
+                    topic=m.get("topic", mid),
+                    host_name=m.get("host_name", ""),
+                    host_email=m.get("host_email", ""),
+                    meeting_start=st,
+                    meeting_end=m.get("end_time", ""),
+                    participant_name=p["name"],
+                    email=p.get("email", ""),
+                    join_time=p.get("join_time", ""),
+                    leave_time=p.get("leave_time", ""),
+                    duration_minutes=float(dur_min),
+                )
+                if rid:
+                    total_i += 1
+                else:
+                    total_s += 1
+            except Exception:
+                total_e += 1
+        meeting_count += 1
+    return {
+        "tenant": tenant_id,
+        "inserted": total_i,
+        "skipped": total_s,
+        "errors": total_e,
+        "date_str": today_start.strftime("%Y-%m-%d"),
+        "meetings": meeting_count,
+    }
 
 
 async def monitor_loop():
     zoom_default = ZoomAPI()
     tg = TelegramNotifier()
+
+    # 全局循环计数器
+    global _OFFICIAL_SYNC_CYCLE
+    _OFFICIAL_SYNC_CYCLE = 0
 
     sys.stdout.write("[MONITOR] 启动 Zoom 多租户轮询服务\n")
     sys.stdout.flush()
@@ -314,6 +387,36 @@ async def monitor_loop():
                         await rs.send_report(_rt)
                     except Exception as _re:
                         sys.stderr.write(f"[PERIODIC REPORT] error for {_rt}: {_re}\n")
+
+            # ── Long online alert (每个 tick 检查，走 LongOnlineAlertService) ──
+            from services.long_online_alert import LongOnlineAlertService
+            for _rt in list(_known_tenants):
+                try:
+                    await LongOnlineAlertService.check(_rt)
+                except Exception as _le:
+                    sys.stderr.write(f"[LONG_ONLINE] error for {_rt}: {_le}\n")
+
+            # ── Official 报表同步 (每 12 tick ≈ 60 分钟) ──
+            _OFFICIAL_SYNC_CYCLE += 1
+            if _OFFICIAL_SYNC_CYCLE % _OFFICIAL_SYNC_INTERVAL == 0:
+                for _rt in list(_known_tenants):
+                    try:
+                        _za = None
+                        if _rt != "default":
+                            import db as _db
+                            _za = _db.get_zoom_account(_rt)
+                        _result = await _run_official_sync(_rt, _za)
+                        if _result.get("error"):
+                            sys.stderr.write(f"[OFFICIAL_SYNC] tenant={_rt} error={_result['error']}\n")
+                        else:
+                            sys.stdout.write(
+                                f"[OFFICIAL_SYNC] tenant={_rt} date={_result['date_str']} "
+                                f"inserted={_result['inserted']} skipped={_result['skipped']} "
+                                f"meetings={_result['meetings']}\n"
+                            )
+                        sys.stdout.flush()
+                    except Exception as _oe:
+                        sys.stderr.write(f"[OFFICIAL_SYNC] tenant={_rt}: {_oe}\n")
 
             sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
             sys.stdout.flush()

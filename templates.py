@@ -23,8 +23,12 @@ def render(template_name: str, **kwargs) -> str:
     # 注入通用变量
     kwargs.setdefault("header_emoji", _HEADER_EMOJI)
     kwargs.setdefault("app_name", _BRAND.get("app_name_zh", "Zoom Monitor"))
+    # 安全渲染：只传模板需要的参数，缺少的参数填空字符串
+    import re
+    needed = set(re.findall(r'\{(\w+)\}', tmpl))
+    safe_kw = {k: (kwargs.get(k) if k in kwargs else '') for k in needed}
     try:
-        return tmpl.format(**kwargs)
+        return tmpl.format(**safe_kw)
     except KeyError as e:
         return f"[模板渲染错误: 缺少参数 {e}]"
 

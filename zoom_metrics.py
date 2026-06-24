@@ -18,17 +18,15 @@ CACHE_TTL = 30
 
 
 class ZoomMetrics:
-    def __init__(self, zoom_account: dict | None = None):
+    def __init__(self, zoom_account: dict):
+        """必须传入 zoom_account dict（含 tenant_id, account_id, client_id, client_secret）"""
         self._token = ""
         self._expires_at = 0.0
-        if zoom_account:
-            self._account_id = zoom_account.get("account_id", settings.zoom_account_id)
-            self._client_id = zoom_account.get("client_id", settings.zoom_client_id)
-            self._client_secret = zoom_account.get("client_secret", settings.zoom_client_secret)
-        else:
-            self._account_id = settings.zoom_account_id
-            self._client_id = settings.zoom_client_id
-            self._client_secret = settings.zoom_client_secret
+        self._account_id = zoom_account["account_id"]
+        self._client_id = zoom_account["client_id"]
+        self._client_secret = zoom_account["client_secret"]
+        self._host_email = zoom_account.get("host_email", "")
+        self._zoom_account = zoom_account
 
     async def _get_token(self) -> str:
         now = time.time()
@@ -264,3 +262,62 @@ class ZoomMetrics:
             except Exception:
                 break
         return all_p
+
+    async def get_past_meetings(self, page_size: int = 50, from_days: int = 31) -> list[dict]:
+        """获取过去 N 天的已结束会议列表"""
+        import calendar
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        _from = (now - timedelta(days=from_days)).isoformat()
+        all_meetings = []
+        next_token = ""
+        while True:
+            params = {"type": "past", "page_size": page_size, "from": _from}
+            if next_token:
+                params["next_page_token"] = next_token
+            try:
+                data = await self._get("/metrics/meetings", params)
+                all_meetings.extend(data.get("meetings", []))
+                next_token = data.get("next_page_token", "")
+                if not next_token:
+                    break
+            except Exception:
+                break
+        return all_meetings
+
+    async def get_report_meeting_participants(self, meeting_id: str, page_size: int = 300) -> list[dict]:
+        """获取指定会议的 Report API 参与者明细（含 leave_time、duration）
+        过滤 status='in_meeting'，排除 in_waiting_room
+        返回: [{name, email, join_time, leave_time, duration}]
+        """
+        all_p = []
+        next_token = ""
+        while True:
+            params = {"page_size": page_size}
+            if next_token:
+                params["next_page_token"] = next_token
+            try:
+                data = await self._get(f"/report/meetings/{meeting_id}/participants", params)
+                all_p.extend(data.get("participants", []))
+                next_token = data.get("next_page_token", "")
+                if not next_token:
+                    break
+            except Exception:
+                break
+        # 过滤：只在会议中的（排除 waiting_room）
+        filtered = []
+        for p in all_p:
+            status = p.get("status", "")
+            if status == "in_waiting_room":
+                continue
+            # 必须 name + join_time 都有
+            if not p.get("name", "").strip() or not p.get("join_time"):
+                continue
+            filtered.append({
+                "name": p.get("name", "").strip(),
+                "email": p.get("user_email", ""),
+                "join_time": p.get("join_time", ""),
+                "leave_time": p.get("leave_time", ""),
+                "duration": p.get("duration", 0),
+            })
+        return filtered

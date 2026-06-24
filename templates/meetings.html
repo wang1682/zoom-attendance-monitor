@@ -5,84 +5,512 @@
 {% endblock %}
 {% block content %}
 
-{% set tab_labels = {'live':'● 当前会议','history':'■ 历史会议','sharing':'◆ 屏幕共享'} %}
+{% set tab_labels = {'live':'当前会议','history':'历史会议','sharing':'屏幕共享','official':'官方数据'} %}
 
-<div class="page-header">
-  <div class="flex" style="justify-content:space-between;align-items:flex-start">
-    <div>
-      <h1 class="page-title">会议中心</h1>
-      <p class="page-subtitle">当前会议 · 历史会议 · 屏幕共享监控</p>
-    </div>
-  </div>
+<div class="page-header" style="margin-bottom:4px">
+  <h1 class="page-title" style="margin:0 0 4px 0">📋 会议中心</h1>
 </div>
 
-<!-- Tab bar -->
-<div class="tab-bar">
-  {% for key, label in tab_labels.items() %}
-  <a href="?tab={{ key }}" class="tab-item {% if tab == key %}active{% endif %}">{{ label }}</a>
+<!-- ── Pill tabs ── -->
+{% set tab_meta = {
+  'live':    {'icon':'🟢','label':'当前会议','count':live_count,'desc':'查看实时在线会议与成员'},
+  'history': {'icon':'📚','label':'历史会议','count':history_count,'desc':''},
+  'sharing': {'icon':'🖥','label':'屏幕共享','count':sharing_count,'desc':'查看共享记录与状态'},
+  'official':{'icon':'📊','label':'官方数据','count':None,'desc':'Zoom Report 聚合数据'},
+} %}
+<div class="pill-tabs">
+  {% for key, meta in tab_meta.items() %}
+  <a href="?tab={{ key }}" class="pill-tab {% if tab == key %}active{% endif %}">
+    <span class="pill-icon">{{ meta.icon }}</span>
+    <span class="pill-label">{{ meta.label }}</span>
+    {% if meta.count is not none %}
+    <span class="pill-badge">{{ meta.count }}</span>
+    {% endif %}
+  </a>
   {% endfor %}
 </div>
+<p class="tab-description">{{ tab_meta[tab].desc }}</p>
 
-<!-- ── Tab: 当前会议 ── -->
+<style>
+/* ── Pill Tabs ── */
+.pill-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.pill-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 10px;
+  background: rgba(255,255,255,.05);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: background .15s, color .15s, box-shadow .15s;
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+}
+.pill-tab:hover {
+  background: rgba(0,212,255,.12);
+  color: var(--text);
+}
+.pill-tab.active {
+  background: #00d4ff;
+  color: #00111f;
+  border-color: #00d4ff;
+  box-shadow: 0 2px 8px rgba(0,212,255,.25);
+}
+.pill-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+.pill-label {
+  line-height: 1;
+}
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  border-radius: 999px;
+  background: rgba(0,0,0,.25);
+  color: inherit;
+  font-family: var(--mono);
+}
+.pill-tab.active .pill-badge {
+  background: rgba(0,17,31,.18);
+  color: #00111f;
+}
+.pill-tab:hover .pill-badge {
+  background: rgba(0,212,255,.18);
+}
+.pill-tab.active:hover .pill-badge {
+  background: rgba(0,17,31,.25);
+}
+.tab-description {
+  margin: 10px 0 16px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+</style>
+
 {% if tab == 'live' %}
+<style>
+/* ── 当前会议 ── */
+.meeting-dashboard {
+  max-width: 1600px;
+  padding: 0;
+  margin: 0 auto;
+}
+
+/* Stat cards row */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  background: var(--bg3);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.stat-card:hover {
+  border-color: #1ea7ff;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+}
+.stat-card .stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 6px;
+}
+.stat-card .stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--mono);
+}
+.stat-card .stat-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Live section header */
+.live-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.live-section-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+/* Meeting cards grid */
+.meeting-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.meeting-card {
+  background: var(--bg3);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: transform .15s, border-color .2s, box-shadow .2s;
+}
+.meeting-card:hover {
+  transform: translateY(-2px);
+  border-color: #1ea7ff;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+}
+.meeting-card .mc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.meeting-card .mc-topic {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meeting-card .mc-id {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+.meeting-card .mc-body {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.meeting-card .mc-stat {
+  text-align: left;
+}
+.meeting-card .mc-stat .mc-stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.meeting-card .mc-stat .mc-stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: var(--mono);
+}
+.meeting-card .mc-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-light);
+}
+.meeting-card .mc-actions a {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: all .15s;
+}
+.meeting-card .mc-actions a:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Member preview row */
+.member-preview {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-light);
+  font-size: 11px;
+  color: var(--text);
+}
+.member-chip .chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.member-chip .chip-dot.online { background: #00e676; }
+.member-chip .chip-dot.sharing { background: #1ea7ff; }
+
+/* Badge variants */
+.badge-live {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.badge-live.active { background: rgba(0,230,118,.15); color: #00e676; border: 1px solid rgba(0,230,118,.3); }
+.badge-live.paused { background: rgba(255,214,0,.15); color: #ffd600; border: 1px solid rgba(255,214,0,.3); }
+.badge-live.ended { background: rgba(90,122,154,.12); color: var(--text-muted); border: 1px solid rgba(90,122,154,.2); }
+
+/* Last updated */
+.updated-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.updated-bar .live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00e676;
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .3; }
+}
+</style>
+
+<div class="meeting-dashboard">
+
   {% if live_meetings and live_meetings|length > 0 %}
+
+  {# ── Compute stats ── #}
+  {% set total_online = live_meetings | sum(attribute='online_count') %}
+  {% set total_participants = live_meetings | sum(attribute='participant_count') %}
+  {% set total_sharing = 0 %}
+  {% set _ = live_meetings %}
+
+  {# ── 4 stat cards ── #}
+  <div class="stat-row">
+    <div class="stat-card">
+      <div class="stat-label">当前会议</div>
+      <div class="stat-value">{{ live_meetings|length }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">在线人数</div>
+      <div class="stat-value">{{ total_online }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">共享中</div>
+      <div class="stat-value">{{ total_sharing }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">今日会议</div>
+      <div class="stat-value">{{ live_meetings|length }}</div>
+      <div class="stat-sub">{{ fmt_myt('now') }} MYT</div>
+    </div>
+  </div>
+
+  {# ── Meeting cards grid ── #}
+  <div class="live-section-header">
+    <h3>🟢 进行中的会议</h3>
+  </div>
+
+  <div class="meeting-grid">
     {% for m in live_meetings %}
-    <div class="panel mb-p">
-      <div class="panel-body" style="padding:10px 14px">
-        <div class="flex" style="justify-content:space-between;align-items:center">
-          <div style="flex:1;min-width:0">
-            <div class="flex" style="gap:8px;align-items:center;margin-bottom:4px">
-              <span class="status-dot online"></span>
-              <span style="font-size:13px;font-weight:600;color:var(--text)">{{ m.topic }}</span>
-            </div>
-            <div class="flex" style="gap:16px;flex-wrap:wrap">
-              <span class="text-sm text-muted">ID: <span class="mono">{{ m.meeting_id }}</span></span>
-              <span class="text-sm text-muted">参与者: <strong class="text-accent">{{ m.participant_count }}</strong></span>
-              <span class="text-sm text-muted">在线: <strong class="text-accent">{{ m.online_count }}</strong></span>
-            </div>
-          </div>
-          <div class="text-muted text-xs" style="flex-shrink:0">最后活跃: {{ fmt_myt(m.last_activity) }}</div>
+    <div class="meeting-card">
+      <div class="mc-header">
+        <span class="mc-topic" title="{{ m.topic }}">{{ m.topic }}</span>
+        <span class="badge-live active">🟢 进行中</span>
+      </div>
+      <div class="mc-id">ID: {{ m.meeting_id }}</div>
+      <div class="mc-body">
+        <div class="mc-stat">
+          <div class="mc-stat-label">在线人数</div>
+          <div class="mc-stat-value">{{ m.online_count }}</div>
+        </div>
+        <div class="mc-stat">
+          <div class="mc-stat-label">累计参与</div>
+          <div class="mc-stat-value">{{ m.participant_count }}</div>
+        </div>
+        <div class="mc-stat">
+          <div class="mc-stat-label">开始时间</div>
+          <div class="mc-stat-value" style="font-size:13px">{{ fmt_myt(m.last_activity) }}</div>
         </div>
       </div>
+
+      {# ── Member preview chips ── #}
+      {% if m.participants and m.participants|length > 0 %}
+      <div class="member-preview">
+        {% for p in m.participants[:10] %}
+        <span class="member-chip" title="{{ p.raw_name or p.name }}">
+          <span class="chip-dot {% if p.is_sharing %}sharing{% else %}online{% endif %}"></span>
+          {{ p.name }}
+        </span>
+        {% endfor %}
+        {% if m.participants|length > 10 %}
+        <span class="member-chip" style="background:transparent;border-color:transparent;color:var(--text-muted)">+{{ m.participants|length - 10 }}</span>
+        {% endif %}
+      </div>
+      {% endif %}
+
     </div>
     {% endfor %}
+  </div>
+
   {% else %}
-    <div class="panel">
-      <div class="empty-state">
-        <div class="es-icon">📭</div>
-        <div class="es-title">暂无活跃会议</div>
-      </div>
+  <div class="panel" style="border-radius:10px">
+    <div class="empty-state">
+      <div class="es-icon">📭</div>
+      <div class="es-title">暂无活跃会议</div>
+      <div class="es-subtitle" style="font-size:12px;color:var(--text-muted);margin-top:4px">当前没有进行中的 Zoom 会议</div>
     </div>
+  </div>
   {% endif %}
+
+  {# ── Updated bar ── #}
+  <div class="updated-bar">
+    <span class="live-dot"></span>
+    <span>更新于 <span id="live-updated-time">{{ fmt_myt('now') }}</span></span>
+    <span>·</span>
+    <span>自动刷新 <strong id="auto-refresh-countdown">15</strong>s</span>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  // Auto-refresh countdown
+  var sec = 15;
+  var cdEl = document.getElementById('auto-refresh-countdown');
+  function tick(){
+    sec--;
+    if(sec <= 0){
+      sec = 15;
+      location.reload();
+    }
+    if(cdEl) cdEl.textContent = sec;
+  }
+  setInterval(tick, 1000);
+})();
+</script>
 
 <!-- ── Tab: 历史会议 ── -->
 {% elif tab == 'history' %}
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
+    <h2 class="workspace-title">📋 历史会议</h2>
+    <label style="display:none">
+      <input type="checkbox" id="show-test-checkbox" onchange="toggleTestMeetings(this.checked)">
+    </label>
+  </div>
   {% if history_meetings and history_meetings|length > 0 %}
-    {% for m in history_meetings %}
-    <div class="panel mb-p">
-      <div class="panel-body" style="padding:10px 14px">
-        <div class="flex" style="justify-content:space-between;align-items:center">
-          <div style="flex:1;min-width:0">
-            <div class="flex" style="gap:8px;align-items:center;margin-bottom:4px">
-              <span style="font-size:13px;font-weight:600;color:var(--text)">{{ m.topic }}</span>
-            </div>
-            <div class="flex" style="gap:16px;flex-wrap:wrap">
-              <span class="text-sm text-muted">ID: <span class="mono">{{ m.meeting_id }}</span></span>
-              <span class="text-sm text-muted">参会: <strong>{{ m.participant_count }}</strong></span>
-              <span class="text-sm text-muted">开始: {{ fmt_myt(m.start_time) }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
+  <div class="workspace-panel">
+    <div class="panel-body" style="padding:0">
+      <table class="workspace-table">
+        <thead>
+          <tr>
+            <th style="width:28px;text-align:center">#</th>
+            <th>会议主题</th>
+            <th style="width:100px">会议 ID</th>
+            <th style="width:60px;text-align:center">人数</th>
+            <th style="width:60px;text-align:center">事件</th>
+            <th style="width:95px">首次事件</th>
+            <th style="width:95px">最后事件</th>
+            <th style="width:70px">跨度</th>
+            <th class="action" style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for m in history_meetings %}
+          <tr>
+            <td style="text-align:center;color:var(--text-muted);font-size:10px">{{ loop.index }}</td>
+            <td class="td-name">{{ m.topic }}</td>
+            <td class="td-mono" style="font-size:11px">{{ m.meeting_id }}</td>
+            <td class="td-mono" style="text-align:center">{{ m.participant_count }}</td>
+            <td class="td-mono" style="text-align:center">{{ m.total_events }}</td>
+            <td class="td-mono" style="font-size:11px">{{ m.first_event_display }}</td>
+            <td class="td-mono" style="font-size:11px">{{ m.last_event_display }}</td>
+            <td class="td-mono" style="font-size:11px">{{ m.duration_display }}</td>
+            <td class="action"><button onclick="toggleMeetingDetail('{{ loop.index0 }}')" title="参会者">▶</button></td>
+          </tr>
+          <tr class="meeting-detail-row" id="meeting-detail-{{ loop.index0 }}" style="display:none">
+            <td colspan="9" style="padding:0">
+              <div class="meeting-detail-inner">
+                <table class="workspace-table" style="margin:0">
+                  <thead>
+                    <tr>
+                      <th style="width:28px;text-align:center">#</th>
+                      <th>姓名</th>
+                      <th style="width:100px">邮箱</th>
+                      <th style="width:50px;text-align:center">进入</th>
+                      <th style="width:50px;text-align:center">离开</th>
+                      <th style="width:50px;text-align:center">其他</th>
+                      <th style="width:95px">首次</th>
+                      <th style="width:95px">最后</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                  {% for p in m.participants %}
+                    <tr>
+                      <td style="text-align:center;color:var(--text-muted);font-size:10px">{{ loop.index }}</td>
+                      <td class="td-name">{{ p.name }}</td>
+                      <td class="td-mono" style="font-size:10px;color:var(--text-muted)">{{ p.email or '—' }}</td>
+                      <td class="td-mono" style="text-align:center;color:#4ade80">{{ p.enter_count }}</td>
+                      <td class="td-mono" style="text-align:center;color:#f87171">{{ p.leave_count }}</td>
+                      <td class="td-mono" style="text-align:center;color:var(--text-muted)">{{ p.other_count }}</td>
+                      <td class="td-mono" style="font-size:10px">{{ p.first_seen_display }}</td>
+                      <td class="td-mono" style="font-size:10px">{{ p.last_seen_display }}</td>
+                    </tr>
+                  {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
     </div>
-    {% endfor %}
+  </div>
   {% else %}
-    <div class="panel">
-      <div class="empty-state">
-        <div class="es-icon">📭</div>
-        <div class="es-title">暂无历史会议</div>
-      </div>
+  <div class="panel">
+    <div class="empty-state">
+      <div class="es-icon">📭</div>
+      <div class="es-title">暂无历史会议</div>
+      <div class="es-sub">尚未收到任何 Zoom 参与者事件</div>
     </div>
+  </div>
   {% endif %}
 
 <!-- ── Tab: 屏幕共享 ── -->
@@ -131,44 +559,44 @@
 </div>
 
 <!-- ======== Layer 3: 共享记录表 ======== -->
-<div class="panel mb-p">
-  <div class="panel-header">
-    <h2>📺 共享记录明细</h2>
-    {% if sharing_grouped|length > 0 %} · 共 {{ sharing_grouped_total }} 人<span class="text-xs text-muted">（明细 {{ sharing_total }} 条）</span>{% endif %}
+<div class="workspace-panel">
+  <div class="panel-header" style="padding:6px 10px">
+    <h2 style="margin:0;font-size:13px">📺 共享记录</h2>
+    {% if sharing_grouped|length > 0 %} · <span class="text-xs text-muted">{{ sharing_grouped_total }} 人 / {{ sharing_total }} 条</span>{% endif %}
   </div>
-  <div class="panel-body compact">
+  <div class="panel-body" style="padding:0">
     <!-- 筛选栏 -->
-    <div class="filters-bar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <input type="text" id="sharing-search" placeholder="搜索用户名…" value="{{ sharing_search }}" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:160px">
-      <button class="btn btn-sm btn-primary" onclick="applySearch()">搜索</button>
-      <span class="text-xs text-muted"> | </span>
+    <div class="filters-bar" style="padding:6px 10px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--border);background:var(--bg)">
+      <input type="text" id="sharing-search" placeholder="搜索…" value="{{ sharing_search }}" style="padding:2px 6px;font-size:12px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--text);width:120px">
+      <button class="btn btn-sm btn-primary" onclick="applySearch()" style="padding:2px 8px;font-size:11px">搜索</button>
+      <span class="text-xs text-muted" style="margin:0 2px">|</span>
       {% for g in sharing_groups %}
-      <a href="?tab=sharing&range={{ sharing_range }}&group_id={{ g.group_id }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}" class="badge {% if sharing_group_id == g.group_id|string %}badge-accent{% else %}badge-muted{% endif %}">{{ g.group_name }}{% if g.count is defined %} ({{ g.count }}){% endif %}</a>
+      <a href="?tab=sharing&range={{ sharing_range }}&group_id={{ g.group_id }}{% if sharing_start %}&start={{ sharing_start }}&end={{ sharing_end }}{% endif %}" class="badge {% if sharing_group_id == g.group_id|string %}badge-accent{% else %}badge-muted{% endif %}" style="font-size:11px">{{ g.group_name }}{% if g.count is defined %} ({{ g.count }}){% endif %}</a>
       {% endfor %}
     </div>
     {% if sharing_records|length == 0 and sharing_group_id %}
-      <div class="empty-state">
+      <div class="empty-state" style="padding:24px">
         <div class="es-icon">📭</div>
         <div class="es-title">该分组暂无共享记录</div>
       </div>
     {% elif sharing_records|length == 0 %}
-      <div class="empty-state">
+      <div class="empty-state" style="padding:24px">
         <div class="es-icon">📭</div>
         <div class="es-title">暂无共享记录</div>
       </div>
     {% else %}
-    <table class="data-table" id="sharing-grouped-table">
+    <table class="workspace-table" id="sharing-grouped-table">
       <thead>
         <tr>
           <th>用户</th>
-          <th>分组</th>
+          <th style="width:50px">分组</th>
           <th>共享内容</th>
-          <th>首次开始</th>
-          <th>最后结束</th>
-          <th>总时长</th>
-          <th>次数</th>
-          <th>状态</th>
-          <th style="width:80px"></th>
+          <th style="width:95px">首次开始</th>
+          <th style="width:95px">最后结束</th>
+          <th style="width:65px" class="num">时长</th>
+          <th style="width:36px" class="num">次</th>
+          <th style="width:60px">状态</th>
+          <th class="action" style="width:36px"></th>
         </tr>
       </thead>
       <tbody>
@@ -176,25 +604,25 @@
         <tr class="sharing-group-row" data-key="{{ loop.index0 }}">
           <td class="td-name">{{ g.user_name }}</td>
           <td class="td-mono" style="font-size:11px;color:var(--text-secondary)">{{ g.group_name or '—' }}</td>
-          <td class="truncate" style="max-width:100px;font-size:11px;color:var(--text-secondary)">{{ g.content }}</td>
+          <td class="truncate" style="max-width:80px;font-size:11px;color:var(--text-secondary)">{{ g.content }}</td>
           <td class="td-mono">{{ g.first_start_display }}</td>
           <td class="td-mono">{{ g.last_end_display }}</td>
-          <td class="td-mono">{{ g.total_duration }}</td>
+          <td class="td-mono num">{{ g.total_duration }}</td>
           <td class="td-mono" style="text-align:center">{{ g.count }}</td>
-          <td>{% if g.is_active %}<span class="badge badge-success">共享中</span>{% else %}<span class="badge badge-muted">已结束</span>{% endif %}</td>
-          <td><button class="btn btn-sm btn-outline" onclick="toggleSharingDetail('{{ loop.index0 }}')">查看明细</button></td>
+          <td>{% if g.is_active %}<span class="badge badge-success badge-xs" style="font-size:10px">共享中</span>{% else %}<span class="badge badge-muted badge-xs" style="font-size:10px">已结束</span>{% endif %}</td>
+          <td class="action"><button onclick="toggleSharingDetail('{{ loop.index0 }}')" title="查看明细">▶</button></td>
         </tr>
         <tr class="sharing-detail-row" id="sharing-detail-{{ loop.index0 }}" style="display:none">
           <td colspan="9" style="padding:0">
             <div class="sharing-detail-inner">
-              <table class="data-table" style="font-size:11px;margin:0;width:100%">
+              <table class="workspace-table" style="margin:0">
                 <thead>
                   <tr>
-                    <th style="width:30px">#</th>
+                    <th style="width:28px;text-align:center">#</th>
                     <th>开始</th>
                     <th>结束</th>
-                    <th>时长</th>
-                    <th>状态</th>
+                    <th style="width:65px" class="num">时长</th>
+                    <th style="width:60px">状态</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,8 +631,8 @@
                     <td style="text-align:center;color:var(--text-muted);font-size:10px">{{ loop.index }}</td>
                     <td class="td-mono">{{ d.start_time_display }}</td>
                     <td class="td-mono">{{ d.end_time_display }}</td>
-                    <td class="td-mono">{{ d.duration }}</td>
-                    <td>{% if d.is_active %}<span class="badge badge-success badge-xs">共享中</span>{% else %}<span class="badge badge-muted badge-xs">已结束</span>{% endif %}</td>
+                    <td class="td-mono num">{{ d.duration }}</td>
+                    <td>{% if d.is_active %}<span class="badge badge-success badge-xs" style="font-size:10px">共享中</span>{% else %}<span class="badge badge-muted badge-xs" style="font-size:10px">已结束</span>{% endif %}</td>
                   </tr>
                 {% endfor %}
                 </tbody>
@@ -221,7 +649,413 @@
 
 {% endif %}
 
-<!-- ── 右侧详情 Drawer ── -->
+<!-- ======== Tab: 官方数据 — 三层结构 ======== -->
+{% if tab == 'official' %}
+<style>
+.official-wrap {
+  max-width: 1600px;
+  padding: 0;
+  margin: 0 auto;
+  width: 100%;
+}
+/* ── 第一层：统计卡 ── */
+.official-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.official-stat-card {
+  background: var(--bg3);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 16px 18px;
+  transition: border-color .2s, box-shadow .2s;
+}
+.official-stat-card:hover {
+  border-color: #1ea7ff;
+  box-shadow: 0 4px 16px rgba(0,0,0,.2);
+}
+.official-stat-card .stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-bottom: 6px;
+}
+.official-stat-card .stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  font-family: var(--mono);
+  line-height: 1.1;
+}
+.official-stat-card .stat-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+/* ── 第二层：筛选区 ── */
+.official-filter-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--bg2);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+.official-filter-bar .filter-search {
+  flex: 1 1 200px;
+  min-width: 140px;
+}
+.official-filter-bar input[type="date"] {
+  width: 140px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+}
+.official-filter-bar .filter-spacer {
+  display: inline-block;
+  width: 8px;
+}
+.official-filter-bar .filter-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* ── 顶部信息条 ── */
+.official-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.official-top-bar h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.official-top-bar .meta-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.official-top-bar .meta-info .dot {
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: var(--border-light);
+}
+/* ── 更多菜单 ── */
+.more-menu-container {
+  position: relative;
+  display: inline-block;
+}
+.more-menu-dropdown {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  min-width: 160px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  z-index: 100;
+  padding: 4px;
+}
+.more-menu-dropdown.open {
+  display: block;
+}
+.more-menu-dropdown .menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  font-size: 12px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.more-menu-dropdown .menu-item:hover {
+  background: rgba(255,255,255,.06);
+}
+.more-menu-dropdown .menu-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
+}
+/* ── 第三层：表格 ── */
+.official-table-wrap {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.official-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.official-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.official-table th {
+  padding: 7px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-muted);
+  font-weight: 600;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.official-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-light);
+  line-height: 1.3;
+}
+.official-table tbody tr {
+  height: 34px;
+  transition: background .12s;
+}
+.official-table tbody tr:hover {
+  background: rgba(0,160,255,.06);
+}
+.official-table .td-name {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.official-table .td-name .sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 400;
+  display: block;
+  margin-top: 0px;
+}
+.official-table .num {
+  text-align: right;
+  font-family: var(--mono);
+}
+.official-table .time {
+  white-space: nowrap;
+  font-family: var(--mono);
+  text-align: right;
+}
+.official-table .action-btn {
+  width: 28px; height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background .12s;
+}
+.official-table .action-btn:hover {
+  background: rgba(255,255,255,.08);
+  color: var(--text);
+}
+/* 状态 Badge */
+.badge-status {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-success { background: rgba(0,200,83,.15); color: #00c853; }
+.badge-warning { background: rgba(255,193,7,.15); color: #ffc107; }
+.badge-danger  { background: rgba(244,67,54,.15); color: #f44336; }
+.badge-muted   { background: rgba(158,158,158,.12); color: #9e9e9e; }
+</style>
+
+<div class="official-wrap">
+
+<!-- 顶部：标题 + 元信息 -->
+<div class="official-top-bar">
+  <h2>📊 考勤分析中心</h2>
+  <div class="meta-info">
+    {% if summary.official %}
+    <span>最后同步 · {{ summary.official.last_active_display }}</span>
+    {% endif %}
+    <span class="dot"></span>
+    <span>来源 · Zoom Official Report</span>
+  </div>
+</div>
+
+<!-- ── 第一层：统计卡 ── -->
+{% if summary.official %}
+<div class="official-stats-row">
+  <div class="official-stat-card">
+    <div class="stat-label">👤 成员总数</div>
+    <div class="stat-value">{{ summary.official.member_count }}</div>
+    <div class="stat-sub">{{ summary.official.total_sessions }} 总会话</div>
+  </div>
+  <div class="official-stat-card">
+    <div class="stat-label">📅 出勤天数</div>
+    <div class="stat-value">{{ summary.official.attendance_days }}</div>
+    <div class="stat-sub">累计 {{ summary.official.total_duration_display }}</div>
+  </div>
+  <div class="official-stat-card">
+    <div class="stat-label">⏱️ 日均在线</div>
+    <div class="stat-value">{{ summary.official.avg_daily_display }}</div>
+    <div class="stat-sub">全体均值</div>
+  </div>
+  <div class="official-stat-card">
+    <div class="stat-label">🕐 最近出勤</div>
+    <div class="stat-value" style="font-size:20px">{{ summary.official.last_active_display }}</div>
+    <div class="stat-sub">最近活跃成员</div>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── 第二层：筛选区 ── -->
+<div class="official-filter-bar">
+  <input type="text" id="history-search-input" class="filter-search" placeholder="搜索成员名称…" style="padding:5px 10px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);width:100%">
+  <input type="date" id="history-date-from" value="">
+  <span class="filter-spacer">～</span>
+  <input type="date" id="history-date-to" value="">
+  <div class="filter-actions">
+    <button class="btn btn-sm btn-primary" onclick="applyHistorySearch()" style="padding:5px 14px;font-size:12px">🔍 查询</button>
+    <button class="btn btn-sm btn-outline" onclick="exportOfficialCSV()" style="padding:5px 12px;font-size:12px">📥 导出</button>
+    <button class="btn btn-sm btn-outline" onclick="resetHistorySearch()" style="padding:5px 10px;font-size:12px">↺ 重置</button>
+    <div class="more-menu-container">
+      <button class="btn btn-sm btn-outline" onclick="toggleMoreMenu()" style="padding:5px 10px;font-size:12px">⋯ 更多</button>
+      <div class="more-menu-dropdown" id="more-menu-dropdown">
+        <button class="menu-item" onclick="document.getElementById('csv-file-input').click()">📤 导入 CSV</button>
+        <button class="menu-item" onclick="toggleImportedFiles()">📁 已导入文件</button>
+        <hr class="menu-divider">
+        <button class="menu-item" onclick="syncOfficial('yesterday', this)">🔄 同步昨天</button>
+        <button class="menu-item" onclick="syncOfficial('month', this)">🗓️ 同步本月</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="upload-progress" class="text-xs text-muted" style="display:none;margin-bottom:6px;font-size:10px">上传中...</div>
+<input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="uploadCSV(this.files[0])">
+
+<!-- 成员详情卡 -->
+<div id="member-detail-card" style="display:none;padding:8px 12px;border:1px solid var(--border-light);border-radius:8px;margin-bottom:12px">
+  <div id="member-detail-content"></div>
+</div>
+
+<!-- ── 第三层：成员分析表 ── -->
+<div class="official-table-wrap">
+  <table class="official-table" id="history-summary-table">
+    <thead>
+      <tr>
+        <th style="text-align:left;min-width:160px">成员</th>
+        <th style="text-align:right;width:70px">出勤天数</th>
+        <th style="text-align:right;width:100px">累计时长</th>
+        <th style="text-align:right;width:70px">日均</th>
+        <th style="text-align:right;width:100px">首次出勤</th>
+        <th style="text-align:right;width:100px">最近出勤</th>
+        <th style="text-align:center;width:70px">状态</th>
+        <th style="text-align:center;width:36px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if summary.official and summary.official.members %}
+        {% for m in summary.official.members %}
+        {% set last_active = m.last_active_display | string %}
+        {% if last_active.startswith('今天') or last_active.startswith('昨天') %}
+          {% set badge_class = 'badge-success' %}
+          {% set badge_text = '🟢 活跃' %}
+        {% elif '天前' in last_active %}
+          {% set days_ago = last_active[:1] | int %}
+          {% if days_ago <= 2 %}
+            {% set badge_class = 'badge-warning' %}
+            {% set badge_text = '🟡 近3天' %}
+          {% elif days_ago <= 7 %}
+            {% set badge_class = 'badge-danger' %}
+            {% set badge_text = '⚫ 近7天' %}
+          {% else %}
+            {% set badge_class = 'badge-muted' %}
+            {% set badge_text = '⚫ 7天+' %}
+          {% endif %}
+        {% elif last_active == '—' or not last_active %}
+          {% set badge_class = 'badge-muted' %}
+          {% set badge_text = '⚫ 无数据' %}
+        {% else %}
+          {% set badge_class = 'badge-success' %}
+          {% set badge_text = '🟢 活跃' %}
+        {% endif %}
+        <tr>
+          <td class="td-name" style="position:sticky;left:0;z-index:5;background:var(--card);min-width:160px">
+            {{ m.name }}
+            {% if m.last_active_display and m.last_active_display != '—' %}
+            <span class="sub">最近 {{ m.last_active_display }}</span>
+            {% endif %}
+            {% if m.official_last_display and m.official_last_display != m.last_active_display and m.last_active_display and m.last_active_display != '—' %}
+            <span class="sub">官方最后 {{ m.official_last_display }}</span>
+            {% endif %}
+          </td>
+          <td class="num">{{ m.attendance_days }}</td>
+          <td class="num">{{ m.total_duration_display }}</td>
+          <td class="num">{{ m.avg_daily_display }}</td>
+          <td class="time">{{ m.first_join_display | default('—', true) }}</td>
+          <td class="time">{{ m.last_active_display }}</td>
+          <td style="text-align:center"><span class="badge-status {{ badge_class }}">{{ badge_text }}</span></td>
+          <td style="text-align:center">
+            <button class="action-btn" onclick="showMemberDetail('{{ m.name | e }}', this)" title="查看详情">▶</button>
+          </td>
+        </tr>
+        {% endfor %}
+      {% else %}
+        <tr><td colspan="8" class="text-sm text-muted" style="text-align:center;padding:30px;font-size:12px">暂无官方数据，请导入 CSV 或同步数据</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<!-- 考勤矩阵 -->
+<div id="matrix-section" class="panel mb-p" style="margin-top:14px;border:1px solid var(--border-light);border-radius:8px;overflow:hidden">
+  <div class="panel-header" style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--card);font-size:12px;font-weight:600">
+    <span>📊 考勤矩阵</span>
+    <div style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:11px">
+      <input type="month" id="matrix-month" value="2026-06" style="font-size:11px;padding:2px 5px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--text);width:120px" onchange="loadMatrix()">
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:11px"><input type="checkbox" id="matrix-show-all" onchange="loadMatrix()"> 显示所有</label>
+      <button class="btn btn-sm btn-outline" id="matrix-toggle-raw" style="font-size:10px;display:none" onclick="toggleMatrixRawNames()">显示原始名称</button>
+    </div>
+  </div>
+  <div class="panel-body compact" style="padding:8px;overflow-x:auto">
+    <div id="matrix-stats" style="padding:4px 0 8px 0;font-size:11px;color:var(--text-muted);display:none"></div>
+    <div id="matrix-content" style="min-height:40px">
+      <div class="text-sm text-muted" style="padding:12px;text-align:center;font-size:11px">加载中...</div>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<!-- 已导入文件 Drawer -->
+<div class="drawer-overlay" id="imported-files-overlay" onclick="closeImportedFiles()"></div>
+<div class="drawer" id="imported-files-drawer">
+  <div class="drawer-header">
+    <span>📁 已导入文件</span>
+    <button class="modal-close" onclick="closeImportedFiles()">&times;</button>
+  </div>
+  <div class="drawer-body" id="imported-files-body">
+    <div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>
+  </div>
+</div>{% endif %}
+
+<!-- ── 右侧详情 Drawer (Sharing 共用) ── -->
 <div class="drawer-overlay" id="drawer-overlay" onclick="closeSharingDrawer()"></div>
 <div class="drawer" id="sharing-drawer">
   <div class="drawer-header">
@@ -229,6 +1063,18 @@
     <button class="modal-close" onclick="closeSharingDrawer()">&times;</button>
   </div>
   <div class="drawer-body" id="drawer-body">
+    <div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>
+  </div>
+</div>
+
+<!-- ── 官方历史详情 Drawer ── -->
+<div class="drawer-overlay" id="history-drawer-overlay" onclick="closeHistoryDrawer()"></div>
+<div class="drawer" id="history-drawer">
+  <div class="drawer-header">
+    <span>📋 官方历史记录</span>
+    <button class="modal-close" onclick="closeHistoryDrawer()">&times;</button>
+  </div>
+  <div class="drawer-body" id="history-drawer-body">
     <div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>
   </div>
 </div>
@@ -377,6 +1223,21 @@ function closeSharingDrawer() {
   document.getElementById('sharing-drawer').classList.remove('open');
 }
 
+// ── 历史会议：展开/收起参会者 ──
+function toggleMeetingDetail(idx) {
+  var row = document.getElementById('meeting-detail-' + idx);
+  if (!row) return;
+  var btn = row.previousElementSibling.querySelector('button');
+  if (!btn) btn = document.querySelector('tr[data-idx="' + idx + '"] button');
+  if (row.style.display === 'none' || row.style.display === '') {
+    row.style.display = 'table-row';
+    if (btn) btn.textContent = '收起';
+  } else {
+    row.style.display = 'none';
+    if (btn) btn.textContent = '参会者';
+  }
+}
+
 // ── 共享记录合并视图：展开/收起明细 ──
 function toggleSharingDetail(idx) {
   var row = document.getElementById('sharing-detail-' + idx);
@@ -404,15 +1265,905 @@ document.addEventListener('DOMContentLoaded', function(){
     setTimeout(loadSharingTrend, 100);
     loadSharingRank();
   }
+
+  // 官方 tab 初始化
+  var officialTab = document.querySelector('a[href*="official"].active');
+  if (officialTab) {
+    loadMatrix();
+    setTimeout(sortOfficialTable, 200);
+  }
 });
 
+// ── 官方历史表默认排序（出勤天数 desc → 累计时长 desc） ──
+function sortOfficialTable() {
+  var tbody = document.querySelector('#history-summary-table tbody');
+  if (!tbody) return;
+  var rows = Array.from(tbody.querySelectorAll('tr'));
+  // skip "暂无数据" row
+  if (rows.length <= 1 && !rows[0].querySelector('td[colspan]')) return;
+  if (rows.length === 0) return;
+  rows.sort(function(a,b){
+    var dayA = parseInt(a.cells[1].textContent.trim()) || 0;
+    var dayB = parseInt(b.cells[1].textContent.trim()) || 0;
+    if (dayB !== dayA) return dayB - dayA;
+    // 累计时长：解析 "Xh Ym" 或 "Xd Xh" → 分钟
+    function parseMin(s) {
+      s = s.trim();
+      var m = 0;
+      var d = s.match(/(\d+)d/);
+      var h = s.match(/(\d+)h/);
+      var min = s.match(/(\d+)m/);
+      if (d) m += parseInt(d[1]) * 1440;
+      if (h) m += parseInt(h[1]) * 60;
+      if (min) m += parseInt(min[1]);
+      return m;
+    }
+    var durA = parseMin(a.cells[2].textContent);
+    var durB = parseMin(b.cells[2].textContent);
+    return durB - durA;
+  });
+  rows.forEach(function(r){ tbody.appendChild(r); });
+}
+setTimeout(sortOfficialTable, 100);
+
+// ── 考勤矩阵 ──
+var _matrixData = null;  // 缓存当前矩阵数据
+var _matrixShowRaw = false;  // 切换显示原始/聚合名称
+
+function loadMatrix() {
+  var monthVal = document.getElementById('matrix-month').value;
+  if (!monthVal) return;
+  var parts = monthVal.split('-');
+  var year = parseInt(parts[0]), month = parseInt(parts[1]);
+  var el = document.getElementById('matrix-content');
+  el.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载中...</div>';
+  fetch('/dashboard/api/v3/attendance-matrix?year=' + year + '&month=' + month)
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.members || d.members.length === 0) {
+        el.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">本月无考勤数据</div>';
+        document.getElementById('matrix-stats').style.display = 'none';
+        document.getElementById('matrix-toggle-raw').style.display = 'none';
+        return;
+      }
+      _matrixData = d;
+      _matrixShowRaw = false;
+      renderMatrix();
+    })
+    .catch(function(){
+      el.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载失败</div>';
+    });
+}
+
+function toggleMatrixRawNames() {
+  _matrixShowRaw = !_matrixShowRaw;
+  document.getElementById('matrix-toggle-raw').textContent = _matrixShowRaw ? '显示聚合名称' : '显示原始名称';
+  renderMatrix();
+}
+
+function renderMatrix() {
+  var d = _matrixData;
+  if (!d) return;
+  var showAll = document.getElementById('matrix-show-all').checked;
+  var minDays = showAll ? 0 : 5;
+  // 隐藏系统角色（值班号等）— 基于 member_key
+  var hiddenKeys = {'dc值班号': 1};
+  var members = d.members.filter(function(m){
+    // 检查 member_key 是否在隐藏列表
+    var mkEl = null;
+    if (m.identity_key && m.identity_key.indexOf(':name:') > 0) {
+      mkEl = m.identity_key.split(':name:')[1];
+    }
+    var rawNameFirst = m.raw_names && m.raw_names[0] ? m.raw_names[0].toLowerCase().replace(/\\s+/g,'') : '';
+    if (mkEl && hiddenKeys[mkEl]) return false;
+    // fallback: 用第一个 raw_name 的 member_key
+    for (var hn in hiddenKeys) {
+      if (rawNameFirst.indexOf(hn) >= 0) return false;
+    }
+    return m.total >= minDays;
+  });
+  var el = document.getElementById('matrix-content');
+
+  // 统计栏
+  var statsEl = document.getElementById('matrix-stats');
+  if (d.stats) {
+    statsEl.innerHTML = '原始名称 <strong>' + d.stats.raw_member_count + '</strong>' +
+      ' · 有效成员 <strong>' + d.stats.valid_members + '</strong>' +
+      ' · 重复名称 <strong>' + d.stats.duplicate_group_count + '</strong>' +
+      ' · 合并后 <strong>' + d.stats.merged_member_count + '</strong>';
+    statsEl.style.display = 'block';
+    statsEl.style.cssText = 'padding:4px 0 8px 0;font-size:11px;color:var(--text-muted)';
+  } else {
+    // 兼容无 stats 的旧 API
+    statsEl.style.display = 'none';
+  }
+
+  // 显示/隐藏切换按钮
+  document.getElementById('matrix-toggle-raw').style.display = d.members.length > 0 ? 'inline-block' : 'none';
+
+  var displayDays = d.display_days || d.total_days;
+  var h = '<table class="data-table" style="font-size:11px;width:100%;min-width:' + (120 + displayDays * 32) + 'px">';
+  // header: 成员 + 日期
+  h += '<thead><tr>';
+  h += '<th style="position:sticky;left:0;z-index:11;background:var(--card);min-width:100px;text-align:left;padding:4px 6px;font-size:11px">成员</th>';
+  h += '<th style="width:32px;padding:2px;font-size:10px;text-align:center;background:var(--card)">出勤</th>';
+  for (var i = 0; i < d.dates.length; i++) {
+    var dd = parseInt(d.dates[i].split('-')[1]);
+    var wd = new Date(d.year, d.month - 1, dd).getDay();
+    var wk = (wd === 0 || wd === 6) ? 'color:var(--danger)' : '';
+    h += '<th style="width:30px;padding:2px;font-size:10px;text-align:center;' + wk + '">' + dd + '</th>';
+  }
+  h += '</tr></thead><tbody>';
+  for (var i = 0; i < members.length; i++) {
+    var m = members[i];
+    var attSet = {};
+    for (var k = 0; k < m.attendance_dates.length; k++) attSet[m.attendance_dates[k]] = true;
+
+    // 名称显示
+    var displayName;
+    if (_matrixShowRaw) {
+      // 原始名称模式：始终显示 CSV 原始名称（第一个 raw_name）
+      displayName = esc(m.raw_names && m.raw_names[0] ? m.raw_names[0] : m.name);
+    } else {
+      // 聚合名称模式：显示归一化后的 display_name，可点击展开
+      var hasExtraRaw = m.raw_names && m.raw_names.length > 1;
+      if (hasExtraRaw) {
+        displayName = '<span class="matrix-name" data-raw=\'' + esc(JSON.stringify(m.raw_names)) + '\' style="cursor:pointer;border-bottom:1px dashed var(--text-muted)" onclick="toggleMatrixNameDetail(this)">' + esc(m.name) + '</span>';
+      } else {
+        displayName = esc(m.name);
+      }
+    }
+
+    h += '<tr><td style="position:sticky;left:0;z-index:10;background:var(--bg);padding:2px 6px;font-size:11px;white-space:nowrap;border-right:1px solid var(--border)">' + displayName + '</td>';
+    h += '<td style="text-align:center;padding:2px;font-size:11px;font-weight:600">' + m.total + '/' + displayDays + '</td>';
+    for (var j = 1; j <= displayDays; j++) {
+      var attended = attSet[j] ? true : false;
+      var cellStyle = 'padding:2px;text-align:center;font-size:10px';
+      if (!attended) cellStyle += ';color:var(--text-muted, #999)';
+      h += '<td style="' + cellStyle + '">' + (attended ? '✅' : '–') + '</td>';
+    }
+    h += '</tr>';
+  }
+  h += '</tbody></table>';
+  el.innerHTML = h;
+  // 如果有旧排序函数
+  if (typeof sortOfficialTable === 'function') sortOfficialTable();
+}
+
+function toggleMatrixNameDetail(el) {
+  // 检查是否已展开
+  var existing = el.nextElementSibling;
+  if (existing && existing.className === 'matrix-raw-detail') {
+    existing.remove();
+    return;
+  }
+  // 移除其他展开项
+  document.querySelectorAll('.matrix-raw-detail').forEach(function(e){ e.remove(); });
+  var raw = el.getAttribute('data-raw');
+  if (!raw) return;
+  var names = JSON.parse(raw);
+  var detail = document.createElement('div');
+  detail.className = 'matrix-raw-detail';
+  detail.style.cssText = 'font-size:10px;color:var(--text-muted);padding:2px 0 2px 8px;border-left:2px solid var(--border);margin:2px 0';
+  // 用原始名称列表
+  for (var i = 0; i < names.length; i++) {
+    var n = document.createElement('div');
+    n.textContent = '→ ' + names[i];
+    detail.appendChild(n);
+  }
+  el.parentNode.insertBefore(detail, el.nextSibling);
+}
+
 function esc(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');
+}
+
+// ── Official / History Tab ──
+function uploadCSV(file) {
+  if (!file || file.name.indexOf('.csv') < 0 && file.name.indexOf('.CSV') < 0) {
+    showToast('请选择 CSV 文件', true);
+    return;
+  }
+  var fd = new FormData();
+  fd.append('file', file);
+  var p = document.getElementById('upload-progress');
+  p.style.display = 'block';
+  p.textContent = '上传中: ' + file.name;
+  fetch('/dashboard/history/upload', {method:'POST', body:fd})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.success || (d.imported && d.imported > 0)) {
+        p.textContent = '✅ 导入成功: ' + (d.imported || 0) + ' 条，跳过 ' + (d.skipped || 0) + '，错误 ' + (d.errors || []).length;
+        setTimeout(function(){ location.reload(); }, 1500);
+      } else {
+        p.textContent = '❌ 导入失败: ' + (d.error || 'upload failed');
+      }
+    })
+    .catch(function(err){
+      p.textContent = '❌ 网络错误: ' + err.message;
+    });
+}
+function applyHistorySearch() {
+  var q = document.getElementById('history-search-input').value;
+  var df = document.getElementById('history-date-from').value;
+  var dt = document.getElementById('history-date-to').value;
+  var url = '?tab=official';
+  if (q) url += '&search=' + encodeURIComponent(q);
+  if (df) url += '&date_from=' + encodeURIComponent(df);
+  if (dt) url += '&date_to=' + encodeURIComponent(dt);
+  window.location.href = url;
+}
+function resetHistorySearch() {
+  document.getElementById('history-search-input').value = '';
+  document.getElementById('history-date-from').value = '';
+  document.getElementById('history-date-to').value = '';
+  window.location.href = '?tab=official';
+}
+function deleteImport(sourceFile) {
+  var fd = new FormData();
+  fd.append('source_file', sourceFile);
+  showToast('删除中...');
+  fetch('/dashboard/history/delete', {method:'POST', body:fd})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (d.success) {
+        showToast('✅ 已删除 ' + (d.deleted || 0) + ' 条记录');
+        setTimeout(function(){ location.reload(); }, 1000);
+      } else {
+        showToast('❌ 删除失败: ' + (d.error || 'delete failed'), true);
+      }
+    })
+    .catch(function(err){
+      showToast('❌ 网络错误: ' + err.message, true);
+    });
+}
+function showMemberDetail(name, btn) {
+  var card = document.getElementById('member-detail-card');
+  var content = document.getElementById('member-detail-content');
+  content.innerHTML = '<div class="text-sm text-muted" style="padding:10px;text-align:center">加载中...</div>';
+  card.style.display = 'block';
+  card.scrollIntoView({behavior:'smooth', block:'start'});
+
+  // 高亮当前行
+  var tb = document.getElementById('history-summary-table');
+  if (tb) {
+    var rows = tb.querySelectorAll('tbody tr');
+    rows.forEach(function(r){ r.style.background = ''; });
+  }
+  if (btn) {
+    var tr = btn.closest('tr');
+    if (tr) tr.style.background = 'rgba(255,255,255,0.04)';
+  }
+
+  // 用 member_key 参数
+  var isMatrix = window._matrixMembers ? true : false;
+  var memberKey = '';
+  if (window._matrixMembers && window._matrixMembers[name]) {
+    memberKey = window._matrixMembers[name].member_key || name;
+  } else {
+    memberKey = name.toLowerCase().replace(/\s+/g, '');
+  }
+
+  // Tab 容器
+  var tabHeader = '<div style="display:flex;gap:4px;margin-bottom:10px;border-bottom:1px solid var(--border-light);padding-bottom:6px">'
+    + '<button class="tab-btn active" data-tab="detail" onclick="switchMemberTab(\'' + esc(name) + '\', \'' + esc(memberKey) + '\', \'detail\')" style="padding:4px 12px;border:1px solid transparent;border-radius:4px;cursor:pointer;background:var(--accent);color:#fff;font-size:12px">📋 日程明细</button>'
+    + '<button class="tab-btn" data-tab="identity" onclick="switchMemberTab(\'' + esc(name) + '\', \'' + esc(memberKey) + '\', \'identity\')" style="padding:4px 12px;border:1px solid var(--border-light);border-radius:4px;cursor:pointer;background:transparent;color:var(--text-muted);font-size:12px">🔍 身份分析</button>'
+    + '</div>'
+    + '<div id="member-tab-content"></div>';
+
+  content.innerHTML = tabHeader;
+
+  // 默认加载 detail tab
+  loadMemberDetailTab(name, memberKey);
+
+  // 关闭按钮
+  var headerDiv = document.createElement('div');
+  headerDiv.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px';
+  headerDiv.innerHTML = '<strong style="font-size:15px">' + esc(name) + '</strong>'
+    + '<button class="btn btn-sm btn-outline" onclick="document.getElementById(\'member-detail-card\').style.display=\'none\'" style="font-size:10px">✕ 关闭</button>';
+  content.insertBefore(headerDiv, content.firstChild);
+}
+
+function switchMemberTab(name, memberKey, tab) {
+  // 切换 tab 按钮样式
+  document.querySelectorAll('#member-detail-content .tab-btn').forEach(function(btn) {
+    if (btn.dataset.tab === tab) {
+      btn.style.cssText = 'padding:4px 12px;border:1px solid transparent;border-radius:4px;cursor:pointer;background:var(--accent);color:#fff;font-size:12px';
+    } else {
+      btn.style.cssText = 'padding:4px 12px;border:1px solid var(--border-light);border-radius:4px;cursor:pointer;background:transparent;color:var(--text-muted);font-size:12px';
+    }
+  });
+
+  if (tab === 'detail') {
+    loadMemberDetailTab(name, memberKey);
+  } else if (tab === 'identity') {
+    loadMemberIdentityTab(name, memberKey);
+  }
+}
+
+function loadMemberDetailTab(name, memberKey) {
+  var tabContent = document.getElementById('member-tab-content');
+  tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:10px;text-align:center">加载中...</div>';
+
+  fetch('/dashboard/api/v3/history/member-daily?name=' + encodeURIComponent(name))
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.daily || d.daily.length === 0) {
+        tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">未找到 ' + esc(name) + ' 的记录</div>';
+        return;
+      }
+      var h = '<div class="text-xs text-muted" style="margin-bottom:8px">' + d.total_days + ' 天出勤 · 累计 ' + d.total_duration_display + ' · 日均 ' + d.avg_daily_display + ' · 最近出勤 ' + d.last_active_display + '</div>';
+      h += '<div class="table-wrap" style="max-height:400px;overflow-y:auto">';
+      h += '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th style="width:60px">日期</th><th style="width:50px;text-align:center">Sessions</th><th style="width:80px">时长</th><th style="width:30px"></th></tr></thead><tbody>';
+      for (var i = 0; i < d.daily.length; i++) {
+        var day = d.daily[i];
+        h += '<tr onclick="toggleDailyDetail(' + i + ')" style="cursor:pointer">';
+        h += '<td class="td-mono" style="font-size:12px;font-weight:600">' + day.date_display + '</td>';
+        h += '<td class="td-mono" style="text-align:center;font-size:11px">' + day.session_count + '</td>';
+        h += '<td class="td-mono" style="font-size:11px">' + day.duration_display + '</td>';
+        h += '<td style="text-align:center;font-size:10px;color:var(--text-muted)">▼</td>';
+        h += '</tr>';
+        h += '<tr id="daily-detail-' + i + '" style="display:none"><td colspan="4" style="padding:0"><div style="padding:4px 8px 8px 8px;background:rgba(255,255,255,0.02)">';
+        h += '<table class="data-table" style="font-size:10px;width:100%;margin:0"><thead><tr><th style="width:28px">#</th><th>会议 ID</th><th>主题</th><th>加入</th><th>离开</th><th>时长</th></tr></thead><tbody>';
+        for (var j = 0; j < day.sessions.length; j++) {
+          var s = day.sessions[j];
+          h += '<tr>';
+          h += '<td style="text-align:center;color:var(--text-muted)">' + (j + 1) + '</td>';
+          h += '<td class="td-mono">' + esc(s.meeting_id || '—') + '</td>';
+          h += '<td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.topic || '—') + '</td>';
+          h += '<td class="td-mono">' + fmtMyt(s.join_time) + '</td>';
+          h += '<td class="td-mono">' + fmtMyt(s.leave_time) + '</td>';
+          h += '<td class="td-mono">' + s.duration_display + '</td>';
+          h += '</tr>';
+        }
+        h += '</tbody></table></div></td></tr>';
+      }
+      h += '</tbody></table></div>';
+      tabContent.innerHTML = h;
+    })
+    .catch(function(){
+      tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载失败</div>';
+    });
+}
+
+function loadMemberIdentityTab(name, memberKey) {
+  var tabContent = document.getElementById('member-tab-content');
+  tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:10px;text-align:center">加载身份数据...</div>';
+
+  fetch('/dashboard/api/member/identity-stability/' + encodeURIComponent(memberKey) + '?days=30')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok) {
+        tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">未找到身份数据</div>';
+        return;
+      }
+      var data = d.data;
+      var h = '';
+
+      // ---- 计算稳定性评分 ----
+      var ipCount = (data.ip_summary ? data.ip_summary.unique_ip_count : 0);
+      var nameCount = (data.name_variants ? data.name_variants.length : 0);
+      var userIdCount = (data.zoom_ids ? (data.zoom_ids.user_ids || []).length : 0);
+      var hasEmail = (data.zoom_ids ? (data.zoom_ids.emails || []).length > 0 : false);
+
+      var stabilityScore = 100;
+      if (ipCount > 1) stabilityScore -= 25;
+      if (ipCount > 3) stabilityScore -= 15;
+      if (nameCount > 1) stabilityScore -= 15;
+      if (nameCount > 3) stabilityScore -= 10;
+      if (userIdCount > 1) stabilityScore -= 20;
+      if (userIdCount > 5) stabilityScore -= 10;
+      if (!hasEmail) stabilityScore -= 10;
+      if (stabilityScore < 10) stabilityScore = 10;
+
+      var grade = 'A';
+      if (stabilityScore < 90) grade = 'B';
+      if (stabilityScore < 70) grade = 'C';
+      if (stabilityScore < 50) grade = 'D';
+      var gc = grade === 'A' ? '#00e676' : grade === 'B' ? '#ffd54f' : grade === 'C' ? '#ff9800' : '#f44336';
+
+      // ---- 1. 风险评分卡片 ----
+      h += '<div style="display:flex;gap:8px;margin-bottom:12px">';
+      // 稳定性卡片
+      h += '<div style="flex:0 0 auto;width:100px;background:linear-gradient(135deg,'
+        + (grade === 'A' ? 'rgba(0,230,118,0.12)' : grade === 'B' ? 'rgba(255,213,79,0.12)' : grade === 'C' ? 'rgba(255,152,0,0.12)' : 'rgba(244,67,54,0.12)')
+        + ',rgba(255,255,255,0.02));border:1px solid ' + gc + '44;border-radius:8px;padding:10px;text-align:center">';
+      h += '<div style="font-size:28px;font-weight:700;color:' + gc + '">' + grade + '</div>';
+      h += '<div style="font-size:10px;color:var(--text-muted);margin-top:2px">身份稳定性</div>';
+      h += '<div style="font-size:16px;font-weight:600;margin-top:3px;color:' + gc + '">' + stabilityScore + '分</div>';
+      var tagText = grade === 'A' ? '稳定' : grade === 'B' ? '轻度波动' : grade === 'C' ? '需关注' : '高度不一致';
+      h += '<div style="font-size:9px;color:var(--text-muted);margin-top:2px">' + tagText + '</div>';
+      h += '</div>';
+
+      // 指标摘要
+      h += '<div style="flex:1;display:flex;flex-wrap:wrap;gap:4px">';
+      function sc(label, v, clr) {
+        return '<div style="flex:1;min-width:55px;background:rgba(255,255,255,0.03);border-radius:6px;padding:5px 6px;text-align:center">'
+          + '<div style="font-size:15px;font-weight:600;color:' + (clr||'var(--text-muted)') + '">' + v + '</div>'
+          + '<div style="font-size:9px;color:var(--text-muted)">' + label + '</div></div>';
+      }
+      var ipWarn = ipCount > 3 ? '#ff9800' : ipCount > 1 ? '#ffd54f' : '';
+      var nWarn = nameCount > 3 ? '#ff9800' : nameCount > 1 ? '#ffd54f' : '';
+      var uWarn = userIdCount > 5 ? '#ff9800' : userIdCount > 1 ? '#ffd54f' : '';
+      h += sc('IP数', ipCount, ipWarn);
+      h += sc('名称变体', nameCount, nWarn);
+      h += sc('UserID', userIdCount, uWarn);
+      h += sc('出勤', data.attendance_summary ? data.attendance_summary.total_days : 0);
+      h += sc('UUID', data.zoom_ids ? (data.zoom_ids.participant_uuids || []).length : 0);
+      h += '</div>';
+      h += '</div>';
+
+      // ---- 2. 名称变体 ----
+      h += '<div style="margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:6px;padding:8px">';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px">'
+        + '名称变体'
+        + (nameCount > 1 ? '<span style="font-size:9px;color:#ff9800;background:rgba(255,152,0,0.15);padding:1px 6px;border-radius:3px">' + nameCount + '个变体</span>' : '')
+        + '</div>';
+      if (data.name_variants && data.name_variants.length > 0) {
+        var tName = 0;
+        data.name_variants.forEach(function(v){ tName += v.count || 1; });
+        h += '<table class="data-table" style="font-size:10px;width:100%"><thead><tr><th>名称</th><th style="width:45px;text-align:center">次数</th><th style="width:45px;text-align:center">占比</th><th style="width:70px">最后出现</th></tr></thead><tbody>';
+        data.name_variants.forEach(function(v){
+          var pct = Math.round((v.count||1) / tName * 100);
+          h += '<tr><td>' + esc(v.raw_name) + '</td><td style="text-align:center">' + (v.count || 1) + '</td>';
+          h += '<td style="text-align:center;position:relative"><div style="position:absolute;left:0;bottom:0;height:2px;background:' + (pct > 50 ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)') + ';width:' + pct + '%;border-radius:1px"></div>' + pct + '%</td>';
+          h += '<td class="td-mono">' + (v.last_seen || '').substring(0,10) + '</td></tr>';
+        });
+        h += '</tbody></table>';
+      } else {
+        h += '<div class="text-xs text-muted">无变体数据</div>';
+      }
+      h += '</div>';
+
+      // ---- 3. IP 分析 ----
+      h += '<div style="margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:6px;padding:8px">';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px">'
+        + 'IP 分析'
+        + (ipCount > 1 ? '<span style="font-size:9px;color:#ff9800;background:rgba(255,152,0,0.15);padding:1px 6px;border-radius:3px">' + ipCount + '个IP</span>' : '')
+        + '<span style="font-size:9px;color:var(--text-muted);margin-left:auto">主IP: ' + esc(data.ip_summary ? data.ip_summary.main_ip : '') + ' (' + (data.ip_summary ? data.ip_summary.main_ip_pct : 0) + '%)</span>'
+        + '</div>';
+      if (data.ip_summary && data.ip_summary.ip_list && data.ip_summary.ip_list.length > 0) {
+        h += '<table class="data-table" style="font-size:10px;width:100%"><thead><tr><th>IP</th><th style="width:45px;text-align:center">次数</th><th style="width:45px;text-align:center">占比</th><th style="min-width:70px">分布</th></tr></thead><tbody>';
+        data.ip_summary.ip_list.forEach(function(ip){
+          h += '<tr><td class="td-mono">' + esc(ip.ip) + '</td><td style="text-align:center">' + ip.count + '</td><td style="text-align:center">' + ip.pct + '%</td>';
+          h += '<td><div style="height:4px;background:rgba(255,255,255,0.05);border-radius:2px;overflow:hidden"><div style="height:100%;width:' + ip.pct + '%;background:' + (ip.pct >= 50 ? '#00e67688' : ip.pct >= 20 ? '#ffd54f88' : '#ffffff22') + ';border-radius:2px"></div></div></td>';
+          h += '</tr>';
+        });
+        h += '</tbody></table>';
+      }
+      h += '</div>';
+
+      // ---- 4. Zoom 标识 ----
+      h += '<div style="margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:6px;padding:8px">';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">Zoom 标识</div>';
+      var uids = data.zoom_ids ? (data.zoom_ids.user_ids || []) : [];
+      var uuids = data.zoom_ids ? (data.zoom_ids.participant_uuids || []) : [];
+      var ems = data.zoom_ids ? (data.zoom_ids.emails || []) : [];
+      var ev = esc(memberKey);
+
+      h += '<div class="text-xs" style="margin-bottom:3px">';
+      h += '<span style="color:var(--text-muted)">user_id:</span> ';
+      if (uids.length <= 3) {
+        h += esc(uids.join(', ')) || '—';
+      } else {
+        var showI = uids.slice(0,3).join(', ');
+        var restI = uids.slice(3).join(', ');
+        h += esc(showI);
+        h += ' <span style="color:#2196f3;cursor:pointer;font-size:10px" onclick="this.style.display=\'none\';document.getElementById(\'uid-more-\'+\'' + ev + '\').style.display=\'inline\'">+'
+          + (uids.length - 3) + '</span>';
+        h += '<span id="uid-more-' + ev + '" style="display:none">, ' + esc(restI) + '</span>';
+      }
+      h += '</div>';
+
+      h += '<div class="text-xs" style="margin-bottom:3px">'
+        + '<span style="color:var(--text-muted)">participant_uuid:</span> ' + uuids.length + ' 个'
+        + (uuids.length > 0 ? ' <span style="color:#2196f3;cursor:pointer;font-size:9px" onclick="var e=document.getElementById(\'uuid-list-\'+\'' + ev + '\');e.style.display=e.style.display===\'none\'?\'block\':\'none\'">切换</span>' : '')
+        + '</div>';
+      if (uuids.length > 0) {
+        h += '<div id="uuid-list-' + ev + '" style="display:none;font-size:9px;color:var(--text-muted);padding:4px 8px;background:rgba(255,255,255,0.02);border-radius:4px;margin-bottom:3px;word-break:break-all;max-height:70px;overflow-y:auto">'
+          + esc(uuids.join(', ')) + '</div>';
+      }
+
+      h += '<div class="text-xs"><span style="color:var(--text-muted)">email:</span> '
+        + (ems.length > 0 ? esc(ems.join(', ')) : '—') + '</div>';
+      h += '</div>';
+
+      // ---- 5. 出勤规律 ----
+      h += '<div style="margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:6px;padding:8px">';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:4px">出勤规律（近30天）</div>';
+      var att = data.attendance_summary || {};
+      var boxes = '';
+      function sb(l, v, u) {
+        return '<div style="flex:1;min-width:55px;background:rgba(255,255,255,0.03);border-radius:6px;padding:5px 6px;text-align:center">'
+          + '<div style="font-size:15px;font-weight:600">' + (v||'—') + '</div>'
+          + '<div style="font-size:9px;color:var(--text-muted)">' + (u||l) + '</div></div>';
+      }
+      h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+      h += sb('出勤天数', att.total_days || 0, '天');
+      h += sb('平均进入', att.avg_first_join || '—', '首次');
+      h += sb('平均离开', att.avg_last_leave || '—', '最后');
+      h += sb('平均时长', att.avg_duration_minutes || 0, 'min');
+      h += '</div>';
+      // 迷你出勤日历
+      if (data.sessions && data.sessions.length > 0) {
+        var dates = {};
+        data.sessions.forEach(function(s){ if (s.date) dates[s.date] = true; });
+        var dateKeys = Object.keys(dates).sort();
+        if (dateKeys.length > 0) {
+          h += '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:2px">';
+          dateKeys.forEach(function(d){
+            var day = d.substring(8,10);
+            h += '<span style="font-size:8px;padding:2px 4px;background:rgba(0,230,118,0.15);border-radius:3px;color:#00e676aa">' + day + '</span>';
+          });
+          h += '</div>';
+        }
+      }
+      h += '</div>';
+
+      tabContent.innerHTML = h;
+
+      // ---- 6. 相似成员推荐 ----
+      loadSimilarMembers(name, memberKey);
+    })
+    .catch(function(){
+      tabContent.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载身份数据失败</div>';
+    });
+}
+
+function loadSimilarMembers(name, memberKey) {
+  var tabContent = document.getElementById('member-tab-content');
+
+  fetch('/dashboard/api/member/similar/' + encodeURIComponent(memberKey) + '?days=30')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.ok || !d.data || d.data.length === 0) return;
+
+      var h = '<div style="margin-bottom:10px;background:rgba(255,255,255,0.03);border-radius:6px;padding:8px">';
+      h += '<div style="font-size:12px;font-weight:600;margin-bottom:6px">相似成员推荐</div>';
+
+      d.data.forEach(function(sim){
+        var pct = sim.score;
+        var bc = pct >= 80 ? '#00e676' : pct >= 60 ? '#ffd54f' : pct >= 40 ? '#ff9800' : '#ffd54f44';
+        h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;margin-bottom:4px;background:rgba(255,255,255,0.02);border-radius:6px">';
+        h += '<div style="flex:0 0 auto;font-size:13px;font-weight:600;color:' + (pct >= 60 ? '#fff' : 'var(--text-muted)') + '">' + esc(sim.member_key) + '</div>';
+        h += '<div style="flex:1;display:flex;align-items:center;gap:6px">';
+        h += '<div style="flex:1;height:4px;background:rgba(255,255,255,0.05);border-radius:2px;overflow:hidden">';
+        h += '<div style="height:100%;width:' + pct + '%;background:' + bc + ';border-radius:2px"></div></div>';
+        h += '<span style="font-size:11px;font-weight:600;color:' + bc + ';flex:0 0 30px;text-align:right">' + pct + '%</span>';
+        h += '</div>';
+        if (sim.reasons && sim.reasons.length > 0) {
+          h += '<div style="flex:0 0 auto;font-size:9px;color:var(--text-muted)">';
+          sim.reasons.forEach(function(r, i){
+            if (i > 0) h += ' · ';
+            h += r;
+          });
+          h += '</div>';
+        }
+        h += '</div>';
+      });
+
+      h += '</div>';
+      tabContent.innerHTML += h;
+    })
+    .catch(function(){});
+}
+
+function toggleDailyDetail(idx) {
+  var row = document.getElementById('daily-detail-' + idx);
+  if (!row) return;
+  row.style.display = (row.style.display === 'none' || row.style.display === '') ? 'table-row' : 'none';
+}
+
+// ── 已导入文件 Drawer ──
+function toggleImportedFiles() {
+  var overlay = document.getElementById('imported-files-overlay');
+  var drawer = document.getElementById('imported-files-drawer');
+  var body = document.getElementById('imported-files-body');
+
+  if (drawer.classList.contains('open')) {
+    closeImportedFiles();
+    return;
+  }
+
+  overlay.classList.add('open');
+  drawer.classList.add('open');
+
+  fetch('/dashboard/api/v3/history/imported-files')
+    .then(function(r){return r.json()})
+    .then(function(d){
+      if (!d.files || d.files.length === 0) {
+        body.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">暂无已导入文件</div>';
+        return;
+      }
+      var h = '<table class="data-table" style="font-size:11px;width:100%"><thead><tr><th>文件名</th><th style="text-align:center">记录</th><th style="text-align:center">成员</th><th>导入时间</th><th></th></tr></thead><tbody>';
+      d.files.forEach(function(f){
+        h += '<tr>';
+        h += '<td class="td-name" style="font-size:10px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.source_file) + '</td>';
+        h += '<td class="td-mono" style="text-align:center">' + (f.row_count||0) + '</td>';
+        h += '<td class="td-mono" style="text-align:center">' + (f.participant_count||0) + '</td>';
+        h += '<td class="td-mono" style="font-size:10px">' + (f.imported_at_display||f.imported_at||'') + '</td>';
+        h += '<td><button class="btn btn-sm btn-danger" onclick="confirm(\'确认删除此文件所有记录？\') && deleteImport(\'' + esc(f.source_file) + '\')" style="font-size:10px">删除</button></td>';
+        h += '</tr>';
+      });
+      h += '</tbody></table>';
+      body.innerHTML = h;
+    })
+    .catch(function(){
+      body.innerHTML = '<div class="text-sm text-muted" style="padding:20px;text-align:center">加载失败</div>';
+    });
+}
+function closeImportedFiles() {
+  document.getElementById('imported-files-overlay').classList.remove('open');
+  document.getElementById('imported-files-drawer').classList.remove('open');
+}
+function viewImportDetail(sourceFile) {
+  showMemberHistory('');  // 通过空名展示全部? 或展示该文件记录。直接跳链接?
+  // 更合适: 用个查询参数搜索
+  var q = document.getElementById('history-search-input');
+  if (q) q.value = '';
+  window.location.href = '?tab=official&search=' + encodeURIComponent(sourceFile);
+}
+function closeHistoryDrawer() {
+  document.getElementById('history-drawer-overlay').classList.remove('open');
+  document.getElementById('history-drawer').classList.remove('open');
+}
+function showToast(msg, isError) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:6px;z-index:9999;font-size:13px;' + (isError ? 'background:#dc3545;color:#fff;' : 'background:#28a745;color:#fff;');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(function(){ el.remove(); }, 2500);
+}
+
+// ── 更多菜单 ──
+function toggleMoreMenu() {
+  var m = document.getElementById('more-menu-dropdown');
+  if (m) m.classList.toggle('open');
+}
+document.addEventListener('click', function(e) {
+  var m = document.getElementById('more-menu-dropdown');
+  if (m && !e.target.closest('.more-menu-container')) {
+    m.classList.remove('open');
+  }
+});
+
+// ── 导出CSV ──
+function exportOfficialCSV() {
+  var tb = document.getElementById('history-summary-table');
+  if (!tb) return;
+  // 只导出可见行
+  var rows = Array.from(tb.querySelectorAll('tbody tr'));
+  if (!rows.length || rows.length === 1 && rows[0].querySelector('td[colspan]')) return;
+  var csv = '\uFEFF';
+  // header
+  csv += '成员,出勤天数,累计时长,日均,首次出勤,最近出勤,状态\n';
+  rows.forEach(function(r) {
+    var tds = r.querySelectorAll('td');
+    if (!tds.length || tds[0].hasAttribute('colspan')) return;
+    // 跳过空行
+    var cells = [];
+    // 第0列: 名称（取文本第一行）
+    var nameCell = tds[0];
+    var name = (nameCell ? (nameCell.childNodes[0] || nameCell).textContent || '' : '').trim();
+    cells.push('"' + name.replace(/"/g, '""') + '"');
+    // 1-5列
+    for (var i = 1; i < 6; i++) {
+      var txt = tds[i] ? tds[i].textContent.trim() : '';
+      cells.push(txt);
+    }
+    // 第6列 状态
+    var statusTxt = tds[6] ? tds[6].textContent.trim() : '';
+    cells.push(statusTxt);
+    csv += cells.join(',') + '\n';
+  });
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'attendance_report_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+(function(){
+  var inp = document.getElementById('history-search-input');
+  if (inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter') applyHistorySearch(); });
+})();
+setTimeout(sortOfficialTable, 100);
+
+// ── 官方成员表默认排序（出勤天数 desc → 累计时长 desc）──
+function sortOfficialTable() {
+  var tb = document.getElementById('history-summary-table');
+  if (!tb) return;
+  var tbody = tb.querySelector('tbody');
+  if (!tbody) return;
+  var rows = Array.from(tbody.querySelectorAll('tr'));
+  // 跳过空状态行（colspan=6）
+  var headerCols = tb.querySelectorAll('thead th');
+  if (headerCols.length < 2) return;
+  var dayIdx = 0, durIdx = 1;
+  for (var c = 0; c < headerCols.length; c++) {
+    var txt = (headerCols[c].textContent || '').trim();
+    if (txt === '出勤天数') dayIdx = c;
+    if (txt === '累计时长') durIdx = c;
+  }
+  rows.sort(function(a, b) {
+    var ca = a.querySelectorAll('td');
+    var cb = b.querySelectorAll('td');
+    if (!ca[dayIdx] || !cb[dayIdx]) return 0;
+    var da = parseInt(ca[dayIdx].textContent.trim()) || 0;
+    var db = parseInt(cb[dayIdx].textContent.trim()) || 0;
+    if (da !== db) return db - da;
+    // 累计时长按数值排序（去掉非数字字符后比较）
+    var tda = (ca[durIdx] ? ca[durIdx].textContent.trim() : '');
+    var tdb = (cb[durIdx] ? cb[durIdx].textContent.trim() : '');
+    // 简单解析：取第一个数字部分
+    var nA = parseFloat(tda.replace(/[^0-9.]/g, '')) || 0;
+    var nB = parseFloat(tdb.replace(/[^0-9.]/g, '')) || 0;
+    return nB - nA;
+  });
+  rows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+// ── 显示/隐藏测试会议（历史 Tab）──
+function toggleTestMeetings(checked) {
+  var p = new URLSearchParams(window.location.search);
+  p.set('show_test', checked ? '1' : '0');
+  window.location.search = p.toString();
+}
+
+// ── Report API 同步 ──
+function syncOfficial(scope, btn) {
+  var btn = event && event.target ? event.target : document.querySelector('[onclick*="syncOfficial"][onclick*="'+scope+'"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 同步中...'; }
+  fetch('/dashboard/api/v3/sync-official-' + scope, { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        alert('✅ 同步完成\n会议: ' + d.meetings + '\n新增: ' + d.inserted + '\n跳过: ' + d.skipped + '\n错误: ' + d.errors);
+        location.reload();
+      } else {
+        alert('❌ 同步失败: ' + (d.error || '未知错误'));
+      }
+    })
+    .catch(function(e) { alert('❌ 网络错误: ' + e.message); })
+    .finally(function() { if (btn) { btn.disabled = false; btn.textContent = scope === 'yesterday' ? '🔄 同步昨天' : '🗓️ 同步本月'; } });
 }
 </script>
 
 <style>
+/* ── 工作台模式 ── */
+.workspace-wrap {
+  width: 96%;
+  max-width: 1700px;
+  margin: 0 auto;
+}
+.workspace-title {
+  margin: 0;
+  font-size: 14px;
+}
+.workspace-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.workspace-panel {
+  margin-bottom: 2px;
+}
+.workspace-panel .panel-body {
+  padding: 4px 6px;
+}
+.workspace-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.workspace-table th,
+.workspace-table td {
+  padding: 2px 8px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.workspace-table th:first-child,
+.workspace-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background: var(--card);
+}
+.workspace-table tr {
+  height: 36px;
+}
+.workspace-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.workspace-table thead th {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.workspace-table .num {
+  text-align: right;
+  font-family: var(--mono);
+}
+.workspace-table .time {
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.workspace-table .action {
+  width: 36px;
+  text-align: center;
+}
+.workspace-table .action button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.workspace-table .action button:hover {
+  background: var(--hover-bg, rgba(255,255,255,0.08));
+  color: var(--text);
+}
+.workspace-table .td-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.workspace-table .td-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* 官方历史数据页紧凑布局 */
+.official-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.compact-table th,
+.compact-table td {
+  padding: 2px 8px !important;
+  line-height: 1.15 !important;
+}
+.compact-table tr {
+  height: 28px !important;
+}
+.official-table th,
+.official-table td {
+  padding: 6px 10px;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.official-table tr {
+  height: 36px;
+}
+.official-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.official-table thead th {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.official-table .num {
+  text-align: right;
+  font-family: var(--mono);
+}
+.official-table .time {
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.official-table .action {
+  width: 60px;
+  text-align: right;
+}
+
 /* 统计卡片 */
 .stat-card {
   background: var(--panel-bg, #0d1b3e);
@@ -530,9 +2281,46 @@ function esc(s) {
 .sharing-detail-inner .data-table tr:last-child td {
   border-bottom: none;
 }
+/* 历史会议展开行 */
+.meeting-detail-row > td {
+  background: var(--surface, #0a1635);
+  border-top: none;
+}
+.meeting-detail-inner {
+  padding: 4px 16px 8px 16px;
+}
+.meeting-detail-inner .data-table th {
+  font-size: 10px;
+  color: var(--text-muted, #6b7280);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border, #1e3a6b);
+  background: transparent;
+}
+.meeting-detail-inner .data-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(30,58,107,0.3);
+  font-size: 11px;
+}
+.meeting-detail-inner .data-table tr:last-child td {
+  border-bottom: none;
+}
 .badge-xs {
   font-size: 10px;
   padding: 1px 6px;
+}
+.btn-danger {
+  background: #dc3545;
+  color: #fff;
+  border: 1px solid #dc3545;
+}
+.btn-danger:hover {
+  background: #c82333;
+  border-color: #bd2130;
+}
+/* 上传进度条 */
+#upload-progress {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 </style>
 

@@ -403,8 +403,11 @@ def build_app() -> "FastAPI":
         if tenant_id:
             return None, tenant_id
 
-        # 3) 无 tenant 上下文(未登录)→ 用全局 .env
-        return ZoomMetrics(), None
+        # 3) 无 tenant 上下文(未登录)→ 用 default 账号
+        za = db.get_zoom_account("default")
+        if za:
+            return ZoomMetrics(za), None
+        return None, None
 
     # ── 看板 ─────────────────────────────────────────────────────────────────
     def _compute_online_from_webhook(tid: str) -> tuple:
@@ -2500,6 +2503,301 @@ def build_app() -> "FastAPI":
             return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    @app.get("/api/v3/members/{display_name}/timeline")
+    async def api_v3_member_timeline(display_name: str, request: Request):
+        """返回某个成员的 enter→leave 分段 timeline（懒加载）"""
+        from datetime import datetime, timezone, timedelta
+        tenant_id = request.app.state.get_effective_tenant_id(request)
+        current_meeting_id = request.query_params.get("meeting_id")
+        session_start_after = request.query_params.get("session_start_after")
+        source = request.query_params.get("source", "live").strip().lower()
+        conn = db._get_conn()
+        import re
+
+        # ── 用 member_display 匹配规则查找该成员 ──
+        resolved = db.resolve_display_name(display_name, tenant_id)
+        resolved_display = resolved.get("display_name", display_name)
+        raw_match = resolved.get("raw_name", "").strip()
+
+        # ── 数据源：官方历史 ──
+        if source == "history":
+            md_rows = conn.execute(
+                "SELECT raw_name, display_name, match_key, aliases FROM member_display WHERE tenant_id=? AND deleted=0",
+                (tenant_id,)
+            ).fetchall()
+            matching_keys = set()
+            def _add_key(key: str):
+                k = re.sub(r'\s+', '', (key or "").strip().lower())
+                if k:
+                    matching_keys.add(k)
+            target_key = re.sub(r'\s+', '', resolved_display.lower())
+            _add_key(resolved_display)
+            _add_key(raw_match)
+            for row in md_rows:
+                md_raw, md_disp, md_mk, md_alias_json = row
+                mk_norm = re.sub(r'\s+', '', (md_mk or '').lower())
+                raw_norm = re.sub(r'\s+', '', (md_raw or '').lower())
+                disp_norm = re.sub(r'\s+', '', (md_disp or '').lower())
+                if target_key in (mk_norm, raw_norm, disp_norm):
+                    _add_key(md_raw)
+                    _add_key(md_disp)
+                    _add_key(md_mk)
+                    try:
+                        for a in json.loads(md_alias_json or "[]"):
+                            _add_key(a)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if not matching_keys:
+                # fallback: 直接用 display_name
+                matching_keys.add(target_key)
+            keys_list = list(matching_keys)
+            or_clauses = []
+            params = [tenant_id]
+            for k in keys_list:
+                or_clauses.append("REPLACE(LOWER(participant_name),' ','')=?")
+                params.append(k)
+            sql = ("SELECT participant_name, email, join_time, leave_time, "
+                   "duration_minutes, meeting_id, meeting_topic "
+                   "FROM official_attendance_sessions "
+                   "WHERE tenant_id=? AND (" + " OR ".join(or_clauses) + ") "
+                   "ORDER BY join_time")
+            rows = conn.execute(sql, params).fetchall()
+            # 转成和 zoom_participants 类似的格式
+            MYT = timezone(timedelta(hours=8))
+            def _fmt_myt(utc_str: str) -> str:
+                if not utc_str: return "—"
+                try:
+                    s = str(utc_str).replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+                    return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+                except:
+                    return str(utc_str)[:16].replace("T", " ")
+            def _fmt_dur(sec: int) -> str:
+                h, r = divmod(sec, 3600)
+                m, s = divmod(r, 60)
+                if h: return f"{h}h {m}m"
+                return f"{m}m {s}s"
+            segments = []
+            total_seconds = 0
+            for i, r in enumerate(rows):
+                join_t = r[2]
+                leave_t = r[3]
+                dur_raw = r[4]  # duration_minutes
+                meeting_id_val = r[5]
+                meeting_topic = r[6] or ""
+                try:
+                    join_dt = datetime.fromisoformat(str(join_t).replace("Z", "+00:00"))
+                    leave_dt = datetime.fromisoformat(str(leave_t).replace("Z", "+00:00"))
+                    dur_sec = max(0, int((leave_dt - join_dt).total_seconds()))
+                except:
+                    dur_sec = int((dur_raw or 0) * 60)
+                total_seconds += dur_sec
+                segments.append({
+                    "seq": i + 1,
+                    "enter_time": str(join_t),
+                    "enter_time_display": _fmt_myt(join_t),
+                    "leave_time": str(leave_t),
+                    "leave_time_display": _fmt_myt(leave_t),
+                    "enter_meeting_id": meeting_id_val,
+                    "leave_meeting_id": meeting_id_val,
+                    "duration_seconds": dur_sec,
+                    "duration_display": _fmt_dur(dur_sec),
+                    "status": "⚪️ 已离开",
+                })
+            return {
+                "ok": True,
+                "display_name": display_name,
+                "join_count": len(segments),
+                "leave_count": len(segments),
+                "total_seconds": total_seconds,
+                "total_display": _fmt_dur(total_seconds),
+                "segments": segments,
+                "data_source": "history",
+            }
+
+        # ── 数据源：实时（zoom_participants）──
+        if not current_meeting_id:
+            return {"ok": False, "error": "缺少 meeting_id"}
+        md_rows = conn.execute(
+            "SELECT raw_name, display_name, match_key, aliases FROM member_display WHERE tenant_id=? AND deleted=0",
+            (tenant_id,)
+        ).fetchall()
+        matching_keys = set()
+        def _add_key(key: str):
+            k = re.sub(r'\s+', '', (key or "").strip().lower())
+            if k:
+                matching_keys.add(k)
+        target_key = re.sub(r'\s+', '', resolved_display.lower())
+        _add_key(resolved_display)
+        _add_key(raw_match)
+        for row in md_rows:
+            md_raw, md_disp, md_mk, md_alias_json = row
+            mk_norm = re.sub(r'\s+', '', (md_mk or '').lower())
+            raw_norm = re.sub(r'\s+', '', (md_raw or '').lower())
+            disp_norm = re.sub(r'\s+', '', (md_disp or '').lower())
+            if target_key in (mk_norm, raw_norm, disp_norm):
+                _add_key(md_raw)
+                _add_key(md_disp)
+                _add_key(md_mk)
+                try:
+                    for a in json.loads(md_alias_json or "[]"):
+                        _add_key(a)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        if not matching_keys:
+            matching_keys.add(target_key)
+        keys_list = list(matching_keys)
+        params = [current_meeting_id]
+        or_clauses = []
+        for k in keys_list:
+            or_clauses.append("REPLACE(LOWER(name),' ','')=?")
+            params.append(k)
+        sql = ("SELECT * FROM zoom_participants WHERE meeting_id=? AND ("
+               + " OR ".join(or_clauses) + ")")
+        if session_start_after:
+            sql += " AND action_time>=?"
+            params.append(session_start_after)
+        if tenant_id:
+            sql += " AND tenant_id=?"
+            params.append(tenant_id)
+        sql += " ORDER BY action_time"
+        rows = conn.execute(sql, params).fetchall()
+        raw = [dict(r) for r in rows]
+        # ── 同源去重 + 分段逻辑（对齐 Zoom 官方报表口径） ──
+        # 规则：同秒 leave→enter 合并；<5秒重复去重；断线5分钟内重连合并为一个 session
+        RECONNECT_WINDOW = 300  # 5 分钟
+        # Step 1: 标准化 action + 去重 + 同秒合并
+        filtered = []
+        for ev in raw:
+            action = ev.get("action", "")
+            if action in ("joined", "enter"):
+                action = "enter"
+            elif action in ("left", "leave"):
+                action = "leave"
+            else:
+                continue
+            try:
+                ev_dt = datetime.fromisoformat(str(ev["action_time"]).replace("Z", "+00:00"))
+            except:
+                ev_dt = datetime.fromisoformat(str(ev["action_time"]))
+            if ev_dt.tzinfo is None:
+                ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+            e = {"action": action, "dt": ev_dt, "raw": ev}
+            if not filtered:
+                filtered.append(e)
+                continue
+            prev = filtered[-1]
+            gap = (e["dt"] - prev["dt"]).total_seconds()
+            # 同秒 leave→enter：合并（breakout 切换）
+            if prev["action"] == "leave" and e["action"] == "enter" and abs(gap) <= 2:
+                filtered.pop()
+                continue
+            # 同秒 enter→leave：丢弃 leave（webhook 滞后）
+            if prev["action"] == "enter" and e["action"] == "leave" and abs(gap) <= 2:
+                continue
+            # 连续相同 action <5秒：去重
+            if e["action"] == prev["action"] and abs(gap) < 5:
+                continue
+            filtered.append(e)
+
+        # Step 2: 配对 enter→leave 生成 sessions
+        sessions = []
+        pending_enter = None
+        for ev in filtered:
+            if ev["action"] == "enter":
+                pending_enter = ev
+                continue
+            if ev["action"] == "leave" and pending_enter:
+                dur = max(0, int((ev["dt"] - pending_enter["dt"]).total_seconds()))
+                if dur < 86400:
+                    sessions.append({"enter": pending_enter, "leave": ev, "dur": dur})
+                pending_enter = None
+
+        # Step 3: 合并断线重连（5分钟内）
+        merged_sessions = []
+        disconnects = 0
+        for s in sessions:
+            if not merged_sessions:
+                merged_sessions.append(s)
+                continue
+            prev_s = merged_sessions[-1]
+            gap = (s["enter"]["dt"] - prev_s["leave"]["dt"]).total_seconds()
+            if 0 < gap <= RECONNECT_WINDOW:
+                disconnects += 1
+                prev_s["leave"] = s["leave"]
+                prev_s["dur"] = (s["leave"]["dt"] - prev_s["enter"]["dt"]).total_seconds()
+            else:
+                merged_sessions.append(s)
+
+        MYT = timezone(timedelta(hours=8))
+        def _fmt_myt(utc_str: str) -> str:
+            if not utc_str:
+                return "—"
+            try:
+                s = utc_str.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
+            except:
+                return utc_str[:16].replace("T", " ")
+        segments = []
+        total_seconds = 0
+        now_utc = datetime.now(timezone.utc)
+        # 还有未配对的 enter → 在线中
+        last_pending = filtered[-1] if filtered and filtered[-1]["action"] == "enter" else None
+        for s in merged_sessions:
+            dur = int(s["dur"])
+            total_seconds += dur
+            segments.append({
+                "seq": len(segments) + 1,
+                "enter_time": s["enter"]["raw"]["action_time"],
+                "enter_time_display": _fmt_myt(s["enter"]["raw"]["action_time"]),
+                "leave_time": s["leave"]["raw"]["action_time"],
+                "leave_time_display": _fmt_myt(s["leave"]["raw"]["action_time"]),
+                "enter_meeting_id": s["enter"]["raw"].get("meeting_id", ""),
+                "leave_meeting_id": s["leave"]["raw"].get("meeting_id", ""),
+                "duration_seconds": dur,
+                "duration_display": f"{dur//60}m {dur%60}s" if dur else "0m",
+                "status": "⚪️ 已离开",
+            })
+        # 当前在线中
+        if last_pending and last_pending not in [s["leave"] for s in merged_sessions] + [s["enter"] for s in merged_sessions if s["enter"]["dt"] != s["leave"]["dt"]]:
+            # 比较复杂——改用简单规则：如果最后一个事件是 enter 且没有对应 leave
+            if filtered and filtered[-1]["action"] == "enter":
+                last_ev = filtered[-1]
+                # 检查这个 enter 是否已经被配对到某个 session
+                already_paired = any(s["enter"]["raw"] is last_ev["raw"] or s["enter"]["dt"] == last_ev["dt"] for s in merged_sessions)
+                if not already_paired:
+                    dur = max(0, int((now_utc - last_ev["dt"]).total_seconds()))
+                    total_seconds += dur
+                    segments.append({
+                        "seq": len(segments) + 1,
+                        "enter_time": last_ev["raw"]["action_time"],
+                        "enter_time_display": _fmt_myt(last_ev["raw"]["action_time"]),
+                        "leave_time": None,
+                        "leave_time_display": "在线中",
+                        "enter_meeting_id": last_ev["raw"].get("meeting_id", ""),
+                        "leave_meeting_id": "",
+                        "duration_seconds": dur,
+                        "duration_display": f"{dur//60}m {dur%60}s" if dur else "0m",
+                        "status": "🟢 在线中",
+                    })
+
+        def _fmt_dur(sec: int) -> str:
+            h, r = divmod(sec, 3600)
+            m, s = divmod(r, 60)
+            if h:
+                return f"{h}h {m}m"
+            return f"{m}m {s}s"
+        return {
+            "ok": True,
+            "display_name": display_name,
+            "session_count": len(merged_sessions),
+            "disconnect_count": disconnects,
+            "total_seconds": total_seconds,
+            "total_display": _fmt_dur(total_seconds),
+            "segments": segments,
+        }
 
     @app.delete("/api/v3/member-display/{item_id}")
     async def api_v3_member_display_del(item_id: int, request: Request):

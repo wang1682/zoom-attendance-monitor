@@ -12,7 +12,102 @@
 /* 删除按钮 — 常驻显示，不需要 hover */
 .ma-del{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid rgba(239,68,68,.2);background:rgba(239,68,68,.06);color:#f87171;white-space:nowrap;transition:all .15s ease;font-weight:500}
 .ma-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.35);color:#ef4444;box-shadow:0 1px 4px rgba(239,68,68,.1)}
+/* Timeline 弹窗 */
+.timeline-overlay{
+  position:fixed;inset:0;z-index:9999;
+  background:rgba(0,0,0,.62);
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;
+}
+.timeline-card{
+  width:min(980px,92vw);
+  max-height:82vh;
+  overflow-y:auto;
+  background:#0f172a;
+  border:1px solid #1e3a5f;
+  border-radius:16px;
+  box-shadow:0 24px 80px rgba(0,0,0,.55);
+  padding:22px;
+  animation:tl-fadein .18s ease;
+}
+@keyframes tl-fadein{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+.timeline-head{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-bottom:16px;padding-bottom:14px;
+  border-bottom:1px solid #1e293b;
+}
+.timeline-head h3{margin:0;font-size:17px;color:#e2e8f0}
+.timeline-close-btn{
+  background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:8px;
+  width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;font-size:18px;line-height:1;transition:all .12s;
+}
+.timeline-close-btn:hover{background:#334155;color:#f1f5f9}
+.timeline-stats{
+  display:flex;gap:14px;margin-bottom:18px;flex-wrap:wrap;
+}
+.timeline-stat{
+  background:#1e293b;padding:6px 14px;border-radius:8px;font-size:13px;color:#cbd5e1;
+}
+.timeline-stat strong{color:#e2e8f0}
+.timeline-table-wrap{overflow-x:auto;border-radius:8px;border:1px solid #1e293b}
+.timeline-table{
+  width:100%;min-width:760px;border-collapse:collapse;font-size:12px;
+}
+.timeline-table th{
+  padding:10px 12px;text-align:left;font-weight:600;
+  background:#0c1427;color:#93c5fd;border-bottom:1px solid #1e293b;
+  white-space:nowrap;
+}
+.timeline-table td{
+  padding:9px 12px;border-bottom:1px solid #1e293b;
+  white-space:nowrap;
+}
+.timeline-table tr:last-child td{border-bottom:none}
+.timeline-table tr:hover td{background:rgba(30,58,95,.18)}
 </style>
+
+<script>
+window.escHtml = function(s) {
+  return String(s || '').replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+};
+
+window.showTimeline = function(btn) {
+  const name = btn.dataset.name || '';
+  const meetingId = btn.dataset.meetingId || '';
+  const sessionStart = btn.dataset.sessionStart || '';
+  let url = '/api/v3/members/' + encodeURIComponent(name) + '/timeline?meeting_id=' + encodeURIComponent(meetingId);
+  if (sessionStart) url += '&session_start_after=' + encodeURIComponent(sessionStart);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'timeline-overlay';
+  overlay.innerHTML = '<div class="timeline-card"><div class="timeline-head"><h3>📋 ' + window.escHtml(name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div><div style="text-align:center;color:#94a3b8;padding:40px 0">⏳ 加载中...</div></div>';
+  document.body.appendChild(overlay);
+
+  fetch(url)
+    .then(r => r.json())
+    .then(j => {
+      if (!j.ok) throw new Error(j.error || '请求失败');
+      const rows = (j.segments || []).map(s =>
+        '<tr><td>' + s.seq + '</td><td>' + window.escHtml(s.enter_time_display) + '</td><td>' + window.escHtml(s.leave_time_display) + '</td><td>' + window.escHtml(s.duration_display) + '</td><td>' + window.escHtml(s.status) + '</td></tr>'
+      ).join('');
+
+      overlay.innerHTML =
+        '<div class="timeline-card">' +
+        '<div class="timeline-head"><h3>📋 ' + window.escHtml(j.display_name || name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div>' +
+        '<div class="timeline-stats"><span>会话: <b>' + (j.session_count || 0) + '</b> 段</span><span>断线: <b>' + (j.disconnect_count || 0) + '</b> 次</span><span>累计: <b>' + window.escHtml(j.total_display || '0m') + '</b></span></div>' +
+        '<div class="timeline-table-wrap"><table class="timeline-table"><thead><tr><th>#</th><th>进入时间</th><th>离开时间</th><th>时长</th><th>状态</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">当前会议无进出记录</td></tr>') +
+        '</tbody></table></div></div>';
+    })
+    .catch(err => {
+      overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;margin-bottom:14px">❌ ' + window.escHtml(err.message || '请求失败') + '</div><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
+    });
+};
+</script>
+
 
   {# ── 标题 ── #}
   <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0 0 16px 0">成员中心</h2>
@@ -54,9 +149,9 @@
   <thead>
   <tr>
     <th>成员</th>
-    <th style="width:60px">状态</th>
+    <th>状态</th>
     <th>分组</th>
-    <th>进入/离开次数</th>
+    <th>会话数 / 断线</th>
     <th>今日累计<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>首次进入<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>最近活动<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
@@ -71,6 +166,8 @@
   {% set dur = m.get("today_total_duration", "") %}
   {% set join_c = m.get("join_count", 0) %}
   {% set leave_c = m.get("leave_count", 0) %}
+  {% set ses_c = m.get("session_count", 0) %}
+  {% set dis_c = m.get("disconnect_count", 0) %}
   {% set first_j = m.get("first_join", "") %}
   {% set last_a = m.get("last_activity", "") %}
   <tr class="member-row"
@@ -105,269 +202,161 @@
         {% endfor %}
       </select>
     </td>
-    <td class="td-mono">{{ join_c }} / {{ leave_c }}</td>
+    <td class="td-mono">{{ ses_c }} / {{ dis_c }}</td>
     <td class="td-mono">{{ dur if dur else '—' }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
     <td class="td-mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ m.get("email", "") or "—" }}</td>
-    <td><button class="ma-del" onclick="deleteMember(this)" data-name="{{ m.get('standard_name','') }}">🗑 删除</button></td>
+    <td><button class="ma-del" onclick="deleteMember(this)" data-name="{{ m.get('standard_name','') }}" style="margin-right:4px">🗑 删除</button><button class="bt bt-s" style="font-size:11px;padding:4px 8px" onclick="showTimeline(this)" data-name="{{ m.get('standard_name','') }}" data-meeting-id="{{ current_meeting_id }}" data-session-start="{{ session_start_after or '' }}" data-tenant="{{ m.get('tenant_id','') }}">📋 详情</button></td>
   </tr>
   {% endfor %}
   </tbody>
   </table>
   </div>
 
+{% set error = '' %}
+{% if members|length == 0 %}
+<div class="empty-state" style="text-align:center;padding:40px 0;color:var(--tm)">
+  {% if error %}<p style="color:#f87171">{{ error }}</p>{% endif %}
+  <p>暂无成员数据</p>
+</div>
+{% endif %}
+
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
 <script>
-var groupsData = {{ groups|tojson }};
-var groupMap = {};
-if (groupsData) groupsData.forEach(function(g){ groupMap[g.id] = g.name; });
 
 function changeMemberGroup(sel) {
   var displayName = sel.getAttribute('data-display');
-  var memberTenant = sel.getAttribute('data-tenant') || '';
-  var groupId = sel.value ? parseInt(sel.value) : null;
-  var prevOpt = sel.querySelector('[selected]');
-  var prevVal = prevOpt ? prevOpt.value : '';
-  // 同步 checkbox
+  var tenantId = sel.getAttribute('data-tenant');
+  var groupId = sel.value;
+  if (!groupId) return;
   var syncCb = document.getElementById('syncAllTenantsCb');
-  var syncAll = syncCb && syncCb.checked;
-
+  var syncAll = syncCb ? syncCb.checked : false;
   fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({group_id: groupId, tenant_id: memberTenant, sync_same_name_all_tenants: syncAll})
-  }).then(function(r){ return r.json(); }).then(function(j){
+    body: JSON.stringify({group_id: parseInt(groupId), tenant_id: tenantId, sync_same_name_all_tenants: syncAll})
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(j){
     if (j.ok) {
-      // 更新 data-group 属性（供筛选器用）
-      var row = sel.closest('.member-row');
-      if (row) {
-        var gname = groupId ? (groupMap[groupId] || '') : '';
-        row.setAttribute('data-group', gname);
-        row.setAttribute('data-group-id', groupId || '');
-      }
-      // 更新所有被同步行的 title（跨租户同步后 select 可能变了）
-      if (syncAll && j.saved_tenants && j.saved_tenants.length > 1) {
-        var allRows = document.querySelectorAll('.member-row');
-        allRows.forEach(function(rw){
-          if (rw.getAttribute('data-name') === row.getAttribute('data-name')) {
-            rw.setAttribute('data-group', gname);
-            rw.setAttribute('data-group-id', groupId || '');
-          }
-        });
-      }
-      // 轻提示
       showToast('✅ 已保存');
+      sel.title = sel.options[sel.selectedIndex].text;
     } else {
-      sel.value = prevVal;
       showToast('❌ ' + (j.error || '保存失败'));
     }
-  }).catch(function(){
-    sel.value = prevVal;
-    showToast('❌ 网络错误');
-  });
+  })
+  .catch(function(){ showToast('❌ 网络错误'); });
 }
 
-function showToast(msg) {
-  var t = document.createElement('div');
-  t.textContent = msg;
-  t.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;background:#1a1a2e;color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .3s;opacity:0';
-  document.body.appendChild(t);
-  requestAnimationFrame(function(){ t.style.opacity = '1'; });
-  setTimeout(function(){ t.style.opacity = '0'; setTimeout(function(){ t.remove(); }, 300); }, 2000);
-}
-
-function switchTab(tab) {
-  window.location.href = '/settings/members#groups';
-}
-
-// ── 原有的筛选逻辑 ──
-(function() {
-  var searchInput = document.getElementById('searchInput');
-  var groupFilter = document.getElementById('groupFilter');
-  var statusFilter = document.getElementById('statusFilter');
-  var rows = document.querySelectorAll('.member-row');
-
-  function filterTable() {
-    var q = searchInput.value.toLowerCase().trim();
-    var g = groupFilter.value;
-    var s = statusFilter.value;
-
-    rows.forEach(function(row) {
-      var name = row.getAttribute('data-name') || '';
-      var grp = row.getAttribute('data-group') || '';
-      var st = row.getAttribute('data-status') || '';
-      var show = true;
-      if (q && name.indexOf(q) === -1) show = false;
-      if (g && grp !== g) show = false;
-      if (s && st !== s) show = false;
-      row.style.display = show ? '' : 'none';
-    });
-  }
-
-  searchInput.addEventListener('input', filterTable);
-  groupFilter.addEventListener('change', filterTable);
-  statusFilter.addEventListener('change', filterTable);
-})();
-
-// ── API 增强渲染：从 /api/v3/members 覆盖字段 ──
-(function(){
-  fetch('/api/v3/members').then(function(r){ return r.json(); }).then(function(data){
-    if (!data || !data.items) return;
-    var map = {};
-    data.items.forEach(function(m){
-      var key = (m.display_name || m.standard_name || '').toLowerCase();
-      if (key) map[key] = m;
-    });
-    document.querySelectorAll('.member-row').forEach(function(row){
-      var name = (row.getAttribute('data-name') || '').toLowerCase();
-      var api = map[name];
-      if (!api) return;
-      // 今日累计 — 用后端渲染值
-      var tdDur = row.querySelector('td:nth-child(5)');
-      if (tdDur) tdDur.textContent = api.today_total_duration || '—';
-      // 首次进入 — 用后端时间格式
-      var tdFirst = row.querySelector('td:nth-child(6)');
-      if (tdFirst) tdFirst.textContent = api.first_join_display || '—';
-      // 最近活动
-      var tdLast = row.querySelector('td:nth-child(7)');
-      if (tdLast) tdLast.textContent = api.last_activity_display || '—';
-      // 离开时间
-      var tdLeave = row.querySelector('td:nth-child(8)');
-      if (tdLeave) tdLeave.textContent = api.last_leave_time_display || '—';
-      // 邮箱
-      var tdEmail = row.querySelector('td:nth-child(9)');
-      if (tdEmail) tdEmail.textContent = api.email || '—';
-    });
-  }).catch(function(){});
-})();
-
-// ── 分组管理 Modal ──
-var groupModalOverlay = document.createElement('div');
-groupModalOverlay.id = 'groupManageModal';
-groupModalOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:9999;display:none;justify-content:center;align-items:center;';
-groupModalOverlay.innerHTML = '<div class="modal" style="width:640px;max-width:90vw;max-height:85vh;overflow-y:auto;background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px"><div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--cb)"><h3 style="margin:0;font-size:16px">分组管理</h3><span class="modal-close" onclick="closeGroupManage()" style="cursor:pointer;color:var(--tm);font-size:20px;line-height:1">&times;</span></div><div id="groupManageBody">加载中...</div></div>';
-document.body.appendChild(groupModalOverlay);
-
-function openGroupManage() {
-  var container = document.getElementById('groupManageBody');
-  container.innerHTML = '加载中...';
-  document.getElementById('groupManageModal').style.display = 'flex';
-  fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(data){
-    if (!data || !data.groups) { container.innerHTML = '暂无分组数据'; return; }
-    var html = '<style>.gm-row{position:relative;background:linear-gradient(180deg,rgba(15,23,42,.96),rgba(15,23,42,.86));border:1px solid rgba(34,211,238,.18);border-radius:14px;padding:14px 16px;margin-bottom:12px;box-shadow:0 10px 30px rgba(0,0,0,.22)}.gm-name{font-size:15px;font-weight:800;color:#f8fafc;margin-bottom:6px}.gm-desc{font-size:12px;color:#94a3b8;margin-bottom:12px}.gm-footer{display:flex;justify-content:space-between;align-items:center}.gm-count{display:inline-flex;align-items:center;padding:3px 9px;border-radius:999px;background:rgba(34,211,238,.12);color:#67e8f9;font-size:12px}.gm-actions{position:absolute;right:14px;top:50%;transform:translateY(-50%)}.gm-actions .bt{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08);color:#fecaca}.gm-create{display:grid;grid-template-columns:1fr 1fr 76px;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid rgba(34,211,238,.14)}.gm-create .ipt{height:34px}.gm-create .bt{height:34px}</style>';
-    data.groups.forEach(function(g){
-      html += '<div class="gm-row">'
-        + '<div class="gm-name"><strong>' + escHtml(g.name) + '</strong>'
-        + '</div>'
-        + '<div class="gm-desc">' + escHtml(g.description || '-') + '</div>'
-        + '<div class="gm-footer">'
-        + '<span class="gm-count">成员：' + ((g.members && g.members.length) || 0) + '人</span>'
-        + '<div class="gm-actions">'
-        + '<button class="bt bt-s" onclick="editGroup(' + g.id + ',\'' + escAttr(g.name) + '\',\'' + escAttr(g.description || '') + '\')">编辑</button>'
-        + '<button class="bt bt-s" onclick="deleteGroup(' + g.id + ',\'' + escAttr(g.name) + '\')" style="color:#ef4444">删除</button>'
-        + '</div></div></div>';
-    });
-    html += '<div class="gm-create">'
-      + '<input id="newGroupName" class="ipt" placeholder="新分组名称">'
-      + '<input id="newGroupDesc" class="ipt" placeholder="描述（可选）">'
-      + '<button class="bt" onclick="createGroup()">创建</button>'
-      + '</div>';
-    container.innerHTML = html;
-  }).catch(function(){ container.innerHTML = '加载失败'; });
-}
-
-function closeGroupManage() {
-  document.getElementById('groupManageModal').style.display = 'none';
-}
-
-function createGroup() {
-  var name = document.getElementById('newGroupName').value.trim();
-  if (!name) return alert('请输入分组名称');
-  var desc = document.getElementById('newGroupDesc').value.trim();
-  fetch('/api/v3/member-groups', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, description: desc})
-  }).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) { openGroupManage(); } else { alert(j.error || '创建失败'); }
-  }).catch(function(){ alert('请求失败'); });
-}
-
-
-function editGroup(id, oldName, oldDesc) {
-  var name = prompt('分组名称', oldName);
-  if (!name) return;
-  var desc = prompt('描述', oldDesc || '');
-  fetch('/api/v3/member-groups/' + id, {
-    method: 'PUT',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({name:name, description:desc})
-  }).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) openGroupManage();
-    else alert(j.error || '保存失败');
-  }).catch(function(){ alert('请求失败'); });
-}
-
-function deleteGroup(id, name) {
-  if (!confirm('确定删除分组「' + name + '」？不会删除成员。')) return;
-  fetch('/api/v3/member-groups/' + id, {method: 'DELETE'}).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) { openGroupManage(); location.reload(); } else { alert(j.error || '删除失败'); }
-  }).catch(function(){ alert('请求失败'); });
-}
-
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-
-// ── 删除成员 ──
 function deleteMember(btn) {
+  // re-read from button
   var name = btn.getAttribute('data-name');
-  if (!name || !confirm('确定删除成员「' + name + '」？\n该操作只删除显示配置，不影响历史记录。')) return;
-  fetch('/api/v3/members/' + encodeURIComponent(name), {method: 'DELETE'})
+  if (!confirm('确定要删除成员 "' + name + '" 吗？')) return;
+  var tenantId = btn.closest('tr').querySelector('.group-select').getAttribute('data-tenant');
+  fetch('/api/v3/members/' + encodeURIComponent(name), {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tenant_id: tenantId})
+  })
+  .then(function(r){ if (!r.ok) throw new Error(); return r.json(); })
+  .then(function(j){
+    if (j.ok) {
+      showToast('✅ 已删除');
+      btn.closest('tr').remove();
+    } else {
+      showToast('❌ ' + (j.error || '删除失败'));
+    }
+  })
+  .catch(function(){ showToast('❌ 网络错误'); });
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showTimeline(btn) {
+  var name = btn.getAttribute('data-name');
+  var meetingId = btn.getAttribute('data-meeting-id');
+  var sessionStart = btn.getAttribute('data-session-start');
+  var tenantId = btn.getAttribute('data-tenant');
+
+  if (!meetingId) { showToast('❌ 当前无会议数据'); return; }
+
+  var overlay = document.createElement('div');
+  overlay.className = 'timeline-overlay';
+  overlay.innerHTML = '<div class="timeline-card"><div class="timeline-head"><h3>📋 ' + escHtml(name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div><div style="text-align:center;color:#94a3b8;padding:40px 0">⏳ 加载中...</div></div>';
+  overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+
+  // 获取当前数据源
+  var source = 'live';
+  var activeTab = document.querySelector('.tab-item.active');
+
+  var url = '/api/v3/members/' + encodeURIComponent(name) + '/timeline?source=' + source;
+  if (meetingId) url += '&meeting_id=' + encodeURIComponent(meetingId);
+  if (sessionStart) url += '&session_start_after=' + encodeURIComponent(sessionStart);
+  if (tenantId) url += '&tenant_id=' + encodeURIComponent(tenantId);
+
+  fetch(url)
     .then(function(r){ return r.json(); })
     .then(function(j){
-      if (j.ok) {
-        btn.closest('.member-row').remove();
-      } else {
-        alert(j.error || '删除失败');
+      if (!j.ok) {
+        overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;font-size:15px;margin-bottom:14px">❌ ' + escHtml(j.error || '请求失败') + '</div><button class="bt bt-s" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
+        return;
       }
+
+      var segs = j.segments || [];
+      var segHtml = '';
+      if (segs.length) {
+        segs.forEach(function(s){
+          segHtml += '<tr>' +
+            '<td>' + s.seq + '</td>' +
+            '<td>' + escHtml(s.enter_time_display) + '</td>' +
+            '<td>' + escHtml(s.leave_time_display) + '</td>' +
+            '<td style="text-align:right">' + escHtml(s.duration_display) + '</td>' +
+            '<td style="text-align:center">' + (s.status || s.status_display || '—') + '</td>' +
+            '</tr>';
+        });
+      } else {
+        segHtml = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#64748b">当前会议无进出记录</td></tr>';
+      }
+
+      overlay.innerHTML = '' +
+        '<div class="timeline-card">' +
+          '<div class="timeline-head">' +
+            '<h3>📋 ' + escHtml(j.display_name) + ' 参会明细</h3>' +
+            '<button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button>' +
+          '</div>' +
+          '<div class="timeline-stats">' +
+            '<span class="timeline-stat">进入: <strong>' + j.join_count + '</strong> 次</span>' +
+            '<span class="timeline-stat">离开: <strong>' + j.leave_count + '</strong> 次</span>' +
+            '<span class="timeline-stat">累计: <strong>' + escHtml(j.total_display) + '</strong></span>' +
+          '</div>' +
+          '<div class="timeline-table-wrap">' +
+            '<table class="timeline-table">' +
+              '<thead><tr><th>#</th><th>进入时间</th><th>离开时间</th><th style="text-align:right">时长</th><th style="text-align:center">状态</th></tr></thead>' +
+              '<tbody>' + segHtml + '</tbody>' +
+            '</table>' +
+          '</div>' +
+        '</div>';
     })
-    .catch(function(){ alert('请求失败'); });
+    .catch(function(){
+      overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;font-size:15px;margin-bottom:14px">❌ 请求失败</div><button class="bt bt-s" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
+    });
 }
+
+
+window.showTimeline = showTimeline;
+window.escHtml = escHtml;
+if (typeof deleteMember === 'function') window.deleteMember = deleteMember;
+
 </script>
 {% endblock %}
-
-<style>
-.group-modal {
-  width: 560px;
-  max-width: 90vw;
-}
-
-.group-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr 60px 70px;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 0;
-}
-
-.group-name {
-  font-weight: 600;
-}
-
-.group-desc {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.group-count {
-  text-align: right;
-  white-space: nowrap;
-}
-
-.group-delete {
-  white-space: nowrap;
-}
-</style>
