@@ -24,9 +24,9 @@ services:
       - "110"
     environment:
       APP_MODE: api
+      SESSION_SUMMARY_ENABLED: "true"
     volumes:
       - zoom_data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       # 容器内 8000，直接宿主机 8000
       - "127.0.0.1:8000:8000"
@@ -42,6 +42,7 @@ services:
     container_name: zoom-webhook
     environment:
       APP_MODE: webhook
+      SESSION_SUMMARY_ENABLED: "true"
     ports:
       # webhook 需要公网可达，映射到 9443
       # 配合 Cloudflare Tunnel 或反向代理使用
@@ -58,6 +59,7 @@ services:
     container_name: zoom-monitor
     environment:
       APP_MODE: monitor
+      SESSION_SUMMARY_ENABLED: "true"
     depends_on:
       zoom-api:
         condition: service_started
