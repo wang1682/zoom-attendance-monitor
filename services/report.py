@@ -1,18 +1,14 @@
 """
 ReportService — 三小时在线报告生成与推送
 
-负责：
-- 判断是否到报告时机（每 3 小时，按租户）
-- 从 ZoomService 获取在线数据
-- 生成 Markdown 报告
-- 推送到租户的 telegram 频道
+重构后：直接复用成员中心 source of truth（db.get_today_attendance_summary）
+不再自己算用户名和时长。
 """
 
 import sys
 from datetime import datetime, timezone, timedelta
 
 import db as _db
-from services.zoom import ZoomService
 
 
 class ReportService:
@@ -21,7 +17,7 @@ class ReportService:
     EVENT_TYPE = "periodic_online_report"
 
     def __init__(self):
-        self.zoom = ZoomService()
+        pass
 
     # ------------------------------------------------------------------
     # 时间检查
@@ -70,34 +66,29 @@ class ReportService:
         return hour not in sent_hours
 
     # ------------------------------------------------------------------
-    # 报告生成
+    # 报告生成 — 复用成员中心 source of truth
     # ------------------------------------------------------------------
 
-    async def build_report(self, tenant_id: str = "default") -> dict:
+    def build_report(self, tenant_id: str = "default") -> dict:
         """生成在线报告内容
 
         Returns:
             {"text": "...", "participant_count": N}
         """
-        live = await self.zoom.get_live_meetings(tenant_id)
-        participants = []
-        for m in live.get("meetings", []):
-            for p in m.get("participants", []):
-                raw = p.get("name", "").strip()
-                if not raw:
-                    continue
-                from services.member import MemberService
-                ms = MemberService()
-                rm = ms.resolve_display(raw, tenant_id)
-                std = rm.get("display_name", raw)
-                grp = rm.get("group_name") or "未分组"
-                mins = p.get("online_minutes", 0)
-                participants.append((std, grp, mins))
+        # 直接从成员中心口径获取，与 dashboard/participants 一致
+        summary = _db.get_today_attendance_summary(tenant_id)
+        members = summary.get("members", [])
 
-        # 按分组聚合排序
+        # 只取在线成员
+        online = [m for m in members if m.get("is_online")]
+
+        # 按分组聚合
         grouped = {}
-        for std, grp, mins in participants:
-            grouped.setdefault(grp, []).append((std, mins))
+        for m in online:
+            sn = m.get("standard_name", "") or m.get("name", "")
+            grp = m.get("group_name") or "未分组"
+            secs = m.get("today_total_seconds", 0)
+            grouped.setdefault(grp, []).append((sn, secs))
 
         for g in grouped:
             grouped[g].sort(key=lambda x: x[1], reverse=True)
@@ -110,22 +101,22 @@ class ReportService:
         for g, members in grouped.items():
             ordered.append((g, members))
 
-        lines = ["🟠 实时在线", f"👥 在线人数：{len(participants)}", ""]
-        if participants:
+        lines = ["🟠 实时在线", f"👥 在线人数：{len(online)}", ""]
+        if online:
             g_emoji = {"核销": "🔵", "推进": "🟡"}
             for g, members in ordered:
                 emoji = g_emoji.get(g, "⚪")
                 lines.append(f"{emoji} {g}（{len(members)}）")
-                for i, (std, mins) in enumerate(members, 1):
-                    h, m = mins // 60, mins % 60
+                for i, (sn, secs) in enumerate(members, 1):
+                    h, m = secs // 3600, (secs % 3600) // 60
                     dur = f"{h}小时{m}分" if h > 0 else f"{m}分钟"
-                    lines.append(f"{i}. {std} · {dur}")
+                    lines.append(f"{i}. {sn} · {dur}")
                 lines.append("")
         else:
             lines.append("当前无人在线")
             lines.append("")
 
-        return {"text": "\n".join(lines), "participant_count": len(participants)}
+        return {"text": "\n".join(lines), "participant_count": len(online)}
 
     # ------------------------------------------------------------------
     # 报告推送
@@ -137,10 +128,9 @@ class ReportService:
         hour = myt_now.hour
 
         if not self.should_report_now(tenant_id):
-            # 检查是否有启用规则（外部队列已判断 this round）
             return {"ok": False, "reason": "not_report_time"}
 
-        report = await self.build_report(tenant_id)
+        report = self.build_report(tenant_id)
 
         # 查这个租户的 periodic_online_report 规则
         conn = _db._get_conn()
