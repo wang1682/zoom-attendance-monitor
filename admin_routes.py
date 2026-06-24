@@ -292,14 +292,9 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # 用当前会议当天最早 enter 为起点
     if not session_start_after and current_meeting_id:
         try:
-            # 当天进入 time 起点（MYT 00:00 - 6h 回溯，和 db.py 保持一致）
-            from datetime import datetime, timezone, timedelta
-            _now_utc = datetime.now(timezone.utc)
-            _now_myt = _now_utc + timedelta(hours=8)
-            _today_start_myt = _now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-            _today_start_utc = _today_start_myt - timedelta(hours=8)
-            _query_start_utc = _today_start_utc - timedelta(hours=6)
-            _today_utc_start_str = _query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
+            # 使用业务日边界（和 db.py get_business_day_range_myt 保持一致）
+            br = db.get_business_day_range_myt(6)
+            _today_utc_start_str = br["start_utc"].isoformat()
             
             row = _get_conn().execute(
                 "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
@@ -431,23 +426,18 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
             sn = m.get("standard_name", "")
             cm = current_map.get(sn)
             if cm:
-                # 当前会议有数据 → 用当前会议的值覆盖第一列字段
+                # 当前会议有数据 → 只覆盖实时字段，不覆盖今日累计和次数
                 m["first_join"] = cm.get("first_join", m.get("first_join"))
                 m["last_activity"] = cm.get("last_activity", m.get("last_activity"))
                 m["last_leave_time"] = cm.get("last_leave_time", m.get("last_leave_time"))
-                m["today_total_duration"] = cm.get("today_total_duration", m.get("today_total_duration"))
-                m["today_total_seconds"] = cm.get("today_total_seconds", 0)
-                m["join_count"] = cm.get("join_count", 0)
-                m["leave_count"] = cm.get("leave_count", 0)
+                # 以下字段保留 summary 的业务日统计，不覆盖
+                # m["today_total_duration"] 保留
+                # m["today_total_seconds"] 保留
+                # m["join_count"] 保留
+                # m["leave_count"] 保留
             else:
-                # 当前会议无数据 → 清空当前会议字段
-                m["first_join"] = None
-                m["last_activity"] = None
-                m["last_leave_time"] = None
-                m["today_total_duration"] = "0m"
-                m["today_total_seconds"] = 0
-                m["join_count"] = 0
-                m["leave_count"] = 0
+                # 当前会议无数据 → 保留 get_today_attendance_summary 的原始统计，不覆盖
+                pass
 
     # ── 格式化时间显示（所有成员，不受 summary_current 有无影响） ──
     for m in members:
