@@ -82,12 +82,12 @@ class ParticipantService:
             return None
         _PARTICIPANT_DEDUP.add(key)
 
-        return _db.save_participant(
+        pid = _db.save_participant(
             meeting_id, name, email,
             action, action_time,
             source=source, tenant_id=tenant_id,
         )
-        # 同步写入 participant_sessions
+        # 同步写入 participant_sessions（不影响主流程）
         try:
             _session_id = _db.save_participant_session(
                 meeting_id, name, action, action_time,
@@ -100,7 +100,7 @@ class ParticipantService:
             # participant_sessions 是辅助，不影响主流程
             pass
 
-        return result
+        return pid
 
     @staticmethod
     def save_webhook_participant(

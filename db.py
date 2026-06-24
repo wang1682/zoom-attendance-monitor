@@ -1294,12 +1294,12 @@ def get_today_from_sessions(
     member_key: str | None = None,
 ) -> list[dict]:
     """
-    基于 participant_sessions 的今日累计查询（MYT 日历日）。
+    基于 participant_sessions 的今日累计查询（MYT 业务日，切割点 06:00）。
     """
     conn = _get_conn()
-    myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
-    today_start = myt_now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=8)
-    today_start_iso = today_start.isoformat()
+    br = get_business_day_range_myt(6)
+    today_start_iso = br["start_utc"].isoformat()
+    today_end_iso = br["end_utc"].isoformat()
 
     if member_key:
         rows = conn.execute(
@@ -1312,9 +1312,9 @@ def get_today_from_sessions(
                  MAX(COALESCE(leave_time_utc, join_time_utc)) AS last_activity,
                  user_key
                FROM participant_sessions
-               WHERE tenant_id = ? AND user_key = ? AND join_time_utc >= ?
+               WHERE tenant_id = ? AND user_key = ? AND join_time_utc >= ? AND join_time_utc < ?
                GROUP BY user_key""",
-            (tenant_id, member_key, today_start_iso),
+            (tenant_id, member_key, today_start_iso, today_end_iso),
         ).fetchall()
     else:
         rows = conn.execute(
@@ -1327,9 +1327,9 @@ def get_today_from_sessions(
                  MAX(COALESCE(leave_time_utc, join_time_utc)) AS last_activity,
                  user_key
                FROM participant_sessions
-               WHERE tenant_id = ? AND join_time_utc >= ?
+               WHERE tenant_id = ? AND join_time_utc >= ? AND join_time_utc < ?
                GROUP BY user_key""",
-            (tenant_id, today_start_iso),
+            (tenant_id, today_start_iso, today_end_iso),
         ).fetchall()
 
     now_utc = datetime.now(timezone.utc)
@@ -1389,9 +1389,8 @@ def _build_session_summary(
     from collections import OrderedDict
 
     conn = _get_conn()
-    now_utc = datetime.now(timezone.utc)
-    now_myt = now_utc + timedelta(hours=8)
-    today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
+    br_sess = get_business_day_range_myt(6)
+    business_date = br_sess["business_date"]
 
     # ── 批量加载成员→分组映射 ──
     _group_map_cache = {}
@@ -1438,14 +1437,68 @@ def _build_session_summary(
     for mr in md_rows:
         mrd = dict(mr)
         t_id = mrd.get("tenant_id") or tenant_id
-        for alias in [mrd.get("raw_name", ""), mrd.get("display_name", "")]:
+        disp = mrd.get("display_name") or mrd.get("raw_name", "")
+        # 跳过 (2) 变体记录 - 如果该 key 已被主记录占用则跳过
+        is_variant = disp.endswith(" (2)")
+        for alias in [mrd.get("raw_name", ""), disp]:
             key = alias.strip().lower().replace(" ", "")
-            if key:
-                name_map_cache[(t_id, key)] = mrd.get("display_name") or mrd.get("raw_name", "")
+            if not key:
+                continue
+            existing = name_map_cache.get((t_id, key))
+            if existing and is_variant:
+                continue  # 主记录优先，跳过变体
+            if is_variant and not existing:
+                continue  # 没有主记录也不写变体
+            name_map_cache[(t_id, key)] = disp
         for alias in json.loads(mrd.get("aliases") or "[]"):
             key = alias.strip().lower().replace(" ", "")
-            if key:
-                name_map_cache[(t_id, key)] = mrd.get("display_name") or mrd.get("raw_name", "")
+            if not key:
+                continue
+            existing = name_map_cache.get((t_id, key))
+            if existing and is_variant:
+                continue
+            if is_variant and not existing:
+                continue
+            name_map_cache[(t_id, key)] = disp
+
+    # ── 批量加载 join_count / leave_count（从 zoom_participants） ──
+    # 按 name_map_cache 合并标准化的 user_key 和 raw_name 的映射
+    _join_leave_count = {}  # user_key → {"join_count": N, "leave_count": N}
+    br_sess_lu = get_business_day_range_myt(6)
+    today_start_iso_zl = br_sess_lu["start_utc"].isoformat()
+    today_end_iso_zl = br_sess_lu["end_utc"].isoformat()
+
+    if tenant_id:
+        zp_raw = conn.execute(
+            "SELECT name, action, COUNT(*) AS cnt FROM zoom_participants "
+            "WHERE tenant_id=? AND action_time>=? AND action_time<? "
+            "AND action IN ('enter','joined','leave','left') "
+            "GROUP BY name, action",
+            (tenant_id, today_start_iso_zl, today_end_iso_zl),
+        ).fetchall()
+    else:
+        zp_raw = conn.execute(
+            "SELECT name, action, COUNT(*) AS cnt FROM zoom_participants "
+            "WHERE action_time>=? AND action_time<? "
+            "AND action IN ('enter','joined','leave','left') "
+            "GROUP BY name, action",
+            (today_start_iso_zl, today_end_iso_zl),
+        ).fetchall()
+
+    for zr in zp_raw:
+        zrd = dict(zr)
+        raw_name_key = zrd["name"].strip().lower().replace(" ", "")
+        # 通过 name_map_cache 拿到 display_name 作为 user_key
+        user_key_for_count = name_map_cache.get((tenant_id or "", raw_name_key), zrd["name"])
+        user_key_for_count = user_key_for_count.strip().lower().replace(" ", "")
+        if user_key_for_count not in _join_leave_count:
+            _join_leave_count[user_key_for_count] = {"join_count": 0, "leave_count": 0}
+        act = zrd["action"]
+        cnt = zrd["cnt"]
+        if act in ("enter", "joined"):
+            _join_leave_count[user_key_for_count]["join_count"] += cnt
+        elif act in ("leave", "left"):
+            _join_leave_count[user_key_for_count]["leave_count"] += cnt
 
     members = OrderedDict()
     deleted_names = _load_deleted_names(tenant_id)
@@ -1471,6 +1524,8 @@ def _build_session_summary(
         last_leave = ""
         if not is_online and last_activity:
             last_leave = last_activity
+        # 从 zoom_participants 拿 join/leave 计数
+        zl = _join_leave_count.get(standard_name.strip().lower().replace(" ", ""), {"join_count": 0, "leave_count": 0})
         members[user_key] = {
             "name": user_name or user_key,
             "raw_name": user_name or user_key,
@@ -1479,8 +1534,10 @@ def _build_session_summary(
             "today_total_duration": _fmt_dur(int(total_seconds)),
             "is_online": is_online,
             "status": "online" if is_online else "offline",
-            "session_count": 1 if total_seconds > 0 else 0,
-            "disconnect_count": 0,
+            "session_count": zl["join_count"],
+            "disconnect_count": zl["leave_count"],
+            "join_count": zl["join_count"],
+            "leave_count": zl["leave_count"],
             "first_join": first_join,
             "first_join_display": _myt_short(first_join) if first_join else "",
             "last_activity": last_activity,
@@ -1514,31 +1571,63 @@ def _build_session_summary(
         "offline_count": total_members - online_count,
         "total_duration": _fmt_dur(int(total_seconds)),
         "avg_duration": _fmt_dur(int(avg_seconds)),
-        "date": today_start_myt.strftime("%Y-%m-%d"),
+        "date": business_date,
         "members": sorted_members,
     }
 
 
 def _load_deleted_names(tenant_id: str | None = None) -> set:
-    """加载被软删除的成员 user_key 集合。"""
+    """加载被软删除的成员 user_key 集合。
+
+    注意：如果一个 deleted 记录的 raw_name / alias 已经被 active（deleted=0）记录
+    的 match_key、display_name 或 aliases 占用，则不加入删除名单。
+    """
     conn = _get_conn()
+
+    # 先加载所有 active 记录的 match_key + display_name + aliases
     if tenant_id:
+        active_rows = conn.execute(
+            "SELECT match_key, display_name, aliases FROM member_display WHERE tenant_id=? AND deleted=0",
+            (tenant_id,),
+        ).fetchall()
         rows = conn.execute(
             "SELECT raw_name, display_name, aliases FROM member_display WHERE tenant_id=? AND deleted=1",
             (tenant_id,),
         ).fetchall()
     else:
+        active_rows = conn.execute(
+            "SELECT match_key, display_name, aliases FROM member_display WHERE deleted=0"
+        ).fetchall()
         rows = conn.execute(
             "SELECT raw_name, display_name, aliases FROM member_display WHERE deleted=1"
         ).fetchall()
+
+    # 构建 active 占用的所有 key 集合
+    active_keys = set()
+    for ar in active_rows:
+        mk = ar["match_key"]
+        if mk:
+            active_keys.add(mk.strip().lower().replace(" ", ""))
+        dn = ar["display_name"]
+        if dn:
+            active_keys.add(dn.strip().lower().replace(" ", ""))
+        for alias in json.loads(ar["aliases"] or "[]"):
+            if alias:
+                active_keys.add(alias.strip().lower().replace(" ", ""))
+
+    # 构建 deleted 集合，排除已被 active 占用的 key
     deleted = set()
     for dr in rows:
         for n in (dr["raw_name"], dr["display_name"]):
             if n:
-                deleted.add(n.strip().lower().replace(" ", ""))
+                key = n.strip().lower().replace(" ", "")
+                if key not in active_keys:
+                    deleted.add(key)
         for alias in json.loads(dr["aliases"] or "[]"):
             if alias:
-                deleted.add(alias.strip().lower().replace(" ", ""))
+                key = alias.strip().lower().replace(" ", "")
+                if key not in active_keys:
+                    deleted.add(key)
     return deleted
 
 
@@ -1623,6 +1712,58 @@ def _fmt_dur(seconds: int) -> str:
     return f"{hours}h{mins}m" if mins else f"{hours}h"
 
 
+def get_business_day_range_myt(cutoff_hour: int = 6) -> dict:
+    """基于 MYT 业务日（自定义分割点）返回查询窗口。
+
+    规则：
+      - 当前 MYT 时间 < cutoff_hour（凌晨 00:00-05:59）：查询窗口是 **上一** 业务日
+      - 当前 MYT 时间 >= cutoff_hour（06:00-23:59）：查询窗口是 **当天** 业务日
+
+    业务日定义：MYT cutoff_hour:00 ~ 次日 MYT cutoff_hour:00
+    转换为 UTC 即：前一日的 (24-cutoff_hour):00 UTC ~ 当日 (24-cutoff_hour):00 UTC
+
+    例：cutoff_hour=6，当前 MYT=2026-06-25 02:30（凌晨）
+      → 上一业务日：MYT 2026-06-24 06:00 ~ 2026-06-25 06:00
+      → UTC: 2026-06-23 22:00 ~ 2026-06-24 22:00
+      → business_date = "2026-06-24"（MYT 日历日）
+
+    返回:
+      {
+        "start_utc": datetime (timezone-aware UTC),
+        "end_utc": datetime (timezone-aware UTC),
+        "business_date": str (MYT 日历日, e.g. "2026-06-24"),
+      }
+    """
+    from datetime import datetime, timezone, timedelta
+
+    # MYT now 在 06:00-23:59 → 当天业务日；00:00-05:59 → 上一业务日
+    now_utc = datetime.now(timezone.utc)
+    now_myt = now_utc + timedelta(hours=8)
+
+    if now_myt.hour >= cutoff_hour:
+        # 当天 MYT 06:00 - 23:59 → 业务日 = 当天 MYT 日历日
+        business_day_start_myt = now_myt.replace(
+            hour=cutoff_hour, minute=0, second=0, microsecond=0
+        )
+        business_date = now_myt.strftime("%Y-%m-%d")
+    else:
+        # 凌晨 00:00 - 05:59 → 业务日 = 上一 MYT 日历日
+        yesterday_myt = now_myt - timedelta(days=1)
+        business_day_start_myt = yesterday_myt.replace(
+            hour=cutoff_hour, minute=0, second=0, microsecond=0
+        )
+        business_date = yesterday_myt.strftime("%Y-%m-%d")
+
+    start_utc = business_day_start_myt - timedelta(hours=8)  # 转回 UTC
+    end_utc = start_utc + timedelta(hours=24)
+
+    return {
+        "start_utc": start_utc,
+        "end_utc": end_utc,
+        "business_date": business_date,
+    }
+
+
 def _myt_short(utc_str: str) -> str:
     """UTC → MYT MM-DD HH:mm"""
     if not utc_str:
@@ -1670,13 +1811,14 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
             # fallback 到旧算法
             pass
 
+    br = get_business_day_range_myt(6)
+    today_utc_str = br["start_utc"].isoformat()
+    end_utc_str = br["end_utc"].isoformat()
+    # 旧算法后续引用这些变量（today_start_utc: datetime, today_start_myt: datetime, now_utc: datetime）
+    today_start_utc = br["start_utc"]
+    today_start_myt = br["start_utc"] + timedelta(hours=8)
+    business_date = br["business_date"]
     now_utc = datetime.now(timezone.utc)
-    now_myt = now_utc + timedelta(hours=8)
-    today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_start_utc = today_start_myt - timedelta(hours=8)
-    # 往前多查 6 小时，覆盖 MYT 00:00 前就已在线的参会者
-    query_start_utc = today_start_utc - timedelta(hours=6)
-    today_utc_str = query_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
 
     # 如果传了 session_start_after，用它作为最小时间（覆盖 query_start）
     if session_start_after:
@@ -2125,7 +2267,7 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         "offline_count": total_members - online_count,
         "total_duration": _fmt_dur(int(total_seconds)),
         "avg_duration": _fmt_dur(int(avg_seconds)),
-        "date": today_start_myt.strftime("%Y-%m-%d"),
+        "date": business_date,
         "members": sorted_members,
     }
 
