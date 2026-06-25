@@ -2,7 +2,7 @@
 ReportService — 三小时在线报告生成与推送
 
 重构后：直接复用成员中心 source of truth（db.get_today_attendance_summary）
-不再自己算用户名和时长。
+在线名单口径与 /dashboard/participants 完全一致（Zoom Metrics API）。
 """
 
 import sys
@@ -72,22 +72,34 @@ class ReportService:
     def build_report(self, tenant_id: str = "default") -> dict:
         """生成在线报告内容
 
+        在线名单口径 = Zoom Metrics API 实时参与者（与面板一致）。
+        累计时长 = get_today_attendance_summary（成员中心 source of truth）。
+
         Returns:
             {"text": "...", "participant_count": N}
         """
-        # 直接从成员中心口径获取，与 dashboard/participants 一致
+        # 1. 从 Zoom Metrics API 获取当前在线成员（与面板同一口径）
+        online_names = _db.get_live_online_standard_names(tenant_id)
+
+        if not online_names:
+            return {"text": "🟠 实时在线\n👥 在线人数：0\n\n当前无人在线", "participant_count": 0}
+
+        # 2. 从成员中心获取今日累计数据
         summary = _db.get_today_attendance_summary(tenant_id)
         members = summary.get("members", [])
 
-        # 只取在线成员
-        online = [m for m in members if m.get("is_online")]
-
-        # 按分组聚合
-        grouped = {}
-        for m in online:
-            sn = m.get("standard_name", "") or m.get("name", "")
-            grp = m.get("group_name") or "未分组"
+        # 3. 只取 Metrics 判定在线的人，用成员中心的数据补全累计
+        online = []
+        known = {m.get("standard_name", ""): m for m in members}
+        for sn in sorted(online_names):
+            m = known.get(sn, {})
             secs = m.get("today_total_seconds", 0)
+            grp = m.get("group_name") or "未分组"
+            online.append((sn, secs, grp))
+
+        # 按分组聚合排序
+        grouped = {}
+        for sn, secs, grp in online:
             grouped.setdefault(grp, []).append((sn, secs))
 
         for g in grouped:
@@ -102,18 +114,14 @@ class ReportService:
             ordered.append((g, members))
 
         lines = ["🟠 实时在线", f"👥 在线人数：{len(online)}", ""]
-        if online:
-            g_emoji = {"核销": "🔵", "推进": "🟡"}
-            for g, members in ordered:
-                emoji = g_emoji.get(g, "⚪")
-                lines.append(f"{emoji} {g}（{len(members)}）")
-                for i, (sn, secs) in enumerate(members, 1):
-                    h, m = secs // 3600, (secs % 3600) // 60
-                    dur = f"{h}小时{m}分" if h > 0 else f"{m}分钟"
-                    lines.append(f"{i}. {sn} · {dur}")
-                lines.append("")
-        else:
-            lines.append("当前无人在线")
+        g_emoji = {"核销": "🔵", "推进": "🟡"}
+        for g, members in ordered:
+            emoji = g_emoji.get(g, "⚪")
+            lines.append(f"{emoji} {g}（{len(members)}）")
+            for i, (sn, secs) in enumerate(members, 1):
+                h, m = secs // 3600, (secs % 3600) // 60
+                dur = f"{h}小时{m}分" if h > 0 else f"{m}分钟"
+                lines.append(f"{i}. {sn} · {dur}")
             lines.append("")
 
         return {"text": "\n".join(lines), "participant_count": len(online)}

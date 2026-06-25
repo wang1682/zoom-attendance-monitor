@@ -1553,6 +1553,164 @@ def _build_session_summary(
             "raw_events": [],
         }
 
+    # ── 第二步：从 zoom_participants 补充有今日事件但无 session 的人 ──
+    br_zp = get_business_day_range_myt(6)
+    today_start_zp = br_zp["start_utc"].isoformat()
+    today_end_zp = br_zp["end_utc"].isoformat()
+    now_utc_zp = datetime.now(timezone.utc)
+
+    if tenant_id:
+        zp_rows = conn.execute(
+            "SELECT DISTINCT name FROM zoom_participants "
+            "WHERE tenant_id=? AND action_time>=? AND action_time<? "
+            "AND action IN ('enter','joined','leave','left')",
+            (tenant_id, today_start_zp, today_end_zp),
+        ).fetchall()
+    else:
+        zp_rows = conn.execute(
+            "SELECT DISTINCT name FROM zoom_participants "
+            "WHERE action_time>=? AND action_time<? "
+            "AND action IN ('enter','joined','leave','left')",
+            (today_start_zp, today_end_zp),
+        ).fetchall()
+
+    existing_keys = set(members.keys())
+    for zpr in zp_rows:
+        raw_name = zpr["name"]
+        resolved = resolve_display_name(raw_name, tenant_id)
+        standard_name = resolved["display_name"]
+        if not standard_name:
+            continue
+        user_key = standard_name.strip().lower().replace(" ", "")
+        if user_key in deleted_names or user_key in existing_keys:
+            continue
+        # 这个人在 zoom_participants 有今日事件但无 session
+        # 用 zoom_participants enter/leave 配对计算时长
+        if tenant_id:
+            raw_events = conn.execute(
+                "SELECT action, action_time FROM zoom_participants "
+                "WHERE tenant_id=? AND name=? AND action_time>=? AND action_time<? "
+                "AND action IN ('enter','joined','leave','left') "
+                "ORDER BY action_time",
+                (tenant_id, raw_name, today_start_zp, today_end_zp),
+            ).fetchall()
+        else:
+            raw_events = conn.execute(
+                "SELECT action, action_time FROM zoom_participants "
+                "WHERE name=? AND action_time>=? AND action_time<? "
+                "AND action IN ('enter','joined','leave','left') "
+                "ORDER BY action_time",
+                (raw_name, today_start_zp, today_end_zp),
+            ).fetchall()
+
+        # 配对计算时长
+        zp_total = 0
+        zp_join = 0
+        zp_leave = 0
+        zp_first_join = None
+        zp_last_activity = None
+        pending = None
+        for re in raw_events:
+            try:
+                at_dt = datetime.fromisoformat(str(re["action_time"]).replace("Z", "+00:00"))
+            except:
+                at_dt = datetime.fromisoformat(str(re["action_time"]))
+            if re["action"] in ("enter", "joined"):
+                zp_join += 1
+                if zp_first_join is None:
+                    zp_first_join = re["action_time"]
+                if pending is None:
+                    pending = at_dt
+                zp_last_activity = re["action_time"]
+            elif re["action"] in ("leave", "left"):
+                zp_leave += 1
+                zp_last_activity = re["action_time"]
+                if pending is not None:
+                    dur = (at_dt - pending).total_seconds()
+                    if 0 < dur < 86400:
+                        zp_total += dur
+                    pending = None
+
+        is_online_zp = False
+        if pending is not None and zp_last_activity:
+            try:
+                last_dt = datetime.fromisoformat(str(zp_last_activity).replace("Z", "+00:00"))
+                is_online_zp = (now_utc_zp - last_dt).total_seconds() < 900
+            except:
+                pass
+
+        grp_name_zp, grp_id_zp = _group_map_cache.get((tenant_id, user_key), ("", None))
+        if not grp_name_zp and standard_name:
+            grp_name_zp, grp_id_zp = _group_map_cache.get((tenant_id, standard_name.strip().lower().replace(" ", "")), ("", None))
+
+        members[user_key] = {
+            "name": raw_name,
+            "raw_name": raw_name,
+            "standard_name": standard_name,
+            "today_total_seconds": int(zp_total),
+            "today_total_duration": _fmt_dur(int(zp_total)),
+            "is_online": is_online_zp,
+            "status": "online" if is_online_zp else "offline",
+            "session_count": zp_join,
+            "disconnect_count": zp_leave,
+            "join_count": zp_join,
+            "leave_count": zp_leave,
+            "first_join": zp_first_join or "",
+            "first_join_display": _myt_short(zp_first_join) if zp_first_join else "",
+            "last_activity": zp_last_activity or "",
+            "last_activity_display": _myt_short(zp_last_activity) if zp_last_activity else "",
+            "last_leave": zp_last_activity if not is_online_zp else "",
+            "last_leave_display": _myt_short(zp_last_activity) if zp_last_activity and not is_online_zp else "",
+            "last_leave_time_display": _myt_short(zp_last_activity) if zp_last_activity and not is_online_zp else "",
+            "email": "",
+            "group_name": grp_name_zp,
+            "group_id": grp_id_zp,
+            "tenant_id": tenant_id or "",
+            "open_session_started_at": "",
+            "raw_events": [],
+        }
+        existing_keys.add(user_key)
+
+    # ── 第三步：补充 live online 中仍然无记录的成员 ──
+    try:
+        online_names = get_live_online_standard_names(tenant_id) if tenant_id else set()
+    except Exception:
+        online_names = set()
+    for on_name in online_names:
+        on_key = on_name.strip().lower().replace(" ", "")
+        if on_key in deleted_names or on_key in existing_keys:
+            continue
+        grp_name_on, grp_id_on = _group_map_cache.get((tenant_id, on_key), ("", None))
+        if not grp_name_on:
+            grp_name_on, grp_id_on = _group_map_cache.get((tenant_id, on_key), ("", None))
+        members[on_key] = {
+            "name": on_name,
+            "raw_name": on_name,
+            "standard_name": on_name,
+            "today_total_seconds": 0,
+            "today_total_duration": "0m",
+            "is_online": True,
+            "status": "online",
+            "session_count": 0,
+            "disconnect_count": 0,
+            "join_count": 0,
+            "leave_count": 0,
+            "first_join": "",
+            "first_join_display": "",
+            "last_activity": "",
+            "last_activity_display": "",
+            "last_leave": "",
+            "last_leave_display": "",
+            "last_leave_time_display": "",
+            "email": "",
+            "group_name": grp_name_on,
+            "group_id": grp_id_on,
+            "tenant_id": tenant_id or "",
+            "open_session_started_at": "",
+            "raw_events": [],
+        }
+        existing_keys.add(on_key)
+
     # ── 排序：在线优先 → 时长降序 ──
     sorted_members = sorted(
         members.values(),
@@ -5938,3 +6096,47 @@ def get_sharing_detail(meeting_id: str, tenant_id: str, user_name: str = "") -> 
     d["participant_count"] = participant_count
 
     return {"ok": True, "detail": d}
+
+
+def get_live_online_standard_names(tenant_id: str) -> set:
+    """通过 Zoom Metrics API 获取当前在线成员的标准名集合。
+
+   与 /dashboard/participants 的 status==online 使用同一数据源。
+   返回 set[str] — resolve_display_name 后的 standard_name。
+   """
+    from zoom_metrics import ZoomMetrics
+
+    conn = _get_conn()
+    accounts = conn.execute(
+        "SELECT * FROM zoom_accounts WHERE tenant_id = ? ORDER BY created_at DESC",
+        (tenant_id,),
+    ).fetchall()
+    accounts = [dict(a) for a in accounts]
+    active = next(
+        (dict(a) for a in accounts if a.get("is_active") and a.get("status") == "active"),
+        None,
+    )
+    if not active:
+        return set()
+
+    import asyncio
+
+    zm = ZoomMetrics(active)
+    try:
+        live_data = asyncio.run(zm.get_live())
+    except Exception:
+        return set()
+
+    online = set()
+    meetings = live_data.get("meetings", [])
+    for m in meetings:
+        for p in m.get("participants", []):
+            name = p.get("name", "").strip()
+            if not name:
+                continue
+            from db import resolve_display_name
+
+            resolved = resolve_display_name(name, tenant_id=tenant_id)
+            sn = resolved.get("display_name", name)
+            online.add(sn)
+    return online

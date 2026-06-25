@@ -1,0 +1,251 @@
+{% extends "admin_base.html" %}
+{% block title %}历史数据{% endblock %}
+{% block head %}
+{% if not _head_once %}
+{% set _head_once = True %}
+<style>
+.upload-zone{ border:2px dashed var(--bd); border-radius:12px; padding:2rem; text-align:center; transition:all .15s; cursor:pointer }
+.upload-zone:hover{ border-color:var(--accent); background:var(--cb) }
+.upload-zone.has-file{ border-color:var(--accent); background:var(--cb) }
+.progress-bar{ height:4px; background:var(--bd); border-radius:2px; overflow:hidden; margin-top:8px; display:none }
+.progress-bar-fill{ height:100%; background:var(--accent); width:0%; transition:width .3s }
+.history-table{ width:100%; border-collapse:collapse }
+.history-table th{ text-align:left; padding:8px 10px; font-size:11px; font-weight:600; color:var(--tm); text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid var(--bd) }
+.history-table td{ padding:8px 10px; font-size:13px; border-bottom:1px solid var(--bg) }
+.history-table tbody tr:hover td{ background:var(--cb) }
+.toast{ position:fixed; top:20px; right:20px; padding:10px 20px; border-radius:8px; color:#fff; font-size:13px; z-index:100; display:none }
+.toast.success{ background:#065f46 }
+.toast.error{ background:#7f1d1d }
+.summary-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin-bottom:16px }
+.summary-card{ background:var(--cb); border-radius:10px; padding:10px 12px; border:1px solid var(--bd) }
+.summary-card .num{ font-size:20px; font-weight:700; color:var(--text); line-height:1.2 }
+.summary-card .lbl{ font-size:11px; color:var(--tm); margin-top:2px }
+.file-row{ display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--bg); font-size:13px }
+.file-row:last-child{ border-bottom:none }
+.file-row .fname{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+</style>
+{% endif %}
+{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1 class="page-title">历史数据</h1>
+  <p class="page-subtitle">Zoom Attendance Report 导入与管理</p>
+</div>
+
+{% set sm = summary or {} %}
+{% set members_list = sm.get("members", []) %}
+
+{# ── 摘要卡片 ── #}
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="num">{{ sm.get("total_session_count", 0) }}</div>
+    <div class="lbl">总记录数</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">{{ members_list|length }}</div>
+    <div class="lbl">唯一成员</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">{{ sm.get("earliest_join_display", "—") }}</div>
+    <div class="lbl">最早加入</div>
+  </div>
+  <div class="summary-card">
+    <div class="num">{{ sm.get("latest_leave_display", "—") }}</div>
+    <div class="lbl">最后离开</div>
+  </div>
+</div>
+
+{# ── 上传区 ── #}
+<div class="panel" style="margin-bottom:16px">
+  <div class="panel-body" style="padding:14px">
+    <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:10px">📤 上传 CSV</div>
+    <div class="upload-zone" id="uploadZone" onclick="document.getElementById('csvInput').click()">
+      <div style="font-size:13px;color:var(--tm);margin-bottom:6px">点击选择 Zoom Attendance Report CSV 文件</div>
+      <div style="font-size:11px;color:var(--tm2)">仅支持 .csv，UTF-8 BOM 编码</div>
+      <input type="file" id="csvInput" accept=".csv" style="display:none">
+      <div class="progress-bar" id="progressBar"><div class="progress-bar-fill" id="progressFill"></div></div>
+    </div>
+  </div>
+</div>
+
+{# ── 已导入文件列表 ── #}
+<div class="panel" style="margin-bottom:16px">
+  <div class="panel-body" style="padding:0">
+    <div style="padding:10px 14px;font-size:13px;font-weight:600;color:var(--text);border-bottom:1px solid var(--bd)">📂 已导入文件</div>
+    {% if imported_files %}
+    <div style="padding:0">
+      {% for f in imported_files %}
+      <div class="file-row">
+        <span class="fname">{{ f.source_file }}</span>
+        <span style="white-space:nowrap;margin:0 12px;color:var(--tm);font-size:12px">{{ f.row_count }} 条 / {{ f.participant_count }} 人</span>
+        <span style="white-space:nowrap;color:var(--tm);font-size:12px">{{ f.imported_at_display }}</span>
+        <button class="bt bt-s bt-danger" style="margin-left:auto;flex-shrink:0;font-size:11px" onclick="deleteImport('{{ f.source_file|e }}')">删除</button>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="text-align:center;padding:24px;color:var(--tm);font-size:13px">暂无导入文件</div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── 搜索过滤 ── #}
+<div class="panel" style="margin-bottom:16px">
+  <div class="panel-body" style="padding:10px 14px">
+    <form method="GET" action="/dashboard/history" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="text" name="search" placeholder="成员名搜索" value="{{ request.query_params.get('search','') }}" style="flex:1;min-width:120px;padding:6px 10px;font-size:13px;border:1px solid var(--bd);border-radius:5px;background:var(--bg);color:var(--text)">
+      <input type="date" name="date_from" value="{{ date_from or '' }}" style="padding:6px 10px;font-size:12px;border:1px solid var(--bd);border-radius:5px;background:var(--bg);color:var(--text)">
+      <span style="color:var(--tm);font-size:12px">—</span>
+      <input type="date" name="date_to" value="{{ date_to or '' }}" style="padding:6px 10px;font-size:12px;border:1px solid var(--bd);border-radius:5px;background:var(--bg);color:var(--text)">
+      <button class="bt bt-s" type="submit">搜索</button>
+      {% if request.query_params.get('search') or request.query_params.get('date_from') or request.query_params.get('date_to') %}
+      <a href="/dashboard/history" class="bt bt-s" style="text-decoration:none">清空</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{# ── 统计摘要 ── #}
+<div class="panel" style="margin-bottom:16px">
+  <div class="panel-body" style="padding:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px">
+      <div class="stat-item">
+        <div class="stat-val">{{ summary.total_session_count if summary else 0 }}</div>
+        <div class="stat-lbl">总 Session 数</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">{{ summary.member_count if summary else 0 }}</div>
+        <div class="stat-lbl">总成员数</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">{{ summary.earliest_join_display if summary else '—' }}</div>
+        <div class="stat-lbl">最早加入</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">{{ summary.latest_leave_display if summary else '—' }}</div>
+        <div class="stat-lbl">最晚离开</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ── 参会摘要 ── #}
+<div class="panel">
+  <div class="panel-body" style="padding:0">
+    <div style="overflow-x:auto">
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>成员</th>
+          <th>Session 数</th>
+          <th>总时长</th>
+          <th>首次加入</th>
+          <th>最后离开</th>
+          <th>邮箱</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if summary and summary.members %}{% set members_list = summary.members %}
+        {% for m in members_list %}
+        <tr>
+          <td><strong>{{ m.name }}</strong></td>
+          <td>{{ m.session_count }}</td>
+          <td>{{ m.total_duration_display }}</td>
+          <td style="white-space:nowrap">{{ m.first_join_display }}</td>
+          <td style="white-space:nowrap">{{ m.last_leave_display }}</td>
+          <td style="font-size:11px;color:var(--tm)">{{ m.email or "—" }}</td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--tm)">暂无数据，请上传 CSV</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+function showToast(msg, type){
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + (type||'success');
+  el.style.display = 'block';
+  setTimeout(function(){ el.style.display = 'none'; }, 3500);
+}
+
+function deleteImport(sourceFile) {
+  if (!confirm('确定删除该文件导入的所有记录？')) return;
+  var fd = new FormData();
+  fd.append('source_file', sourceFile);
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/dashboard/history/delete', true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      var j = JSON.parse(xhr.responseText);
+      if (j.success) {
+        showToast('✅ 已删除 ' + j.deleted + ' 条记录');
+        setTimeout(function(){ location.reload(); }, 900);
+      } else {
+        showToast('❌ ' + (j.error || '删除失败'), 'error');
+      }
+    } else {
+      showToast('❌ 删除失败 HTTP ' + xhr.status, 'error');
+    }
+  };
+  xhr.onerror = function() { showToast('❌ 网络错误', 'error'); };
+  xhr.send(fd);
+}
+
+document.getElementById('csvInput').addEventListener('change', function(){
+  var file = this.files[0];
+  if (!file) return;
+  var zone = document.getElementById('uploadZone');
+  zone.classList.add('has-file');
+  zone.querySelector('div:first-child').textContent = '📄 ' + file.name;
+
+  var bar = document.getElementById('progressBar');
+  var fill = document.getElementById('progressFill');
+  bar.style.display = 'block';
+  fill.style.width = '0%';
+
+  var fd = new FormData();
+  fd.append('file', file);
+
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/dashboard/history/upload', true);
+  xhr.upload.onprogress = function(e){
+    if (e.lengthComputable) fill.style.width = Math.round(e.loaded/e.total*80) + '%';
+  };
+  xhr.onload = function(){
+    if (xhr.status === 200){
+      fill.style.width = '100%';
+      setTimeout(function(){ location.reload(); }, 800);
+    } else {
+      bar.style.display = 'none';
+      zone.classList.remove('has-file');
+      zone.querySelector('div:first-child').textContent = '点击选择 Zoom Attendance Report CSV 文件';
+      try {
+        var j = JSON.parse(xhr.responseText);
+        showToast('❌ ' + (j.error || j.message || '导入失败'), 'error');
+      } catch(e) {
+        showToast('❌ 导入失败: HTTP ' + xhr.status, 'error');
+      }
+    }
+  };
+  xhr.onerror = function(){
+    bar.style.display = 'none';
+    zone.classList.remove('has-file');
+    zone.querySelector('div:first-child').textContent = '点击选择 Zoom Attendance Report CSV 文件';
+    showToast('❌ 网络错误', 'error');
+  };
+  xhr.send(fd);
+});
+</script>
+{% endblock %}
