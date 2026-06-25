@@ -1554,9 +1554,10 @@ def _build_session_summary(
         }
 
     # ── 第二步：从 zoom_participants 补充有今日事件但无 session 的人 ──
-    br_zp = get_business_day_range_myt(6)
+    br_zp = get_business_day_range_myt(6)  # 复用 br 用于跨日查询
     today_start_zp = br_zp["start_utc"].isoformat()
     today_end_zp = br_zp["end_utc"].isoformat()
+    business_day_start = br_zp["start_utc"]  # datetime 类型，用于隐含 enter
     now_utc_zp = datetime.now(timezone.utc)
 
     if tenant_id:
@@ -1584,8 +1585,8 @@ def _build_session_summary(
         user_key = standard_name.strip().lower().replace(" ", "")
         if user_key in deleted_names or user_key in existing_keys:
             continue
-        # 这个人在 zoom_participants 有今日事件但无 session
-        # 用 zoom_participants enter/leave 配对计算时长
+
+        # ── 获取业务日内所有 enter/leave 事件 ──
         if tenant_id:
             raw_events = conn.execute(
                 "SELECT action, action_time FROM zoom_participants "
@@ -1603,13 +1604,30 @@ def _build_session_summary(
                 (raw_name, today_start_zp, today_end_zp),
             ).fetchall()
 
-        # 配对计算时长
+        # ── 查跨业务日 open session：业务日 start 前最后一条事件是否为 enter ──
+        prev_row = conn.execute(
+            "SELECT action, action_time FROM zoom_participants "
+            "WHERE name=? AND action_time<? "
+            "AND action IN ('enter','joined','leave','left') "
+            "ORDER BY action_time DESC LIMIT 1",
+            (raw_name, today_start_zp),
+        ).fetchone()
+        last_was_enter = prev_row is not None and prev_row["action"] in ("enter", "joined")
+        cross_day_enter = None
+        if last_was_enter:
+            cross_day_enter = business_day_start  # 业务日开始时间作为隐含 enter
+
+        # ── 配对计算时长（含跨业务日 open session 注入） ──
         zp_total = 0
         zp_join = 0
         zp_leave = 0
         zp_first_join = None
         zp_last_activity = None
-        pending = None
+        pending = cross_day_enter  # 如果跨业务日在线，pending 从业务日开始
+        if cross_day_enter:
+            # 注入的 enter 不记入 join_count，它来自上一业务日的 session
+            zp_last_activity = today_start_zp
+
         for re in raw_events:
             try:
                 at_dt = datetime.fromisoformat(str(re["action_time"]).replace("Z", "+00:00"))
@@ -1631,13 +1649,32 @@ def _build_session_summary(
                         zp_total += dur
                     pending = None
 
-        is_online_zp = False
-        if pending is not None and zp_last_activity:
-            try:
-                last_dt = datetime.fromisoformat(str(zp_last_activity).replace("Z", "+00:00"))
-                is_online_zp = (now_utc_zp - last_dt).total_seconds() < 900
-            except:
-                pass
+        # ── 处理业务日结束仍未关闭的 open session ──
+        if pending is not None:
+            # 有未关闭的 open session → 用 now 或 last_activity 截断
+            cutoff = now_utc_zp
+            if zp_last_activity:
+                try:
+                    last_dt = datetime.fromisoformat(str(zp_last_activity).replace("Z", "+00:00"))
+                    if (now_utc_zp - last_dt).total_seconds() < 900:
+                        is_online_zp = True
+                        cutoff = now_utc_zp
+                    else:
+                        # 下线状态：累计到 last_activity，不无限延伸
+                        cutoff = last_dt
+                        is_online_zp = False
+                except:
+                    is_online_zp = False
+            else:
+                is_online_zp = False
+            open_dur = (cutoff - pending).total_seconds()
+            if 0 < open_dur < 86400:
+                zp_total += open_dur
+        else:
+            is_online_zp = bool(zp_last_activity and
+                                (now_utc_zp - datetime.fromisoformat(
+                                    str(zp_last_activity).replace("Z", "+00:00")
+                                )).total_seconds() < 900) if zp_last_activity else False
 
         grp_name_zp, grp_id_zp = _group_map_cache.get((tenant_id, user_key), ("", None))
         if not grp_name_zp and standard_name:
