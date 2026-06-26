@@ -226,7 +226,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     """成员中心 — 实时在线 + 今日参会统计。"""
     role = user.get("role", "")
 
-    from db import get_today_attendance_summary, get_all_groups
+    from db import get_today_attendance_summary, get_today_from_sessions, get_all_groups
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
@@ -310,6 +310,34 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     summary_current = get_today_attendance_summary(tenant_id=tenant_id, meeting_id=current_meeting_id, session_start_after=session_start_after) if current_meeting_id else None
     # 全天统计（不传 meeting_id，保留全量）
     summary = get_today_attendance_summary(tenant_id=tenant_id)
+
+    # DHBW PATCH: overlay session/sharing_live active status into members page
+    try:
+        _session_rows = get_today_from_sessions(tenant_id)
+        _session_idx = {}
+        for _r in _session_rows:
+            _k = ''.join(str(_r.get('user_name') or _r.get('standard_name') or _r.get('display_name') or '').lower().split())
+            if _k:
+                _session_idx[_k] = _r
+
+        for _m in summary.get('members', []):
+            _k = ''.join(str(_m.get('standard_name') or _m.get('display_name') or _m.get('user_name') or '').lower().split())
+            _r = _session_idx.get(_k)
+            if not _r:
+                continue
+
+            _secs = int(_r.get('today_total_seconds') or _r.get('total_seconds') or 0)
+            if _secs > int(_m.get('today_total_seconds') or 0):
+                _m['today_total_seconds'] = _secs
+                _m['today_total_duration'] = _r.get('today_total_duration') or _m.get('today_total_duration')
+
+            if _r.get('status') == 'online' or _r.get('is_online'):
+                _m['status'] = 'online'
+                _m['is_online'] = True
+                _m['open_session_started_at'] = _r.get('open_session_started_at') or _m.get('open_session_started_at')
+    except Exception as _e:
+        import sys
+        sys.stderr.write(f"DHBW session overlay failed: {_e}\n")
     members = summary.get("members", [])
 
     # ── 兜底：webhook 无数据时，用 Metrics 实时参与者填 ──
@@ -467,6 +495,14 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     ))
     live_online = sum(1 for m in members if m.get("status") == "online")
     live_offline = len(members) - live_online
+
+    # DEBUG: KEAT summary state before render
+    import sys
+    _keat = next((m for m in members if m.get("standard_name") == "KEAT" or m.get("display_name") == "KEAT"), None)
+    if _keat:
+        sys.stderr.write(f"DASH_DEBUG KEAT dur={_keat.get('today_total_duration','?')} secs={_keat.get('today_total_seconds','?')} first={_keat.get('first_join','?')} last={_keat.get('last_activity','?')}\n")
+    else:
+        sys.stderr.write("DASH_DEBUG KEAT NOT IN MEMBERS\n")
 
     # ── 搜索 / 筛选 ──
     if search:

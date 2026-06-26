@@ -1294,66 +1294,142 @@ def get_today_from_sessions(
     member_key: str | None = None,
 ) -> list[dict]:
     """
-    基于 participant_sessions 的今日累计查询（MYT 业务日，切割点 06:00）。
+    基于 participant_sessions + current_member_sessions 的今日累计查询（MYT 业务日，切割点 06:00）。
+
+    today_total_seconds = closed_sessions_overlap + current_live_open_duration
+    - closed_sessions_overlap: participant_sessions 中 closed session 与今日窗口的重叠秒数
+    - current_live_open_duration: 仅来自 current_member_sessions.is_online=1 且 open_session_started_at 非空
     """
     conn = _get_conn()
     br = get_business_day_range_myt(6)
-    today_start_iso = br["start_utc"].isoformat()
-    today_end_iso = br["end_utc"].isoformat()
-
-    if member_key:
-        rows = conn.execute(
-            """SELECT
-                 user_name,
-                 COALESCE(SUM(duration_seconds), 0) AS closed_seconds,
-                 MAX(CASE WHEN leave_time_utc IS NULL THEN join_time_utc END) AS open_session_join,
-                 MAX(CASE WHEN leave_time_utc IS NULL THEN 1 ELSE 0 END) AS is_online,
-                 MIN(join_time_utc) AS first_join_today,
-                 MAX(COALESCE(leave_time_utc, join_time_utc)) AS last_activity,
-                 user_key
-               FROM participant_sessions
-               WHERE tenant_id = ? AND user_key = ? AND join_time_utc >= ? AND join_time_utc < ?
-               GROUP BY user_key""",
-            (tenant_id, member_key, today_start_iso, today_end_iso),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """SELECT
-                 user_name,
-                 COALESCE(SUM(duration_seconds), 0) AS closed_seconds,
-                 MAX(CASE WHEN leave_time_utc IS NULL THEN join_time_utc END) AS open_session_join,
-                 MAX(CASE WHEN leave_time_utc IS NULL THEN 1 ELSE 0 END) AS is_online,
-                 MIN(join_time_utc) AS first_join_today,
-                 MAX(COALESCE(leave_time_utc, join_time_utc)) AS last_activity,
-                 user_key
-               FROM participant_sessions
-               WHERE tenant_id = ? AND join_time_utc >= ? AND join_time_utc < ?
-               GROUP BY user_key""",
-            (tenant_id, today_start_iso, today_end_iso),
-        ).fetchall()
-
+    today_start = br["start_utc"]
+    today_end = br["end_utc"]
+    today_start_iso = today_start.isoformat()
+    today_end_iso = today_end.isoformat()
     now_utc = datetime.now(timezone.utc)
+    cutoff = min(now_utc, today_end)
+
+    def _parse_dt(value):
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def _overlap_seconds(start_value, end_value) -> int:
+        start_dt = _parse_dt(start_value)
+        end_dt = _parse_dt(end_value)
+        if not start_dt or not end_dt:
+            return 0
+        a = max(start_dt, today_start)
+        b = min(end_dt, today_end)
+        if b <= a:
+            return 0
+        return int((b - a).total_seconds())
+
+    members: dict[str, dict] = {}
+
+    session_params = [tenant_id, today_end_iso, today_start_iso]
+    member_filter = ""
+    if member_key:
+        member_filter = " AND user_key = ?"
+        session_params.append(member_key)
+
+    session_rows = conn.execute(
+        "SELECT user_key, user_name, join_time_utc, leave_time_utc, duration_seconds "
+        "FROM participant_sessions "
+        "WHERE tenant_id = ? "
+        "AND join_time_utc < ? "
+        "AND COALESCE(leave_time_utc, join_time_utc) >= ? "
+        "AND leave_time_utc IS NOT NULL "
+        f"{member_filter} "
+        "ORDER BY user_key, join_time_utc",
+        session_params,
+    ).fetchall()
+
+    for row in session_rows:
+        user_key = row["user_key"]
+        if not user_key:
+            continue
+        m = members.setdefault(user_key, {
+            "user_name": row["user_name"] or user_key,
+            "user_key": user_key,
+            "closed_seconds": 0,
+            "live_seconds": 0,
+            "is_online": False,
+            "first_join_today": "",
+            "last_activity": "",
+            "open_session_started_at": "",
+        })
+        overlap = _overlap_seconds(row["join_time_utc"], row["leave_time_utc"])
+        m["closed_seconds"] += overlap
+        join_dt = _parse_dt(row["join_time_utc"])
+        leave_dt = _parse_dt(row["leave_time_utc"])
+        if join_dt and today_start <= join_dt < today_end:
+            if not m["first_join_today"] or str(row["join_time_utc"]) < m["first_join_today"]:
+                m["first_join_today"] = row["join_time_utc"]
+        if leave_dt and (not m["last_activity"] or str(row["leave_time_utc"]) > m["last_activity"]):
+            m["last_activity"] = row["leave_time_utc"]
+
+    cms_params = [tenant_id]
+    cms_filter = ""
+    if member_key:
+        cms_filter = " AND member_key = ?"
+        cms_params.append(member_key)
+    cms_rows = conn.execute(
+        "SELECT member_key, display_name, is_online, open_session_started_at, first_join_at, last_activity_at "
+        "FROM current_member_sessions "
+        "WHERE tenant_id = ? AND is_online = 1 AND open_session_started_at IS NOT NULL AND open_session_started_at != '' "
+        f"{cms_filter}",
+        cms_params,
+    ).fetchall()
+
+    for row in cms_rows:
+        user_key = row["member_key"]
+        if not user_key:
+            continue
+        m = members.setdefault(user_key, {
+            "user_name": row["display_name"] or user_key,
+            "user_key": user_key,
+            "closed_seconds": 0,
+            "live_seconds": 0,
+            "is_online": False,
+            "first_join_today": "",
+            "last_activity": "",
+            "open_session_started_at": "",
+        })
+        m["user_name"] = row["display_name"] or m["user_name"]
+        m["is_online"] = True
+        m["open_session_started_at"] = row["open_session_started_at"] or ""
+        live_start = _parse_dt(row["open_session_started_at"])
+        if live_start:
+            a = max(live_start, today_start)
+            b = cutoff
+            if b > a:
+                m["live_seconds"] = int((b - a).total_seconds())
+        first_join = row["first_join_at"] or row["open_session_started_at"] or ""
+        if first_join and (not m["first_join_today"] or str(first_join) < m["first_join_today"]):
+            m["first_join_today"] = first_join
+        last_activity = row["last_activity_at"] or row["open_session_started_at"] or ""
+        if last_activity and (not m["last_activity"] or str(last_activity) > m["last_activity"]):
+            m["last_activity"] = last_activity
+
     results = []
-    for r in rows:
-        closed = r["closed_seconds"] or 0
-        open_join = r["open_session_join"]
-        online = bool(r["is_online"])
-        total = closed
-        if open_join:
-            try:
-                jo = datetime.fromisoformat(open_join.replace("Z", "+00:00"))
-                total += int((now_utc - jo).total_seconds())
-            except Exception:
-                pass
+    for m in members.values():
+        total = int(m["closed_seconds"] + m["live_seconds"])
         results.append({
-            "user_name": r["user_name"],
-            "user_key": r["user_key"],
+            "user_name": m["user_name"],
+            "user_key": m["user_key"],
             "total_seconds": total,
-            "closed_seconds": closed,
-            "is_online": online,
-            "first_join_today": r["first_join_today"] or "",
-            "last_activity": r["last_activity"] or "",
-            "open_session_started_at": open_join or "",
+            "closed_seconds": int(m["closed_seconds"]),
+            "is_online": bool(m["is_online"]),
+            "first_join_today": m["first_join_today"] or "",
+            "last_activity": m["last_activity"] or "",
+            "open_session_started_at": m["open_session_started_at"] or "",
         })
 
     return results
@@ -1560,6 +1636,12 @@ def _build_session_summary(
     business_day_start = br_zp["start_utc"]  # datetime 类型，用于隐含 enter
     now_utc_zp = datetime.now(timezone.utc)
 
+    # 提前获取实时在线列表，用于 zoom_participants open session 判断
+    try:
+        online_names = get_live_online_standard_names(tenant_id) if tenant_id else set()
+    except Exception:
+        online_names = set()
+
     if tenant_id:
         zp_rows = conn.execute(
             "SELECT DISTINCT name FROM zoom_participants "
@@ -1586,23 +1668,23 @@ def _build_session_summary(
         if user_key in deleted_names or user_key in existing_keys:
             continue
 
-        # ── 获取业务日内所有 enter/leave 事件 ──
+        # ── 获取业务日内所有 enter/leave 事件（含全部 action 类型用于上下文） ──
         if tenant_id:
-            raw_events = conn.execute(
+            all_events = conn.execute(
                 "SELECT action, action_time FROM zoom_participants "
                 "WHERE tenant_id=? AND name=? AND action_time>=? AND action_time<? "
-                "AND action IN ('enter','joined','leave','left') "
                 "ORDER BY action_time",
                 (tenant_id, raw_name, today_start_zp, today_end_zp),
             ).fetchall()
         else:
-            raw_events = conn.execute(
+            all_events = conn.execute(
                 "SELECT action, action_time FROM zoom_participants "
                 "WHERE name=? AND action_time>=? AND action_time<? "
-                "AND action IN ('enter','joined','leave','left') "
                 "ORDER BY action_time",
                 (raw_name, today_start_zp, today_end_zp),
             ).fetchall()
+        # 过滤出 main enter/leave 用于遍历
+        raw_events = [e for e in all_events if e["action"] in ("enter", "joined", "leave", "left")]
 
         # ── 查跨业务日 open session：业务日 start 前最后一条事件是否为 enter ──
         prev_row = conn.execute(
@@ -1613,45 +1695,101 @@ def _build_session_summary(
             (raw_name, today_start_zp),
         ).fetchone()
         last_was_enter = prev_row is not None and prev_row["action"] in ("enter", "joined")
-        cross_day_enter = None
-        if last_was_enter:
-            cross_day_enter = business_day_start  # 业务日开始时间作为隐含 enter
 
-        # ── 配对计算时长（含跨业务日 open session 注入） ──
+        # ── 配对计算时长，只量 main session enter/leave ──
+        # 规则：
+        #   - 只看 enter/leave 事件（排除 breakout_enter/breakout_leave/waiting_room/admitted）
+        #   - 同秒 leave+enter 视为主 session 持续（不是真正的断线）
+        #   - 跨日：如果业务日 start 前最后是 enter，从 start_utc 开始 pending
         zp_total = 0
         zp_join = 0
         zp_leave = 0
         zp_first_join = None
         zp_last_activity = None
-        pending = cross_day_enter  # 如果跨业务日在线，pending 从业务日开始
-        if cross_day_enter:
-            # 注入的 enter 不记入 join_count，它来自上一业务日的 session
+        pending = None
+        if last_was_enter:
+            # 跨业务日：隐含 pending 从业务日开始
+            pending = business_day_start
             zp_last_activity = today_start_zp
 
-        for re in raw_events:
+        # ── 预计算：哪些 leave 是 break room 关闭的副作用 ──
+        # 在 all_events 中找 "breakout_xxx 同秒 leave，且有后续 main enter" 的组合
+        skip_leave_set = set()  # 存放 raw_events 中应跳过的 idx
+        for ae_i in range(1, len(all_events)):
+            prev_ae = all_events[ae_i - 1]
+            curr_ae = all_events[ae_i]
+            # 匹配 breakout_leave + leave 或 breakout_enter + leave 同秒
+            if curr_ae["action"] in ("leave", "left") and \
+               prev_ae["action"] in ("breakout_leave", "breakout_enter") and \
+               str(curr_ae["action_time"]) == str(prev_ae["action_time"]):
+                # 检查同一天是否有后续 main enter
+                for later_ae in all_events[ae_i+1:]:
+                    if later_ae["action"] in ("enter", "joined"):
+                        # 有后续 main enter → break room 关闭的副作用，非真正离开
+                        for re_i, re in enumerate(raw_events):
+                            if re["action"] == curr_ae["action"] and str(re["action_time"]) == str(curr_ae["action_time"]):
+                                skip_leave_set.add(re_i)
+                        break  # 只取第一个匹配的 leave
+
+        # ── 同秒 leave+enter 检测 ──
+        i = 0
+        while i < len(raw_events):
+            re = raw_events[i]
+            action = re["action"]
+            ts = re["action_time"]
             try:
-                at_dt = datetime.fromisoformat(str(re["action_time"]).replace("Z", "+00:00"))
+                at_dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
             except:
-                at_dt = datetime.fromisoformat(str(re["action_time"]))
-            if re["action"] in ("enter", "joined"):
+                at_dt = datetime.fromisoformat(str(ts))
+
+            # 检查同秒 leave→enter 模式
+            if action in ("leave", "left") and i + 1 < len(raw_events):
+                next_re = raw_events[i + 1]
+                next_ts = str(next_re["action_time"])
+                if next_re["action"] in ("enter", "joined") and next_ts == str(ts):
+                    # 同秒 leave+enter → 这不是真的断线，是 breakout 恢复
+                    # 不增加 leave_count，不关闭 pending
+                    # 跳到 next_re 当作 enter
+                    zp_last_activity = next_ts
+                    if pending is None:
+                        # 如果 pending 为空，说明这个同秒 enter 是起始
+                        try:
+                            pending = datetime.fromisoformat(str(next_ts).replace("Z", "+00:00"))
+                        except:
+                            pending = datetime.fromisoformat(str(next_ts))
+                    if zp_first_join is None:
+                        zp_first_join = next_ts
+                    i += 2
+                    continue
+
+            if action in ("enter", "joined"):
                 zp_join += 1
                 if zp_first_join is None:
-                    zp_first_join = re["action_time"]
+                    zp_first_join = ts
                 if pending is None:
                     pending = at_dt
-                zp_last_activity = re["action_time"]
-            elif re["action"] in ("leave", "left"):
-                zp_leave += 1
-                zp_last_activity = re["action_time"]
-                if pending is not None:
+                zp_last_activity = ts
+            elif action in ("leave", "left"):
+                zp_last_activity = ts
+                if i in skip_leave_set:
+                    # break room 关闭副作用，且同天有后续 main enter
+                    # 不递增 leave_count，但关闭 pending（停止跨日累计）
+                    # pending 会在后续 enter 重新打开
+                    if pending is not None:
+                        dur = (at_dt - pending).total_seconds()
+                        if 0 < dur < 86400:
+                            zp_total += dur
+                        pending = None
+                elif pending is not None:
                     dur = (at_dt - pending).total_seconds()
                     if 0 < dur < 86400:
                         zp_total += dur
                     pending = None
+            i += 1
 
         # ── 处理业务日结束仍未关闭的 open session ──
         if pending is not None:
-            # 有未关闭的 open session → 用 now 或 last_activity 截断
+            is_online_zp = False
             cutoff = now_utc_zp
             if zp_last_activity:
                 try:
@@ -1659,22 +1797,27 @@ def _build_session_summary(
                     if (now_utc_zp - last_dt).total_seconds() < 900:
                         is_online_zp = True
                         cutoff = now_utc_zp
+                    elif standard_name in online_names:
+                        # 实时在线，即使 last_activity 较旧也按 now 截断
+                        is_online_zp = True
+                        cutoff = now_utc_zp
                     else:
-                        # 下线状态：累计到 last_activity，不无限延伸
                         cutoff = last_dt
                         is_online_zp = False
                 except:
                     is_online_zp = False
-            else:
-                is_online_zp = False
             open_dur = (cutoff - pending).total_seconds()
             if 0 < open_dur < 86400:
                 zp_total += open_dur
         else:
-            is_online_zp = bool(zp_last_activity and
-                                (now_utc_zp - datetime.fromisoformat(
-                                    str(zp_last_activity).replace("Z", "+00:00")
-                                )).total_seconds() < 900) if zp_last_activity else False
+            is_online_zp = False
+            if zp_last_activity:
+                try:
+                    last_dt = datetime.fromisoformat(str(zp_last_activity).replace("Z", "+00:00"))
+                    if (now_utc_zp - last_dt).total_seconds() < 900:
+                        is_online_zp = True
+                except:
+                    pass
 
         grp_name_zp, grp_id_zp = _group_map_cache.get((tenant_id, user_key), ("", None))
         if not grp_name_zp and standard_name:
@@ -1709,10 +1852,6 @@ def _build_session_summary(
         existing_keys.add(user_key)
 
     # ── 第三步：补充 live online 中仍然无记录的成员 ──
-    try:
-        online_names = get_live_online_standard_names(tenant_id) if tenant_id else set()
-    except Exception:
-        online_names = set()
     for on_name in online_names:
         on_key = on_name.strip().lower().replace(" ", "")
         if on_key in deleted_names or on_key in existing_keys:
@@ -6177,3 +6316,224 @@ def get_live_online_standard_names(tenant_id: str) -> set:
             sn = resolved.get("display_name", name)
             online.add(sn)
     return online
+
+
+# ── Stale Session 清理 ────────────────────────────────────────────────────
+
+
+def cleanup_stale_sessions(tenant_id: str | None = None, dry_run: bool = False) -> dict:
+    """
+    扫描并修复 participant_sessions 中的 stale open sessions。
+
+    Stale 判定：同一 user_key 有 leave_time_utc IS NULL 的 session，
+    但该用户之后又有新的 enter。说明旧 session 的 leave 被漏掉了。
+
+    修复方式：
+    - 如果同一 user 后面有 closed session → 截断到后一次 enter 时间
+    - 如果完全没后续活动 → leave_time 置为 join_time，duration=0
+
+    返回修正记录数（dry_run 模式只报告不修改）。
+    """
+    conn = _get_conn()
+    fixed = 0
+    skipped = 0
+    details = []
+
+    where_sql = ""
+    params = []
+    if tenant_id:
+        where_sql = "AND tenant_id = ?"
+        params.append(tenant_id)
+
+    # 1. 查出所有 open session
+    open_rows = conn.execute(
+        "SELECT id, user_key, user_name, join_time_utc, tenant_id "
+        "FROM participant_sessions "
+        "WHERE leave_time_utc IS NULL AND duration_seconds = 0 "
+        f"{where_sql} "
+        "ORDER BY user_key, join_time_utc",
+        params,
+    ).fetchall()
+
+    for row in open_rows:
+        row = dict(row)
+        sid = row["id"]
+        uk = row["user_key"]
+        join_utc = row["join_time_utc"]
+        t_id = row["tenant_id"]
+
+        # 2. 查同一 user 后续是否有 enter
+        later_enters = conn.execute(
+            "SELECT id, join_time_utc, leave_time_utc, duration_seconds "
+            "FROM participant_sessions "
+            "WHERE user_key = ? AND tenant_id = ? AND id != ? "
+            "AND join_time_utc > ? "
+            "ORDER BY join_time_utc ASC LIMIT 1",
+            (uk, t_id, sid, join_utc),
+        ).fetchall()
+
+        if later_enters:
+            le = dict(later_enters[0])
+            next_enter_utc = le["join_time_utc"]
+            # 用 next enter 时间作为 leave_time
+            dur = int(
+                (datetime.fromisoformat(next_enter_utc.replace("Z", "+00:00"))
+                 - datetime.fromisoformat(join_utc.replace("Z", "+00:00"))).total_seconds()
+            )
+            dur = max(dur, 0)
+
+            if dry_run:
+                details.append(
+                    f"[DRY RUN] session {sid} ({uk}): "
+                    f"join={join_utc} → truncate to next enter at {next_enter_utc} ({dur}s)"
+                )
+            else:
+                conn.execute(
+                    "UPDATE participant_sessions SET leave_time_utc = ?, duration_seconds = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (next_enter_utc, dur, sid),
+                )
+                details.append(
+                    f"session {sid} ({uk}): join={join_utc} → truncated to {next_enter_utc} ({dur}s)"
+                )
+            fixed += 1
+        else:
+            # 完全没后续活动 → 标记为零时长 session
+            if dry_run:
+                details.append(
+                    f"[DRY RUN] session {sid} ({uk}): "
+                    f"join={join_utc}, no later activity → zero out"
+                )
+            else:
+                conn.execute(
+                    "UPDATE participant_sessions SET leave_time_utc = join_time_utc, "
+                    "duration_seconds = 0, updated_at = datetime('now') WHERE id = ?",
+                    (sid,),
+                )
+                details.append(
+                    f"session {sid} ({uk}): join={join_utc} → zeroed out"
+                )
+            fixed += 1
+
+    if not dry_run:
+        conn.commit()
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "fixed": fixed,
+        "skipped": skipped,
+        "details": details,
+    }
+
+# --- DHBW PATCH: add sharing_live active duration into get_today_from_sessions ---
+if "_orig_get_today_from_sessions_dhbw_active" not in globals():
+    _orig_get_today_from_sessions_dhbw_active = get_today_from_sessions
+
+    def _dhbw_norm_name(v):
+        return "".join(str(v or "").lower().split())
+
+    def _dhbw_parse_utc(v):
+        from datetime import datetime, timezone
+        if not v:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    def get_today_from_sessions(tenant_id: str, member_key=None):
+        from datetime import datetime, timezone
+
+        rows = _orig_get_today_from_sessions_dhbw_active(tenant_id, member_key) or []
+        rows = [dict(r) for r in rows]
+
+        now_utc = datetime.now(timezone.utc)
+        br = get_business_day_range_myt(6)
+        day_start = br["start_utc"]
+        day_end = br["end_utc"]
+        cutoff = min(now_utc, day_end)
+
+        idx = {}
+        for r in rows:
+            for k0 in (
+                r.get("user_key"),
+                r.get("standard_name"),
+                r.get("display_name"),
+                r.get("user_name"),
+                r.get("raw_name"),
+            ):
+                k = _dhbw_norm_name(k0)
+                if k:
+                    idx[k] = r
+
+        conn = _get_conn()
+        q = """
+        SELECT user_name, meeting_id, start_time
+        FROM sharing_live
+        WHERE tenant_id=?
+          AND is_active=1
+          AND start_time IS NOT NULL
+        """
+        params = [tenant_id]
+
+        if member_key:
+            q += " AND LOWER(REPLACE(user_name,' ','')) = LOWER(REPLACE(?,' ',''))"
+            params.append(member_key)
+
+        active_rows = conn.execute(q, params).fetchall()
+
+        for ar in active_rows:
+            user_name = ar["user_name"] if hasattr(ar, "keys") else ar[0]
+            meeting_id = ar["meeting_id"] if hasattr(ar, "keys") else ar[1]
+            start_time = ar["start_time"] if hasattr(ar, "keys") else ar[2]
+
+            st = _dhbw_parse_utc(start_time)
+            if not st:
+                continue
+
+            start = max(st, day_start)
+            if cutoff <= start:
+                continue
+
+            add_sec = int((cutoff - start).total_seconds())
+            k = _dhbw_norm_name(user_name)
+            r = idx.get(k)
+
+            if not r:
+                r = {
+                    "user_key": k,
+                    "standard_name": user_name,
+                    "display_name": user_name,
+                    "user_name": user_name,
+                    "raw_name": user_name,
+                    "today_total_seconds": 0,
+                    "today_total_duration": "0s",
+                    "session_count": 0,
+                    "disconnect_count": 0,
+                    "status": "offline",
+                    "meeting_id": meeting_id,
+                }
+                rows.append(r)
+                idx[k] = r
+
+            old_sec = int(r.get("today_total_seconds") or 0)
+
+            # active sharing_live 是当前仍在线，至少要覆盖到从共享开始到现在的时长
+            if add_sec > old_sec:
+                r["today_total_seconds"] = add_sec
+            else:
+                r["today_total_seconds"] = old_sec
+
+            r["today_total_duration"] = _fmt_dur(int(r["today_total_seconds"]))
+            r["status"] = "online"
+            r["is_online"] = True
+            r["open_session_started_at"] = start_time
+            r["last_activity"] = now_utc.isoformat()
+            r["meeting_id"] = meeting_id
+
+        return rows
+# --- END DHBW PATCH ---
