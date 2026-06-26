@@ -65,9 +65,217 @@
 }
 .timeline-table tr:last-child td{border-bottom:none}
 .timeline-table tr:hover td{background:rgba(30,58,95,.18)}
+
+/* ── Group Manage Modal ── */
+.gm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:none;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
+.gm-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px;width:620px;max-width:92vw;max-height:82vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.gm-card h3{font-size:16px;font-weight:600;margin:0 0 12px;color:var(--text);padding-bottom:10px;border-bottom:1px solid var(--cb)}
+.gm-form{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.gm-form .gm-input{font-size:12px;padding:5px 10px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);flex:1;min-width:120px}
+.gm-empty{text-align:center;padding:30px;color:var(--tm);font-size:13px}
+.gm-error{text-align:center;padding:16px;color:#f87171;font-size:13px;display:none}
+.gm-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--cb);border-radius:8px;margin-bottom:6px;transition:background .1s}
+.gm-item:hover{background:var(--rh)}
+.gm-item .gm-name{flex:1;font-weight:500;color:var(--text);font-size:13px}
+.gm-item .gm-desc{font-size:11px;color:var(--tm);margin-left:4px}
+.gm-item .gm-count{font-size:11px;color:var(--ts);background:var(--cb);padding:1px 7px;border-radius:10px}
+.gm-item .gm-actions{display:flex;gap:4px}
+.gm-item .gm-actions button{font-size:10px;padding:3px 8px;border-radius:5px;border:1px solid var(--cb);background:var(--bg);color:var(--ts);cursor:pointer}
+.gm-item .gm-actions button:hover{background:var(--rh);color:var(--text)}
+.gm-item .gm-actions .gm-del:hover{color:#ef4444;border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.08)}
+
+/* ── Group Member Sub-modal ── */
+.gmm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10001;display:none;align-items:center;justify-content:center}
+.gmm-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;width:460px;max-width:88vw;max-height:75vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.3)}
+.gmm-card h4{font-size:15px;font-weight:600;margin:0 0 10px;color:var(--text)}
+.gmm-member{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--div);font-size:12px}
+.gmm-member:last-child{border-bottom:none}
+.gmm-member .gmm-name{flex:1;color:var(--text)}
+.gmm-close{font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--ts);cursor:pointer;margin-top:10px}
+.gmm-close:hover{background:var(--rh)}
 </style>
 
 <script>
+// ── 分组管理弹窗 ──
+window.openGroupManage = function() {
+  var overlay = document.getElementById('gmOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'gmOverlay';
+    overlay.className = 'gm-overlay';
+    overlay.innerHTML =
+      '<div class="gm-card">' +
+      '<h3>📂 分组管理</h3>' +
+      '<div class="gm-form">' +
+      '<input id="gmNewName" class="gm-input" placeholder="分组名称">' +
+      '<input id="gmNewDesc" class="gm-input" placeholder="描述（可选）" style="flex:0.8">' +
+      '<button class="bt bt-p" onclick="gmCreate()" style="font-size:11px;padding:5px 12px">创建</button>' +
+      '</div>' +
+      '<div id="gmListWrap"><div class="gm-empty">加载中...</div></div>' +
+      '<div style="text-align:right;margin-top:10px"><button class="bt bt-s" onclick="gmClose()" style="font-size:11px;padding:4px 14px">关闭</button></div>' +
+      '</div>';
+    overlay.addEventListener('click', function(e){ if(e.target===overlay) gmClose(); });
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+  gmLoad();
+};
+
+function gmClose() {
+  var el = document.getElementById('gmOverlay');
+  if (el) el.style.display = 'none';
+}
+
+function gmLoad() {
+  var wrap = document.getElementById('gmListWrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="gm-empty">加载中...</div>';
+  fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(j){
+    if (!j.ok) { wrap.innerHTML = '<div class="gm-error" style="display:block">加载失败</div>'; return; }
+    var gs = j.groups || [];
+    if (!gs.length) { wrap.innerHTML = '<div class="gm-empty">暂无分组，在上方创建</div>'; return; }
+    var html = '';
+    gs.forEach(function(g){
+      html += '<div class="gm-item">' +
+        '<span class="gm-name">' + gmEsc(g.name) + '</span>' +
+        (g.description ? '<span class="gm-desc">' + gmEsc(g.description) + '</span>' : '') +
+        '<span class="gm-count">' + (g.member_count || 0) + '</span>' +
+        '<div class="gm-actions">' +
+        '<button onclick="gmViewMembers(' + g.id + ',\'' + gmEsc(g.name) + '\')">成员</button>' +
+        '<button onclick="gmEdit(' + g.id + ',\'' + gmEsc(g.name) + '\',\'' + gmEsc(g.description||'') + '\')">编辑</button>' +
+        '<button class="gm-del" onclick="gmDelete(' + g.id + ',\'' + gmEsc(g.name) + '\')">删除</button>' +
+        '</div></div>';
+    });
+    wrap.innerHTML = html;
+  }).catch(function(){
+    wrap.innerHTML = '<div class="gm-error" style="display:block">请求失败</div>';
+  });
+}
+
+function gmEsc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function gmCreate() {
+  var name = document.getElementById('gmNewName');
+  var desc = document.getElementById('gmNewDesc');
+  if (!name.value.trim()) { showToast('❌ 请输入分组名称'); return; }
+  fetch('/api/v3/member-groups', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name.value.trim(), description: desc.value.trim()})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) {
+      showToast('✅ 已创建');
+      name.value = ''; desc.value = '';
+      gmLoad();
+    } else {
+      showToast('❌ ' + (j.error || '创建失败'));
+    }
+  }).catch(function(){ showToast('❌ 网络错误'); });
+}
+
+function gmEdit(gid, name, desc) {
+  var newName = prompt('分组名称:', name);
+  if (!newName || !newName.trim()) return;
+  var newDesc = prompt('描述:', desc || '');
+  fetch('/api/v3/member-groups/' + gid, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: newName.trim(), description: (newDesc||'').trim()})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { showToast('✅ 已更新'); gmLoad();
+      // Also refresh group filter dropdown on main page if it exists
+      var sel = document.getElementById('groupFilter');
+      if (sel) window.location.reload();
+    } else { showToast('❌ ' + (j.error || '更新失败')); }
+  }).catch(function(){ showToast('❌ 网络错误'); });
+}
+
+function gmDelete(gid, name) {
+  if (!confirm('确定删除分组 "' + name + '" 吗？')) return;
+  fetch('/api/v3/member-groups/' + gid, {method: 'DELETE'})
+  .then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { showToast('✅ 已删除'); gmLoad(); } else { showToast('❌ ' + (j.error || '删除失败')); }
+  }).catch(function(){ showToast('❌ 网络错误'); });
+}
+
+function gmViewMembers(gid, gname) {
+  var sub = document.getElementById('gmmOverlay');
+  if (!sub) {
+    sub = document.createElement('div');
+    sub.id = 'gmmOverlay';
+    sub.className = 'gmm-overlay';
+    sub.addEventListener('click', function(e){ if(e.target===sub) sub.style.display='none'; });
+    document.body.appendChild(sub);
+  }
+  sub.innerHTML =
+    '<div class="gmm-card">' +
+    '<h4>👥 ' + gmEsc(gname) + ' — 成员</h4>' +
+    '<div class="gmm-add-row" style="display:flex;gap:6px;margin-bottom:10px">' +
+    '<select id="gmmMemberSelect" style="flex:1;padding:5px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px"><option value="">— 选择成员 —</option></select>' +
+    '<button class="bt bt-p" onclick="gmmAdd(' + gid + ')" style="font-size:10px;padding:4px 10px">添加</button>' +
+    '</div>' +
+    '<div id="gmmList" style="max-height:300px;overflow-y:auto;border:1px solid var(--cb);border-radius:8px"><div class="gm-empty">加载中...</div></div>' +
+    '<div style="text-align:right;margin-top:8px"><button class="gmm-close" onclick="document.getElementById(\'gmmOverlay\').style.display=\'none\'">关闭</button></div>' +
+    '</div>';
+  sub.style.display = 'flex';
+
+  // Load current members and all available members
+  fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(j){
+    if (!j.ok) return;
+    var groups = j.groups || [];
+    var cur = null;
+    groups.forEach(function(g){ if (g.id === gid) cur = g; });
+    if (!cur) return;
+    var members = cur.members || [];
+    var listEl = document.getElementById('gmmList');
+    if (!members.length) {
+      listEl.innerHTML = '<div class="gm-empty">暂无成员</div>';
+    } else {
+      var h = '';
+      members.forEach(function(m){
+        var n = m.display_name || m.name || m.raw_name || '';
+        h += '<div class="gmm-member"><span class="gmm-name">' + gmEsc(n) + '</span><button class="bt bt-s" style="font-size:9px;padding:2px 7px" onclick="gmmRemove(' + gid + ',\'' + gmEsc(n) + '\')">移除</button></div>';
+      });
+      listEl.innerHTML = h;
+    }
+  });
+
+  // Populate member select from main member list via the table rows
+  var sel = document.getElementById('gmmMemberSelect');
+  if (sel) {
+    var names = new Set();
+    document.querySelectorAll('#memberTable .member-row').forEach(function(row){
+      var n = row.getAttribute('data-name');
+      if (n) names.add(n);
+    });
+    var opts = '<option value="">— 选择成员 —</option>';
+    names.forEach(function(n){ opts += '<option value="' + gmEsc(n) + '">' + gmEsc(n) + '</option>'; });
+    sel.innerHTML = opts;
+  }
+}
+
+function gmmAdd(gid) {
+  var sel = document.getElementById('gmmMemberSelect');
+  if (!sel || !sel.value) { showToast('❌ 请选择成员'); return; }
+  fetch('/api/v3/member-groups/' + gid + '/members', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({member_name: sel.value})
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok || j.id) { showToast('✅ 已添加'); gmViewMembers(gid, ''); } else { showToast('❌ ' + (j.error || '添加失败')); }
+  }).catch(function(){ showToast('❌ 网络错误'); });
+}
+
+function gmmRemove(gid, name) {
+  if (!confirm('移除 "' + name + '" ？')) return;
+  fetch('/api/v3/member-groups/' + gid + '/members/' + encodeURIComponent(name), {method: 'DELETE'})
+  .then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { showToast('✅ 已移除'); gmViewMembers(gid, ''); } else { showToast('❌ ' + (j.error || '移除失败')); }
+  }).catch(function(){ showToast('❌ 网络错误'); });
+}
+
 window.escHtml = function(s) {
   return String(s || '').replace(/[&<>"']/g, function(c) {
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];

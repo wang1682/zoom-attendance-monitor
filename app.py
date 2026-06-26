@@ -1219,6 +1219,16 @@ def build_app() -> "FastAPI":
             result["group_integrity"] = {"ok": False, "error": str(e)}
         return {"ok": True, **result}
 
+    @app.get("/api/maintenance/cleanup-sessions")
+    async def api_cleanup_sessions(request: Request, dry_run: bool = True):
+        """扫描并修复 stale open sessions。dry_run=true（默认）只报告不修改。"""
+        role = request.session.get("role", "")
+        if role not in ("super_admin", "admin", "tenant_admin", "owner"):
+            return JSONResponse(status_code=403, content={"ok": False, "error": "无权限"})
+        tenant_id = request.app.state.get_effective_tenant_id(request) if hasattr(request.app.state, 'get_effective_tenant_id') else (request.session.get("selected_tenant") or request.session.get("tenant_id") or "default")
+        result = db.cleanup_stale_sessions(tenant_id=tenant_id, dry_run=dry_run)
+        return {"ok": True, **result}
+
     @app.get("/api/report-data")
     async def api_report_data(days: int = 7):
         """报表数据:趋势 + 排行"""
