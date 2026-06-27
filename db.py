@@ -2130,316 +2130,256 @@ def _myt_short(utc_str: str) -> str:
 
 
 
-def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, session_start_after: str = None) -> dict:
-    """今日参会汇总 — 统一基于 participant_sessions + sharing_live + CMS fallback
 
-    统计规则：
-    1. participant_sessions 是主来源，每条 session 贡献 overlap 秒数
-       - leave_time 有值 → closed session
-       - leave_time 为空 → open session (持续到 now)
-    2. sharing_live is_active=1 只作为 fallback：
-       - 如果成员没有 open participant_session，用 sharing_live.start_time 作为 open session
-       - 如果成员已有 open participant_session，不重复计算 sharing_live
-    3. current_member_sessions 作为三级 fallback
-       - 成员没有任何 participant_session 时使用
+def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, session_start_after: str = None) -> dict:
+    """今日参会汇总 — 基于 participant_sessions 区间合并 + sharing_live/CMS fallback
+
+    核心算法：
+    1. 所有 participant_sessions 转换为 [start, end] 区间
+       - closed: start=join, end=leave
+       - open: start=join, end=now
+    2. 同一成员的所有区间合并（消除 overlap）
+    3. sharing_live active / CMS online 也加进去
+    4. 最终 total = sum(merged intervals ∩ business_day)
     """
     from datetime import datetime, timezone, timedelta
     from collections import OrderedDict
 
     now_utc = datetime.now(timezone.utc)
     br = get_business_day_range_myt(6)
-    today_start_utc = br["start_utc"]
-    today_end_utc = br["end_utc"]
-    today_start_myt = br["start_utc"] + timedelta(hours=8)
+    biz_start = br["start_utc"]
+    biz_end = br["end_utc"]
+    cutoff = min(now_utc, biz_end)
 
-    def _parse_dt(value):
-        if not value:
-            return None
-        try:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except Exception:
-            return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+    def _parse(v):
+        if not v: return None
+        dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return dt
 
-    def _overlap_seconds(start_dt, end_dt) -> int:
-        if not start_dt or not end_dt:
-            return 0
-        a = max(start_dt, today_start_utc)
-        b = min(end_dt, today_end_utc)
-        if b <= a:
-            return 0
+    def _overlap(start_dt, end_dt) -> int:
+        if not start_dt or not end_dt: return 0
+        a = max(start_dt, biz_start)
+        b = min(end_dt, biz_end)
+        if b <= a: return 0
         return int((b - a).total_seconds())
 
-    def _init_member(display_name):
-        return {
-            "standard_name": display_name,
-            "group_name": get_member_group(display_name) or "",
-            "status": "offline",
-            "first_join": None,
-            "today_total_seconds": 0,
-            "today_total_duration": "0m",
-            "session_count": 0,
-            "disconnect_count": 0,
-            "last_activity": None,
-            "last_leave_time": None,
-            "open_session_started_at": None,
-            "open_from_ps": False,
-            "open_from_sl": False,
-            "open_from_cms": False,
-            "last_activity_display": "",
-            "first_join_display": "",
-            "email": "",
-        }
+    def _merge_intervals(intervals):
+        """Merge overlapping/contiguous time ranges, return sum of overlap with biz window."""
+        if not intervals: return 0, []
+        sorted_iv = sorted(intervals, key=lambda x: x[0])
+        merged = []
+        cur_start, cur_end = sorted_iv[0]
+        for start, end in sorted_iv[1:]:
+            if start <= cur_end:  # overlap or contiguous
+                cur_end = max(cur_end, end)
+            else:
+                merged.append((cur_start, cur_end))
+                cur_start, cur_end = start, end
+        merged.append((cur_start, cur_end))
+        total = sum(_overlap(s, e) for s, e in merged)
+        return total, merged
 
     conn = _get_conn()
-    members = OrderedDict()
+    member_data = OrderedDict()
 
-    # ── Step 1: participant_sessions (ALL, including open) ──
-    where_extra = ""
-    params = [tenant_id, today_end_utc.isoformat(), today_start_utc.isoformat()]
+    # ── Step 1: participant_sessions (ALL, closed + open) ──
+    params = [tenant_id, biz_end.isoformat(), biz_start.isoformat()]
     if meeting_id:
-        where_extra = " AND meeting_id = ?"
         params.append(meeting_id)
 
-    # Get ALL sessions that overlap today (closed or open)
-    session_rows = conn.execute(
-        "SELECT user_key, user_name, join_time_utc, leave_time_utc, duration_seconds, meeting_id "
-        "FROM participant_sessions "
-        "WHERE tenant_id = ? "
-        "AND join_time_utc < ? "
-        "AND COALESCE(leave_time_utc, join_time_utc) >= ? "
-        + where_extra +
+    where_extra = " AND meeting_id = ?" if meeting_id else ""
+    rows = conn.execute(
+        "SELECT user_key, user_name, join_time_utc, leave_time_utc, meeting_id "
+        "FROM participant_sessions WHERE tenant_id=? AND join_time_utc < ? "
+        "AND COALESCE(leave_time_utc, join_time_utc) >= ? " + where_extra +
         "ORDER BY user_key, join_time_utc",
         params,
     ).fetchall()
 
-    # Track which members have an open participant_session
-    members_with_open_ps = set()
+    # Flag: does this member have any open session?
+    has_open_ps = set()
 
-    for row in session_rows:
-        user_key = row["user_key"]
-        if not user_key:
-            continue
-        if session_start_after and str(row["join_time_utc"]) < session_start_after:
-            continue
+    for r in rows:
+        uk = r["user_key"]
+        if not uk: continue
+        if session_start_after and str(r["join_time_utc"]) < session_start_after: continue
 
-        display_name = resolve_display_name(row["user_name"] or user_key)["display_name"]
-        if display_name not in members:
-            members[display_name] = _init_member(display_name)
-        m = members[display_name]
+        dn = resolve_display_name(r["user_name"] or uk)["display_name"]
+        if dn not in member_data:
+            member_data[dn] = {
+                "standard_name": dn,
+                "group_name": get_member_group(dn) or "",
+                "raw_ps_count": 0,
+                "intervals": [],
+                "has_open": False,
+                "has_sharing": False,
+                "has_cms": False,
+                "first_join_raw": None,
+                "last_activity_raw": None,
+                "last_leave_raw": None,
+            }
+        md = member_data[dn]
+        md["raw_ps_count"] += 1
 
-        join_dt = _parse_dt(row["join_time_utc"])
-        leave_dt = _parse_dt(row["leave_time_utc"])
+        j = _parse(r["join_time_utc"])
+        lv = _parse(r["leave_time_utc"])
+        end = lv if lv else now_utc
 
-        if leave_dt:
-            # Closed session
-            end_dt = leave_dt
-            overlap = _overlap_seconds(join_dt, end_dt)
-            m["today_total_seconds"] += overlap
-            m["session_count"] += 1
-            if m["last_leave_time"] is None or leave_dt > m["last_leave_time"]:
-                m["last_leave_time"] = leave_dt
-            if m["last_activity"] is None or leave_dt > m["last_activity"]:
-                m["last_activity"] = leave_dt
-        else:
-            # Open session (still ongoing) — validate it's truly open
-            # Stale detection: check sharing_live active and CMS online
-            has_active_sharing = conn.execute(
-                "SELECT 1 FROM sharing_live WHERE tenant_id=? AND is_active=1 "
-                "AND LOWER(REPLACE(user_name,' ','')) = LOWER(REPLACE(?,' ','')) LIMIT 1",
-                (tenant_id, row["user_name"]),
-            ).fetchone()
-            
-            has_cms_online = conn.execute(
-                "SELECT 1 FROM current_member_sessions WHERE tenant_id=? AND member_key=? "
-                "AND is_online=1 LIMIT 1",
-                (tenant_id, user_key),
-            ).fetchone()
-            
-            if has_active_sharing or has_cms_online:
-                # Backed by sharing_live or CMS — genuinely open
-                end_dt = now_utc
-                overlap = _overlap_seconds(join_dt, end_dt)
-                m["today_total_seconds"] += overlap
-                m["session_count"] += 1
-                m["status"] = "online"
-                m["open_session_started_at"] = join_dt
-                m["open_from_ps"] = True
-                m["last_activity"] = now_utc
-                m["last_leave_time"] = None
-                members_with_open_ps.add(display_name)
-            else:
-                # No backup source — check zoom_participants for a leave after join
-                stale_leave = conn.execute(
-                    "SELECT MIN(action_time) FROM zoom_participants "
-                    "WHERE tenant_id = ? AND meeting_id = ? "
-                    "AND LOWER(REPLACE(name,\' \',\'\')) = LOWER(REPLACE(?,\' \',\'\')) "
-                    "AND action IN ('leave','left') "
-                    "AND action_time > ?",
-                    (tenant_id, row["meeting_id"], row["user_name"], row["join_time_utc"]),
-                ).fetchone()
-                
-                if stale_leave and stale_leave[0]:
-                    stale_end = _parse_dt(stale_leave[0])
-                    end_dt = stale_end or now_utc
-                    overlap = _overlap_seconds(join_dt, end_dt)
-                    m["today_total_seconds"] += overlap
-                    m["session_count"] += 1
-                    m["last_leave_time"] = stale_end
-                    if m["last_activity"] is None or stale_end > m["last_activity"]:
-                        m["last_activity"] = stale_end
-                else:
-                    end_dt = now_utc
-                    overlap = _overlap_seconds(join_dt, end_dt)
-                    m["today_total_seconds"] += overlap
-                    m["session_count"] += 1
-                    m["status"] = "online"
-                    m["open_session_started_at"] = join_dt
-                    m["open_from_ps"] = True
-                    m["last_activity"] = now_utc
-                    m["last_leave_time"] = None
-                    members_with_open_ps.add(display_name)
+        md["intervals"].append((j, end))
 
-        # first_join: earliest among all sessions
-        if join_dt and (m["first_join"] is None or join_dt < m["first_join"]):
-            m["first_join"] = join_dt
+        if j and (md["first_join_raw"] is None or j < md["first_join_raw"]):
+            md["first_join_raw"] = j
+        if end and (md["last_activity_raw"] is None or end > md["last_activity_raw"]):
+            md["last_activity_raw"] = end
+        if lv and (md["last_leave_raw"] is None or lv > md["last_leave_raw"]):
+            md["last_leave_raw"] = lv
 
-    # ── Step 2: sharing_live is_active=1 (fallback for members WITHOUT open participant_session) ──
+        if lv is None:
+            md["has_open"] = True
+            has_open_ps.add(dn)
+
+    # ── Step 2: sharing_live is_active=1 (add interval for members without open PS) ──
     if not meeting_id:
         sl_rows = conn.execute(
-            "SELECT user_name, meeting_id, start_time "
-            "FROM sharing_live "
-            "WHERE tenant_id = ? AND is_active = 1 AND start_time IS NOT NULL",
+            "SELECT user_name, start_time FROM sharing_live "
+            "WHERE tenant_id=? AND is_active=1 AND start_time IS NOT NULL",
             (tenant_id,),
         ).fetchall()
+        for r in sl_rows:
+            dn = resolve_display_name(r["user_name"])["display_name"]
+            st = _parse(r["start_time"])
+            if not st: continue
 
-        for ar in sl_rows:
-            user_name = ar[0]
-            start_time = ar[2]
-            st = _parse_dt(start_time)
-            if not st:
-                continue
+            if dn not in member_data:
+                member_data[dn] = {
+                    "standard_name": dn,
+                    "group_name": get_member_group(dn) or "",
+                    "raw_ps_count": 0,
+                    "intervals": [],
+                    "has_open": False,
+                    "has_sharing": False,
+                    "has_cms": False,
+                    "first_join_raw": None,
+                    "last_activity_raw": None,
+                    "last_leave_raw": None,
+                }
+            md = member_data[dn]
+            if not md["has_open"]:
+                # Only add sharing interval if no open PS (prevents double-count)
+                md["intervals"].append((st, now_utc))
+            md["has_sharing"] = True
+            if md["first_join_raw"] is None or st < md["first_join_raw"]:
+                md["first_join_raw"] = st
+            md["last_activity_raw"] = now_utc
+            md["last_leave_raw"] = None
 
-            display_name = resolve_display_name(user_name)["display_name"]
-
-            if display_name in members_with_open_ps:
-                # Member already has open participant_session — do NOT add sharing_live duration
-                # But do update status/activity if needed
-                m = members[display_name]
-                m["status"] = "online"
-                m["last_activity"] = now_utc
-                continue
-
-            if display_name not in members:
-                members[display_name] = _init_member(display_name)
-            m = members[display_name]
-
-            overlap = _overlap_seconds(st, now_utc)
-            m["today_total_seconds"] += overlap
-            m["session_count"] += 1
-            m["status"] = "online"
-            m["open_session_started_at"] = st
-            m["open_from_sl"] = True
-            m["last_activity"] = now_utc
-            m["last_leave_time"] = None
-
-            if m["first_join"] is None or st < m["first_join"]:
-                m["first_join"] = st
-
-    # ── Step 3: current_member_sessions (tertiary fallback) ──
+    # ── Step 3: CMS is_online=1 (add interval for members without open PS or sharing) ──
     if not meeting_id:
         cms_rows = conn.execute(
-            "SELECT member_key, display_name, is_online, open_session_started_at, "
-            "first_join_at, last_activity_at, join_count, leave_count "
-            "FROM current_member_sessions "
-            "WHERE tenant_id = ? AND is_online = 1 AND open_session_started_at IS NOT NULL "
-            "AND open_session_started_at != ''",
+            "SELECT member_key, display_name, open_session_started_at, first_join_at, "
+            "last_activity_at, join_count, leave_count "
+            "FROM current_member_sessions WHERE tenant_id=? AND is_online=1 "
+            "AND open_session_started_at IS NOT NULL AND open_session_started_at != ''",
             (tenant_id,),
         ).fetchall()
+        for r in cms_rows:
+            dn = r["display_name"]
+            if not dn: continue
 
-        for row in cms_rows:
-            display_name = row["display_name"]
-            if not display_name:
-                continue
+            if dn not in member_data:
+                member_data[dn] = {
+                    "standard_name": dn,
+                    "group_name": get_member_group(dn) or "",
+                    "raw_ps_count": 0,
+                    "intervals": [],
+                    "has_open": False,
+                    "has_sharing": False,
+                    "has_cms": False,
+                    "first_join_raw": None,
+                    "last_activity_raw": None,
+                    "last_leave_raw": None,
+                }
+            md = member_data[dn]
+            if not md["has_open"] and not md["has_sharing"]:
+                cms_start = _parse(r["open_session_started_at"])
+                if cms_start:
+                    md["intervals"].append((cms_start, now_utc))
+            md["has_cms"] = True
+            if r["first_join_at"]:
+                fj = _parse(r["first_join_at"])
+                if fj and (md["first_join_raw"] is None or fj < md["first_join_raw"]):
+                    md["first_join_raw"] = fj
+            md["last_activity_raw"] = now_utc
+            md["last_leave_raw"] = None
 
-            if display_name in members:
-                m = members[display_name]
-                # CMS supplements data only for members who have NO open ps or sharing
-                if m.get("open_from_ps") or m.get("open_from_sl"):
-                    # Already has open session from better source, just update status
-                    m["status"] = "online"
-                    continue
+    # ── Step 4: Merge intervals and build output ──
+    members_out = []
+    for dn, md in member_data.items():
+        total_sec, merged = _merge_intervals(md["intervals"])
+        online = md["has_open"] or md["has_sharing"] or md["has_cms"]
 
-            # Either no member record, or member has only closed sessions
-            if display_name not in members:
-                members[display_name] = _init_member(display_name)
-            m = members[display_name]
+        # Determine open_session_started_at
+        osa = None
+        if md["has_open"]:
+            # Find the last merged interval that corresponds to the open session
+            for s, e in reversed(merged):
+                if e is None or e == now_utc or (s and md["last_activity_raw"] and _overlap(s, now_utc) > 0):
+                    osa = s
+                    break
+        if osa is None and (md["has_sharing"] or md["has_cms"]):
+            for s, e in merged:
+                if _overlap(s, now_utc) > 0:
+                    osa = s
+                    break
 
-            cms_open = _parse_dt(row["open_session_started_at"])
-            if cms_open:
-                overlap = _overlap_seconds(cms_open, now_utc)
-                m["today_total_seconds"] += overlap
-                m["session_count"] += row["join_count"] or 0
-                m["disconnect_count"] += row["leave_count"] or 0
-                m["status"] = "online"
-                m["open_session_started_at"] = cms_open
-                m["open_from_cms"] = True
-                m["last_activity"] = now_utc
-                m["last_leave_time"] = None
+        m_out = {
+            "standard_name": dn,
+            "group_name": md["group_name"],
+            "status": "online" if online else "offline",
+            "first_join": md["first_join_raw"],
+            "today_total_seconds": total_sec,
+            "today_total_duration": _fmt_dur(total_sec),
+            "session_count": len(merged),
+            "disconnect_count": max(0, md["raw_ps_count"] - len(merged)),
+            "last_activity": md["last_activity_raw"],
+            "last_leave_time": md["last_leave_raw"],
+            "open_session_started_at": osa,
+            "last_activity_display": "",
+            "first_join_display": "",
+            "email": "",
+        }
+        members_out.append(m_out)
 
-            if row["first_join_at"]:
-                fj = _parse_dt(row["first_join_at"])
-                if fj and (m["first_join"] is None or fj < m["first_join"]):
-                    m["first_join"] = fj
-            if row["last_activity_at"] and m["status"] != "online":
-                la = _parse_dt(row["last_activity_at"])
-                if la and (m["last_activity"] is None or la > m["last_activity"]):
-                    m["last_activity"] = la
-
-    # ── Final formatting ──
-    for m in members.values():
-        m["today_total_duration"] = _fmt_dur(int(m["today_total_seconds"]))
+    # ── Sort & format ──
+    members_out.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m["today_total_seconds"] or 0)))
+    for m in members_out:
         m["first_join_display"] = _myt_short(m["first_join"].isoformat()) if m["first_join"] else ""
         m["last_activity_display"] = _myt_short(m["last_activity"].isoformat()) if m["last_activity"] else ""
-
-        # Cleanup internal tracking fields
-        for f in ["open_from_ps", "open_from_sl", "open_from_cms"]:
-            m.pop(f, None)
-
-        # Email fallback from zoom_participants
-        if not m.get("email"):
+        # Email fallback
+        if not m["email"]:
             try:
                 row = conn.execute(
-                    "SELECT email FROM zoom_participants WHERE name = ? AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                    "SELECT email FROM zoom_participants WHERE name=? AND email IS NOT NULL AND email!='' ORDER BY action_time DESC LIMIT 1",
                     (m["standard_name"],),
                 ).fetchone()
-                if row:
-                    m["email"] = row[0]
-            except Exception:
-                pass
+                if row: m["email"] = row[0]
+            except: pass
 
-    # ── Sort ──
-    sorted_members = sorted(
-        members.values(),
-        key=lambda m: (0 if m["status"] == "online" else 1, -(m["today_total_seconds"] or 0)),
-    )
-
-    total_seconds = sum(m["today_total_seconds"] for m in sorted_members)
-    total_members = len(sorted_members)
-    online_count = sum(1 for m in sorted_members if m["status"] == "online")
-    avg_seconds = total_seconds // total_members if total_members > 0 else 0
+    total_sec = sum(m["today_total_seconds"] for m in members_out)
+    total_members = len(members_out)
+    online_count = sum(1 for m in members_out if m["status"] == "online")
+    avg_sec = total_sec // total_members if total_members else 0
 
     return {
         "ok": True,
         "total_members": total_members,
         "online_count": online_count,
         "offline_count": total_members - online_count,
-        "total_duration": _fmt_dur(int(total_seconds)),
-        "avg_duration": _fmt_dur(int(avg_seconds)),
-        "date": today_start_myt.strftime("%Y-%m-%d"),
-        "members": sorted_members,
+        "total_duration": _fmt_dur(int(total_sec)),
+        "avg_duration": _fmt_dur(int(avg_sec)),
+        "date": br["business_date"].strftime("%Y-%m-%d") if hasattr(br["business_date"], "strftime") else str(br["business_date"]),
+        "members": members_out,
     }
 
 def check_new_email(email: str, name: str, now: datetime) -> bool:
