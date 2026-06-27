@@ -374,7 +374,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         tenant_id=tenant_id,
         meeting_id=current_meeting_id,
         session_start_after=_session_start_after,
-    ) if current_meeting_id and session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
+    ) if current_meeting_id and _session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
 
     
 
