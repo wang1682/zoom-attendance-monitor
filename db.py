@@ -2247,8 +2247,12 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
 
         md["intervals"].append((j, end))
 
-        if j and (md["first_join_raw"] is None or j < md["first_join_raw"]):
-            md["first_join_raw"] = j
+        # first_join is clipped to session_start_after (if set)
+        effective_first = j
+        if session_start_after and j and j < _parse(session_start_after):
+            effective_first = _parse(session_start_after)
+        if effective_first and (md["first_join_raw"] is None or effective_first < md["first_join_raw"]):
+            md["first_join_raw"] = effective_first
         if end and (md["last_activity_raw"] is None or end > md["last_activity_raw"]):
             md["last_activity_raw"] = end
         if lv and (md["last_leave_raw"] is None or lv > md["last_leave_raw"]):
