@@ -1187,6 +1187,12 @@ def check_room_switch(
 ) -> bool:
     """
     检查 action_time 前后 window 秒内是否有房间切换事件。
+    
+    房间切换 = 用户从主房间短暂离开后迅速回来：
+    - breakout_leave 后紧跟 leave → 这是真正的离开，不是切换
+    - breakout_enter 后紧跟 leave → 这是进入讨论组，不是切换
+    - 只有 enter 后紧跟 leave → 可能是切换（1-2s 重新进入）
+    
     按 LOWER(REPLACE(name,' ','')) 归一化后匹配，
     避免 "Winifred" vs "winifred Winifred" 等不同写法导致漏判。
     """
@@ -1199,37 +1205,50 @@ def check_room_switch(
         return False
 
     user_key = _make_user_key(name)
-    # First: if the action is leave/left, and there's a breakout_leave nearby,
-    # don't treat as room switch. breakout_leave + leave = user left the meeting.
-    # ROOM_SWITCH_ACTIONS_SET includes breakout_leave, but if a breakout_leave
-    # is immediately followed by a main leave, it's a real departure.
+    
+    # breakout_leave + leave = real departure, not room switch
     has_breakout_leave = conn.execute(
-        """SELECT 1 FROM zoom_participants
-            WHERE tenant_id = ?
-              AND meeting_id = ?
-              AND LOWER(REPLACE(name,' ','')) = ?
-              AND action = 'breakout_leave'
-              AND action_time >= ?
-              AND action_time <= ?
-            LIMIT 1""",
+        "SELECT 1 FROM zoom_participants"
+        " WHERE tenant_id = ?"
+        " AND meeting_id = ?"
+        " AND LOWER(REPLACE(name,' ','')) = ?"
+        " AND action = 'breakout_leave'"
+        " AND action_time >= ?"
+        " AND action_time <= ?"
+        " LIMIT 1",
         (tenant_id, meeting_id, user_key, start, end),
     ).fetchone()
     if has_breakout_leave:
         return False
     
+    # breakout_enter + leave = user went into breakout and then left = real leave
+    has_breakout_enter = conn.execute(
+        "SELECT 1 FROM zoom_participants"
+        " WHERE tenant_id = ?"
+        " AND meeting_id = ?"
+        " AND LOWER(REPLACE(name,' ','')) = ?"
+        " AND action = 'breakout_enter'"
+        " AND action_time >= ?"
+        " AND action_time <= ?"
+        " LIMIT 1",
+        (tenant_id, meeting_id, user_key, start, end),
+    ).fetchone()
+    if has_breakout_enter:
+        return False
+    
+    # Only plain enter/leave without breakout context is a room switch
     row = conn.execute(
-        f"""SELECT 1 FROM zoom_participants
-            WHERE tenant_id = ?
-              AND meeting_id = ?
-              AND LOWER(REPLACE(name,' ','')) = ?
-              AND action IN ({"," .join("?" for _ in ROOM_SWITCH_ACTIONS_SET)})
-              AND action_time >= ?
-              AND action_time <= ?
-            LIMIT 1""",
-        (tenant_id, meeting_id, user_key, *list(ROOM_SWITCH_ACTIONS_SET), start, end),
+        "SELECT 1 FROM zoom_participants"
+        " WHERE tenant_id = ?"
+        " AND meeting_id = ?"
+        " AND LOWER(REPLACE(name,' ','')) = ?"
+        " AND action IN ('enter', 'joined')"
+        " AND action_time >= ?"
+        " AND action_time <= ?"
+        " LIMIT 1",
+        (tenant_id, meeting_id, user_key, start, end),
     ).fetchone()
     return row is not None
-
 
 def save_participant_session(
     meeting_id: str,
