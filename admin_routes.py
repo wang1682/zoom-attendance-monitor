@@ -376,6 +376,41 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         session_start_after=_session_start_after,
     ) if current_meeting_id and _session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
 
+    # ── 当前会议上下文 ──
+    meeting_context = {
+        "current_meeting_id": current_meeting_id or "",
+        "session_started_at": _session_start_after or "",
+        "session_duration_seconds": 0,
+        "current_uuid": "",
+    }
+    if _session_start_after:
+        try:
+            from datetime import datetime as _ddt, timezone as _dtz
+            _sdt = _ddt.fromisoformat(str(_session_start_after).replace("Z", "+00:00"))
+            meeting_context["session_duration_seconds"] = int((_ddt.now(_dtz.utc) - _sdt).total_seconds())
+        except:
+            pass
+        # Try to resolve uuid from zoom_events
+        try:
+            import json as _jj
+            for _rr in _get_conn().execute(
+                "SELECT payload FROM zoom_events WHERE tenant_id=? AND event_type='meeting.started' AND payload LIKE ? ORDER BY id DESC LIMIT 10",
+                (tenant_id, f'%{current_meeting_id}%'),
+            ).fetchall():
+                try:
+                    _pp = _jj.loads(_rr[0])
+                    _obj = _pp.get("payload", {}).get("object", {})
+                    _start_raw = _obj.get("start_time", "")
+                    if _start_raw:
+                        _start_dt = _ddt.fromisoformat(str(_start_raw).replace("Z", "+00:00"))
+                        if _start_dt and abs((_sdt - _start_dt).total_seconds()) < 120:
+                            meeting_context["current_uuid"] = _obj.get("uuid", "")
+                            break
+                except:
+                    continue
+        except:
+            pass
+
     
 
     members = summary.get("members", [])
@@ -610,7 +645,8 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          source=source,
                          metrics_online=metrics_online,
                          current_meeting_id=current_meeting_id,
-                         session_start_after=_session_start_after)
+                         session_start_after=_session_start_after,
+                         meeting_context=meeting_context)
 
 
 # ═══════════════════════════════════════════════════════════════
