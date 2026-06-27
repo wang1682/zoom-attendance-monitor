@@ -322,7 +322,7 @@ window.showTimeline = function(btn) {
 
   {# ── 筛选器 ── #}
   <div class="hint" style="color:var(--tm);font-size:12px;margin:0 0 8px 0">
-    注：今日累计、首次进入、最近活动、离开时间均按当前会议统计；切换会议后数据会重新计算。
+    注：当前页面按当前会议实例统计；从会议开始后，成员进入到离开的时间累计，不按自然日或业务日切割。
   </div>
   <div class="toolbar">
     <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
@@ -360,7 +360,7 @@ window.showTimeline = function(btn) {
     <th>状态</th>
     <th>分组</th>
     <th>会话数 / 断线</th>
-    <th>今日累计<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
+    <th>当前会议累计<br><small style="color:var(--tm);font-weight:400">本次会议</small></th>
     <th>首次进入<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>最近活动<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
     <th>离开时间<br><small style="color:var(--tm);font-weight:400">当前会议</small></th>
