@@ -293,13 +293,37 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         try:
             # A. live meeting start_time（Zoom API）
             if live_meetings:
-                for key in ("start_time", "created_time"):
+                for key in ("start_time", "created_time", "meeting_started_at"):
                     val = live_meetings[0].get(key)
                     if val:
                         session_start_after = str(val)
                         break
 
-            # B. sharing_live 当前 active 的最早 start_time
+            # B. 当天该 meeting 最早的 zoom_participants enter/joined/admitted（会议真正开始时间）
+            if not session_start_after:
+                from datetime import timedelta as _td
+                _today_myt = datetime.now(timezone.utc) + _td(hours=8)
+                _today_start_utc = (_today_myt.replace(hour=0, minute=0, second=0, microsecond=0) - _td(hours=8)).isoformat()
+                row = _get_conn().execute(
+                    "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND tenant_id=? AND action IN ('enter','joined','admitted') AND action_time >= ?",
+                    (current_meeting_id, tenant_id, _today_start_utc),
+                ).fetchone()
+                if row and row[0]:
+                    session_start_after = str(row[0])
+
+            # C. 当天该 meeting 最早 participant_sessions join_time
+            if not session_start_after:
+                from datetime import timedelta as _td2
+                _tm2 = datetime.now(timezone.utc) + _td2(hours=8)
+                _ts2_utc = (_tm2.replace(hour=0, minute=0, second=0, microsecond=0) - _td2(hours=8)).isoformat()
+                row = _get_conn().execute(
+                    "SELECT MIN(join_time_utc) FROM participant_sessions WHERE meeting_id=? AND tenant_id=? AND join_time_utc >= ?",
+                    (current_meeting_id, tenant_id, _ts2_utc),
+                ).fetchone()
+                if row and row[0]:
+                    session_start_after = str(row[0])
+
+            # D. sharing_live 当前 active 的最早 start_time（仅当没有 zoom_participants/PS 数据时）
             if not session_start_after:
                 row = _get_conn().execute(
                     "SELECT MIN(start_time) FROM sharing_live WHERE meeting_id=? AND is_active=1 AND tenant_id=? AND start_time IS NOT NULL",
@@ -308,19 +332,10 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                 if row and row[0]:
                     session_start_after = str(row[0])
 
-            # C. participant_sessions 当前 open 的最早 join_time
+            # E. ultima fallback: 最近 7 天最早 enter
             if not session_start_after:
-                row = _get_conn().execute(
-                    "SELECT MIN(join_time_utc) FROM participant_sessions WHERE meeting_id=? AND tenant_id=? AND leave_time_utc IS NULL",
-                    (current_meeting_id, tenant_id),
-                ).fetchone()
-                if row and row[0]:
-                    session_start_after = str(row[0])
-
-            # D. fallback: 最近 7 天最早 enter
-            if not session_start_after:
-                from datetime import timedelta as _td
-                _cutoff = (datetime.now(timezone.utc) - _td(days=7)).isoformat()
+                from datetime import timedelta as _td3
+                _cutoff = (datetime.now(timezone.utc) - _td3(days=7)).isoformat()
                 row = _get_conn().execute(
                     "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
                     (current_meeting_id, tenant_id, _cutoff),
