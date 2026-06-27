@@ -2145,17 +2145,18 @@ def _myt_short(utc_str: str) -> str:
 
 
 
+
 def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, session_start_after: str = None) -> dict:
-    """当前会议实例参会汇总。
+    """今日参会汇总 — 纯 participant_sessions 统计，按会议实例切割。
 
-    按 meeting_id + session_start_after 统计当前会议实例：
-    - session_start_after 是会议开始时间，作为统计窗口起点
-    - end = now_utc（如果没结束）
-    - 所有 session 与此窗口求 overlap
-    - 不按自然日/业务日切割
-    - 不统计 session_start_after 之前的时间
-
-    如果不传 meeting_id，退回到全局统计。
+    规则：
+    1. 只统计 tenant_id + meeting_id + session_start_after 后的 session
+    2. 同人 merge overlap intervals，每人一条
+    3. 每条 session: overlap = [max(join, session_start_after), min(leave or now, now)]
+    4. first_join = 本人实际最早 join（不截断到 session_start_after）
+    5. last_activity = leave_time or now_utc
+    6. last_leave_time = 最后 closed session 的 leave_time（在线 —）
+    7. sharing_live/CMS 只补在线状态，不覆盖 first_join/时长
     """
     from datetime import datetime, timezone, timedelta
     from collections import OrderedDict
@@ -2168,22 +2169,16 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
         if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
         return dt
 
-    # Determine window: [window_start, window_end]
-    window_start = _parse(session_start_after) if session_start_after else None
-    window_end = now_utc
-
-    def _overlap(start_dt, end_dt) -> int:
-        """Overlap between [start_dt, end_dt] and [window_start, window_end]."""
-        if not start_dt or not end_dt: return 0
-        a = start_dt
-        b = end_dt
-        if window_start:
-            a = max(a, window_start)
-        b = min(b, window_end)
+    def _overlap(j, lv, win_start, win_end):
+        """Overlap between [j, lv] and [win_start, win_end]."""
+        if not j or not lv: return 0
+        a = max(j, win_start)
+        b = min(lv, win_end)
         if b <= a: return 0
         return int((b - a).total_seconds())
 
-    def _merge_intervals(intervals):
+    def _merge(intervals):
+        """Merge overlapping intervals, return total overlap with window."""
         if not intervals: return 0, []
         sorted_iv = sorted(intervals, key=lambda x: x[0])
         merged = []
@@ -2195,178 +2190,139 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 merged.append((cur_s, cur_e))
                 cur_s, cur_e = s, e
         merged.append((cur_s, cur_e))
-        # Calculate overlapping duration with window
-        total = sum(_overlap(s, e) for s, e in merged)
+
+        ws = _parse(session_start_after) if session_start_after else None
+        we = now_utc
+        total = 0
+        for s, e in merged:
+            a = s if not ws else max(s, ws)
+            b = e if not we else min(e, we)
+            if b > a:
+                total += int((b - a).total_seconds())
         return total, merged
 
     conn = _get_conn()
-    member_data = OrderedDict()
+    # Raw data: raw_name → dict of intervals + stats
+    raw_data = OrderedDict()
 
     # ── Step 1: participant_sessions ──
     params = [tenant_id]
-    where_parts = ["tenant_id = ?"]
-
+    where = ["tenant_id = ?"]
     if meeting_id:
-        where_parts.append("meeting_id = ?")
+        where.append("meeting_id = ?")
         params.append(meeting_id)
     if session_start_after:
-        where_parts.append("COALESCE(leave_time_utc, join_time_utc) >= ?")
+        where.append("COALESCE(leave_time_utc, join_time_utc) >= ?")
         params.append(session_start_after)
 
     rows = conn.execute(
-        "SELECT user_key, user_name, join_time_utc, leave_time_utc, meeting_id "
-        "FROM participant_sessions WHERE " + " AND ".join(where_parts) + " "
-        "ORDER BY user_key, join_time_utc",
+        "SELECT user_key, user_name, join_time_utc, leave_time_utc FROM participant_sessions WHERE "
+        + " AND ".join(where) + " ORDER BY user_key, join_time_utc",
         params,
     ).fetchall()
 
-    has_open_ps = set()
-
     for r in rows:
-        uk = r["user_key"]
-        if not uk: continue
-
-        dn = resolve_display_name(r["user_name"] or uk)["display_name"]
-        if dn not in member_data:
-            member_data[dn] = {
-                "standard_name": dn,
-                "group_name": get_member_group(dn) or "",
-                "raw_ps_count": 0,
+        uname = r["user_name"] or r["user_key"]
+        if not uname:
+            continue
+        if uname not in raw_data:
+            raw_data[uname] = {
+                "user_name": uname,
                 "intervals": [],
+                "first_join": None,
+                "last_activity": None,
+                "last_leave": None,
                 "has_open": False,
-                "first_join_raw": None,
-                "last_activity_raw": None,
-                "last_leave_raw": None,
+                "session_count": 0,
             }
-        md = member_data[dn]
-        md["raw_ps_count"] += 1
-
+        rd = raw_data[uname]
         j = _parse(r["join_time_utc"])
         lv = _parse(r["leave_time_utc"])
         end = lv if lv else now_utc
-
-        md["intervals"].append((j, end))
-
-        # first_join is clipped to session_start_after (if set)
-        effective_first = j
-        if session_start_after and j and j < _parse(session_start_after):
-            effective_first = _parse(session_start_after)
-        if effective_first and (md["first_join_raw"] is None or effective_first < md["first_join_raw"]):
-            md["first_join_raw"] = effective_first
-        if end and (md["last_activity_raw"] is None or end > md["last_activity_raw"]):
-            md["last_activity_raw"] = end
-        if lv and (md["last_leave_raw"] is None or lv > md["last_leave_raw"]):
-            md["last_leave_raw"] = lv
-
+        rd["intervals"].append((j, end))
+        rd["session_count"] += 1
+        if j and (rd["first_join"] is None or j < rd["first_join"]):
+            rd["first_join"] = j
+        if end and (rd["last_activity"] is None or end > rd["last_activity"]):
+            rd["last_activity"] = end
+        if lv and (rd["last_leave"] is None or lv > rd["last_leave"]):
+            rd["last_leave"] = lv
         if lv is None:
-            md["has_open"] = True
-            has_open_ps.add(dn)
+            rd["has_open"] = True
 
-    # ── Step 2: sharing_live is_active=1 ──
-    sl_params = [tenant_id]
-    sl_where = ["tenant_id = ?", "is_active = 1", "start_time IS NOT NULL"]
-    if meeting_id:
-        sl_where.append("meeting_id = ?")
-        sl_params.append(meeting_id)
+    # ── Step 2: sharing_live is_active=1 — only for online status, no time override ──
+    sharing_online = set()
+    if not meeting_id:
+        sl_rows = conn.execute(
+            "SELECT user_name FROM sharing_live WHERE tenant_id=? AND is_active=1 AND start_time IS NOT NULL",
+            (tenant_id,)
+        ).fetchall()
+        for r in sl_rows:
+            sharing_online.add(r[0].strip().lower().replace(" ", ""))
 
-    for r in conn.execute(
-        "SELECT user_name, start_time, meeting_id FROM sharing_live WHERE " + " AND ".join(sl_where),
-        sl_params,
-    ).fetchall():
-        dn = resolve_display_name(r["user_name"])["display_name"]
-        st = _parse(r["start_time"])
-        if not st: continue
+    # ── Step 3: CMS is_online=1 ──
+    cms_online = set()
+    if not meeting_id:
+        cms_rows = conn.execute(
+            "SELECT display_name FROM current_member_sessions WHERE tenant_id=? AND is_online=1",
+            (tenant_id,)
+        ).fetchall()
+        for r in cms_rows:
+            if r[0]:
+                cms_online.add(r[0].strip().lower().replace(" ", ""))
 
-        if dn not in member_data:
-            member_data[dn] = {
-                "standard_name": dn,
-                "group_name": get_member_group(dn) or "",
-                "raw_ps_count": 0,
-                "intervals": [],
-                "has_open": False,
-                "first_join_raw": None,
-                "last_activity_raw": None,
-                "last_leave_raw": None,
-            }
-        md = member_data[dn]
-        if not md["has_open"]:
-            md["intervals"].append((st, now_utc))
-        md["has_open"] = True
-        if md["first_join_raw"] is None or st < md["first_join_raw"]:
-            md["first_join_raw"] = st
-        md["last_activity_raw"] = now_utc
-        md["last_leave_raw"] = None
-
-    # ── Step 3: CMS online (tertiary fallback) ──
-    for r in conn.execute(
-        "SELECT member_key, display_name, open_session_started_at, first_join_at, "
-        "last_activity_at, join_count, leave_count "
-        "FROM current_member_sessions WHERE tenant_id=? AND is_online=1 "
-        "AND open_session_started_at IS NOT NULL AND open_session_started_at != ''",
-        (tenant_id,),
-    ).fetchall():
-        dn = r["display_name"]
-        if not dn: continue
-        if dn not in member_data:
-            member_data[dn] = {
-                "standard_name": dn,
-                "group_name": get_member_group(dn) or "",
-                "raw_ps_count": 0,
-                "intervals": [],
-                "has_open": False,
-                "first_join_raw": None,
-                "last_activity_raw": None,
-                "last_leave_raw": None,
-            }
-        md = member_data[dn]
-        if not md["has_open"]:
-            cms_start = _parse(r["open_session_started_at"])
-            if cms_start:
-                md["intervals"].append((cms_start, now_utc))
-        md["has_open"] = True
-        if r["first_join_at"]:
-            fj = _parse(r["first_join_at"])
-            if fj and (md["first_join_raw"] is None or fj < md["first_join_raw"]):
-                md["first_join_raw"] = fj
-        md["last_activity_raw"] = now_utc
-        md["last_leave_raw"] = None
-
-    # ── Build output ──
+    # ── Build member output ──
     members_out = []
-    for dn, md in member_data.items():
-        total_sec, merged = _merge_intervals(md["intervals"])
-        online = md["has_open"]
+    for uname, rd in raw_data.items():
+        dn = resolve_display_name(uname)["display_name"]
 
+        # Merge intervals and compute total within window
+        ws = _parse(session_start_after) if session_start_after else None
+        total_sec, merged = _merge(rd["intervals"])
+
+        # Online status
+        online = rd["has_open"]
+        if not online:
+            uname_key = uname.strip().lower().replace(" ", "")
+            if uname_key in sharing_online or uname_key in cms_online:
+                online = True
+
+        # Open session started_at
         osa = None
-        if online:
+        if rd["has_open"]:
             for s, e in reversed(merged):
                 if e >= now_utc - timedelta(hours=2):
                     osa = s
                     break
 
-        m_out = {
+        m = {
             "standard_name": dn,
-            "group_name": md["group_name"],
+            "group_name": get_member_group(dn) or "",
             "status": "online" if online else "offline",
-            "first_join": md["first_join_raw"],
+            "first_join": rd["first_join"],
             "today_total_seconds": total_sec,
             "today_total_duration": _fmt_dur(total_sec),
             "session_count": len(merged),
-            "disconnect_count": max(0, md["raw_ps_count"] - len(merged)),
-            "last_activity": md["last_activity_raw"],
-            "last_leave_time": md["last_leave_raw"],
+            "disconnect_count": max(0, rd["session_count"] - len(merged)),
+            "last_activity": rd["last_activity"],
+            "last_leave_time": rd["last_leave"],
             "open_session_started_at": osa,
             "last_activity_display": "",
             "first_join_display": "",
+            "last_leave_time_display": "",
             "email": "",
         }
-        members_out.append(m_out)
+        members_out.append(m)
 
+    # Sort & format
     members_out.sort(key=lambda m: (0 if m["status"] == "online" else 1, -(m["today_total_seconds"] or 0)))
     for m in members_out:
         m["first_join_display"] = _myt_short(m["first_join"].isoformat()) if m["first_join"] else ""
         m["last_activity_display"] = _myt_short(m["last_activity"].isoformat()) if m["last_activity"] else ""
-        m["last_leave_time_display"] = _myt_short(m["last_leave_time"].isoformat()) if m["last_leave_time"] else ("—" if m["status"] == "online" else "")
+        if m["status"] == "online":
+            m["last_leave_time_display"] = "—"
+        else:
+            m["last_leave_time_display"] = _myt_short(m["last_leave_time"].isoformat()) if m["last_leave_time"] else ""
         if not m["email"]:
             try:
                 row = conn.execute(
