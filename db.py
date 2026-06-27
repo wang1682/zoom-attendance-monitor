@@ -2366,6 +2366,7 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
     for m in members_out:
         m["first_join_display"] = _myt_short(m["first_join"].isoformat()) if m["first_join"] else ""
         m["last_activity_display"] = _myt_short(m["last_activity"].isoformat()) if m["last_activity"] else ""
+        m["last_leave_time_display"] = _myt_short(m["last_leave_time"].isoformat()) if m["last_leave_time"] else ("—" if m["status"] == "online" else "")
         if not m["email"]:
             try:
                 row = conn.execute(
