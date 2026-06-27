@@ -2058,9 +2058,10 @@ def build_app() -> "FastAPI":
 
     @app.get("/api/v3/members")
     async def api_v3_members_alias(request: Request):
-        """别名:/api/v3/members -> 同 /api/v3/member-display(按 tenant 隔离)
-
-        排序:在线优先 → 今日时长高到低 → 最近活跃新到旧
+        """成员列表 — 统一 API，数据来源：get_today_attendance_summary() (Session-based)
+        
+        排序:在线优先 → 今日时长高到低
+        返回字段与 get_today_attendance_summary 一致，不再使用 zoom_participants 旧算法。
         """
         conn = db._get_conn()
         tenant_id = request.app.state.get_effective_tenant_id(request)
@@ -2081,243 +2082,104 @@ def build_app() -> "FastAPI":
                 except:
                     item["aliases"] = []
             items.append(item)
-
-        # 获取今日时长与在线状态
-        from datetime import datetime, timezone, timedelta
-        myt_now = datetime.now(timezone.utc) + timedelta(hours=8)
-        myt_midnight = myt_now.replace(hour=0, minute=0, second=0, microsecond=0)
-        today_start_utc = (myt_midnight - timedelta(hours=8)).isoformat()
-
-        # 在线名单
-        online_names = set()
-        try:
-            from services.zoom import ZoomService
-            zoom = ZoomService()
-            live = await zoom.get_live_meetings(tenant_id)
-            for m in live.get("meetings", []):
-                for p in m.get("participants", []):
-                    online_names.add(p.get("name", ""))
-        except:
-            pass
-
-        data_source = "metrics" if online_names else "webhook"
-        is_realtime = data_source == "metrics"
-        metrics_online = bool(online_names)
-
-        # 获取每个成员今天最早进入时间(first_join)
-        first_join_map = {}
-        try:
-            for r in conn.execute("""
-                SELECT name, MIN(action_time) as first_time
-                FROM zoom_participants
-                WHERE action_time >= ? AND action IN ('enter','joined','breakout_enter') AND tenant_id=?
-                GROUP BY name
-            """, (today_start_utc, tenant_id)).fetchall():
-                first_join_map[r["name"]] = r["first_time"] or ""
-        except:
-            pass
-
-        def ts(v):
-            if not v:
-                return 0
+        
+        # ── 统一来源：get_today_attendance_summary() ──
+        summary = db.get_today_attendance_summary(tenant_id=tenant_id)
+        member_map = {}
+        for m in summary.get("members", []):
+            display = m.get("standard_name", "")
+            for alias in [display, m.get("raw_name", "")] + (m.get("aliases") or []):
+                if alias:
+                    member_map[alias.lower().replace(" ", "")] = m
+        
+        now_utc = datetime.now(timezone.utc)
+        
+        def _myt_short(raw):
+            if not raw:
+                return ""
             try:
-                return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+                d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                d_myt = d + timedelta(hours=8)
+                return d_myt.strftime("%m-%d %H:%M")
             except:
-                return 0
-
-        # 统一今日累计计算(不再依赖 participant_sessions)
-        now_utc_dt = datetime.now(timezone.utc)
-        today_secs = {}
-        last_activity_map = {}
-        today_secs_source = "zoom_participants_stream"
-        try:
-            ENTER_ACTIONS = ("enter", "joined", "breakout_enter")
-            LEAVE_ACTIONS = ("leave", "left", "breakout_leave")
-            events = conn.execute("""
-                SELECT name, action, action_time
-                FROM zoom_participants
-                WHERE action_time >= ?
-                  AND action IN ('enter','leave','joined','left','breakout_enter','breakout_leave')
-                  AND tenant_id=?
-                ORDER BY name, action_time
-            """, (today_start_utc, tenant_id)).fetchall()
-            name_events = {}
-            for e in events:
-                name_events.setdefault(e["name"], []).append((e["action"], e["action_time"]))
-            # last_activity 也一并查出
-            last_activity_map = {}
-            try:
-                for r in conn.execute("""
-                    SELECT name, MAX(action_time) as last_time
-                    FROM zoom_participants
-                    WHERE action_time >= ? AND tenant_id=?
-                    GROUP BY name
-                """, (today_start_utc, tenant_id)).fetchall():
-                    last_activity_map[r["name"]] = r["last_time"] or ""
-            except:
-                pass
-            for nm, evts in name_events.items():
-                total_s = 0
-                enter_time = None
-                for action, at in evts:
-                    if action in ENTER_ACTIONS:
-                        if enter_time is None:
-                            enter_time = at
-                    elif action in LEAVE_ACTIONS and enter_time is not None:
-                        try:
-                            total_s += (datetime.fromisoformat(at) - datetime.fromisoformat(enter_time)).total_seconds()
-                        except:
-                            pass
-                        enter_time = None
-                # 最后一条是 enter(当前在线)，累计到 now
-                if enter_time is not None:
-                    try:
-                        total_s += (now_utc_dt - datetime.fromisoformat(enter_time)).total_seconds()
-                    except:
-                        pass
-                today_secs[nm] = int(total_s)
-        except:
-            pass
-
-        def fmt_seconds(s):
-            s = int(s or 0)
-            h = s // 3600
-            m = (s % 3600) // 60
-            return f"{h}h{m}m" if h else f"{m}m"
-
-        # 最新邮箱映射: 从 zoom_participants.email 取每个名字最近非空邮箱
-        email_map = {}
-        try:
-            for r in conn.execute("""
-                SELECT name, email
-                FROM zoom_participants
-                WHERE tenant_id=? AND email IS NOT NULL AND email!=''
-                ORDER BY action_time DESC
-            """, (tenant_id,)).fetchall():
-                if r["name"] not in email_map:
-                    email_map[r["name"]] = r["email"] or ""
-        except Exception:
-            pass
-
-        # 为每个成员计算排序字段
+                return ""
+        
         for m in items:
-            nm = m["display_name"]
-            aliases_list_email = [m.get("raw_name") or nm, nm] + (m.get("aliases") or [])
-            m["email"] = ""
-            for alias_email in aliases_list_email:
-                if alias_email in email_map:
-                    m["email"] = email_map.get(alias_email, "")
-                    break
-                for k, v in email_map.items():
-                    if k.lower() == str(alias_email).lower():
-                        m["email"] = v
+            nm = m.get("display_name", "")
+            nm_key = nm.lower().replace(" ", "")
+            sm = member_map.get(nm_key)
+            if not sm:
+                # Try aliases
+                for alias in (m.get("aliases") or []) + [m.get("raw_name", "")]:
+                    ak = str(alias).lower().replace(" ", "")
+                    if ak in member_map:
+                        sm = member_map[ak]
                         break
-                if m["email"]:
-                    break
-            m["is_online"] = nm in online_names or any(
-                a in online_names for a in (m.get("aliases") or [])
-            )
-            total_sec = 0
-            latest = ""
-            aliases_list = [m["raw_name"]] + (m.get("aliases") or [])
-            for alias in aliases_list:
-                total_sec += today_secs.get(alias, 0)
-                if not total_sec:
-                    # fallback: case-insensitive match
-                    for k, v in today_secs.items():
-                        if k.lower() == alias.lower():
-                            total_sec += v
-                            break
-                als = last_activity_map.get(alias, "")
-                if not als:
-                    for k, v in last_activity_map.items():
-                        if k.lower() == alias.lower() and v:
-                            als = v
-                            break
-                if als and als > latest:
-                    latest = als
-            # 在线兜底:如果 first_join 早于事件流累计，用 now - first_join
-            fj = ""
-            # 如果今天完全没有这个成员的 event，skip 在线兜底（不把昨天 first_join 拉到今天）
-            has_today_event = any(today_secs.get(alias, 0) > 0 for alias in aliases_list)
-            for alias in aliases_list:
-                afj = first_join_map.get(alias, "")
-                if not afj:
-                    # case-insensitive fallback
-                    for k, v in first_join_map.items():
-                        if k.lower() == alias.lower() and v:
-                            afj = v
-                            break
+            
+            if sm:
+                m["is_online"] = sm.get("status") == "online"
+                m["today_seconds"] = sm.get("today_total_seconds", 0)
+                m["today_total_duration"] = sm.get("today_total_duration", "0m")
+                m["first_join"] = sm.get("first_join", "")
+                m["first_join_display"] = sm.get("first_join_display", "")
+                m["last_activity"] = sm.get("last_activity", "")
+                m["last_activity_display"] = sm.get("last_activity_display", "")
+                m["last_leave_time_display"] = sm.get("last_leave_time_display", "")
+                m["session_count"] = sm.get("session_count", 0)
+                m["disconnect_count"] = sm.get("disconnect_count", 0)
+                m["email"] = sm.get("email", "")
+            else:
+                m["is_online"] = False
+                m["today_seconds"] = 0
+                m["today_total_duration"] = "0m"
+                m["first_join"] = ""
+                m["first_join_display"] = ""
+                m["last_activity"] = ""
+                m["last_activity_display"] = ""
+                m["last_leave_time_display"] = ""
+                m["session_count"] = 0
+                m["disconnect_count"] = 0
+                m["email"] = ""
+                # Fallback: email from member_display
+                if hasattr(m, "get") and m.get("email"):
+                    pass
+                else:
                     try:
-                        cn = conn.execute("SELECT canonical_name FROM member_aliases WHERE alias_name=?", (alias,)).fetchone()
-                        if cn:
-                            search_names = [cn[0]]
-                            search_names += [r[0] for r in conn.execute("SELECT alias_name FROM member_aliases WHERE canonical_name=?", (cn[0],)).fetchall()]
-                            for sn in search_names:
-                                sub_fj = conn.execute("SELECT MIN(action_time) FROM zoom_participants WHERE action_time >= ? AND name=? AND action IN ('enter','joined','breakout_enter') AND tenant_id=?", (today_start_utc, sn, tenant_id)).fetchone()
-                                if sub_fj and sub_fj[0]:
-                                    afj = sub_fj[0]
-                                    break
+                        row = conn.execute(
+                            "SELECT email FROM zoom_participants WHERE name=? AND email IS NOT NULL AND email!='' ORDER BY action_time DESC LIMIT 1",
+                            (nm,),
+                        ).fetchone()
+                        if row:
+                            m["email"] = row[0]
                     except:
                         pass
-                if afj and (not fj or afj < fj):
-                    fj = afj
-            m["first_join"] = fj
-            # 格式化显示字段
-            def _fmt_myt_display(raw):
-                if not raw:
-                    return ""
+                # last_leave: try from zoom_participants as fallback
                 try:
-                    from datetime import timedelta
-                    d = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-                    if d.tzinfo is None:
-                        d = d.replace(tzinfo=timezone.utc)
-                    d_myt = d + timedelta(hours=8)
-                    return d_myt.strftime("%m-%d %H:%M")
-                except:
-                    return ""
-            m["first_join_display"] = _fmt_myt_display(fj)
-            m["last_activity_display"] = _fmt_myt_display(latest)
-            # last_leave_time_display: 从 DB 查最近一条 leave
-            leave_row = conn.execute(
-                "SELECT action_time FROM zoom_participants WHERE tenant_id=? AND action IN ('leave','left','breakout_leave') AND name=? ORDER BY action_time DESC LIMIT 1",
-                (tenant_id, nm),
-            ).fetchone()
-            m["last_leave_time_display"] = _fmt_myt_display(leave_row[0] if leave_row else "")
-            if m.get("is_online") and fj and has_today_event:
-                try:
-                    first_dt = datetime.fromisoformat(str(fj).replace("Z", "+00:00"))
-                    if first_dt.tzinfo is None:
-                        first_dt = first_dt.replace(tzinfo=timezone.utc)
-                    online_sec = int((now_utc_dt - first_dt).total_seconds())
-                    if online_sec > total_sec:
-                        total_sec = online_sec
-                        today_secs_source = "zoom_participants_stream_plus_online_first_join"
+                    lr = conn.execute(
+                        "SELECT action_time FROM zoom_participants WHERE tenant_id=? AND action IN ('leave','left','breakout_leave') AND name=? ORDER BY action_time DESC LIMIT 1",
+                        (tenant_id, nm),
+                    ).fetchone()
+                    if lr:
+                        m["last_leave_time_display"] = _myt_short(lr[0])
                 except:
                     pass
-            m["today_seconds"] = total_sec
-            m["today_total_duration"] = fmt_seconds(total_sec)
-            m["last_activity"] = latest
-            # 保证 last_activity >= first_join
-            if fj and (not latest or fj > latest):
-                m["last_activity"] = fj
-
-        items.sort(key=lambda m: (
-            0 if m.get("is_online") else 1,
-            -m.get("today_seconds", 0),
-            -ts(m.get("last_activity")),
-            m.get("display_name") or "",
+        
+        items.sort(key=lambda x: (
+            0 if x.get("is_online") else 1,
+            -x.get("today_seconds", 0),
+            x.get("display_name", "") or "",
         ))
-
+        
         return {
             "ok": True,
             "items": items,
-            "today_seconds_source": today_secs_source,
-            "data_source": data_source,
-            "is_realtime": is_realtime,
-            "metrics_online": metrics_online,
+            "today_seconds_source": "unified_session",
+            "data_source": "",
+            "is_realtime": False,
+            "metrics_online": False,
         }
-
     @app.post("/api/v3/members")
     async def api_v3_members_add(request: Request):
         """POST /api/v3/members - 创建/更新成员(前端JS调用)"""

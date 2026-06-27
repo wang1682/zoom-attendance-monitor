@@ -226,7 +226,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     """成员中心 — 实时在线 + 今日参会统计。"""
     role = user.get("role", "")
 
-    from db import get_today_attendance_summary, get_today_from_sessions, get_all_groups
+    from db import get_today_attendance_summary, get_all_groups
 
     tenant_id = request.app.state.get_effective_tenant_id(request)
 
@@ -311,33 +311,8 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # 全天统计（不传 meeting_id，保留全量）
     summary = get_today_attendance_summary(tenant_id=tenant_id)
 
-    # DHBW PATCH: overlay session/sharing_live active status into members page
-    try:
-        _session_rows = get_today_from_sessions(tenant_id)
-        _session_idx = {}
-        for _r in _session_rows:
-            _k = ''.join(str(_r.get('user_name') or _r.get('standard_name') or _r.get('display_name') or '').lower().split())
-            if _k:
-                _session_idx[_k] = _r
+    
 
-        for _m in summary.get('members', []):
-            _k = ''.join(str(_m.get('standard_name') or _m.get('display_name') or _m.get('user_name') or '').lower().split())
-            _r = _session_idx.get(_k)
-            if not _r:
-                continue
-
-            _secs = int(_r.get('today_total_seconds') or _r.get('total_seconds') or 0)
-            if _secs > int(_m.get('today_total_seconds') or 0):
-                _m['today_total_seconds'] = _secs
-                _m['today_total_duration'] = _r.get('today_total_duration') or _m.get('today_total_duration')
-
-            if _r.get('status') == 'online' or _r.get('is_online'):
-                _m['status'] = 'online'
-                _m['is_online'] = True
-                _m['open_session_started_at'] = _r.get('open_session_started_at') or _m.get('open_session_started_at')
-    except Exception as _e:
-        import sys
-        sys.stderr.write(f"DHBW session overlay failed: {_e}\n")
     members = summary.get("members", [])
 
     # ── 兜底：webhook 无数据时，用 Metrics 实时参与者填 ──
@@ -423,16 +398,19 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # 注意：不覆盖 first_join / last_activity，它们来自 DB 今日事件
     from datetime import datetime, timezone, timedelta
     MYT = timezone(timedelta(hours=8))
-    def _fmt_myt(utc_str: str) -> str:
-        """Format UTC ISO string to MM-DD HH:mm:ss MYT"""
-        if not utc_str or utc_str == "—":
+    def _fmt_myt(utc_val) -> str:
+        """Format UTC ISO string or datetime to MM-DD HH:mm:ss MYT"""
+        if not utc_val or utc_val == "—":
             return "—"
+        from datetime import datetime as _dt
+        if isinstance(utc_val, _dt):
+            return utc_val.astimezone(MYT).strftime("%m-%d %H:%M:%S")
         try:
-            s = utc_str.replace("Z", "+00:00")
-            dt = datetime.fromisoformat(s)
+            s = str(utc_val).replace("Z", "+00:00")
+            dt = _dt.fromisoformat(s)
             return dt.astimezone(MYT).strftime("%m-%d %H:%M:%S")
         except:
-            return utc_str[:16].replace("T", " ")
+            return str(utc_val)[:16].replace("T", " ")
 
     for m in members:
         sn = m.get("standard_name", "")

@@ -495,39 +495,57 @@ def _myt_short(utc_str: str) -> str:
         return utc_str[:5]
 
 
+
+
 def get_today_attendance_summary(tenant_id: str = None) -> dict:
-    """今日参会汇总 — 每人一行，聚合 Join/Leave 事件
+    """Delegates to db.py's unified session-based implementation."""
+    from db import get_today_attendance_summary as _db_fn
+    return _db_fn(tenant_id=tenant_id)
+ay_end_utc.isoformat()
     
-    用 resolve_display_name 标准化名字，计算累计时长、进出次数、当前状态。
-    不修改数据库，不做 schema 变更。
-    """
-    from datetime import datetime, timezone, timedelta
-    from collections import OrderedDict
-
-    now_utc = datetime.now(timezone.utc)
-    now_myt = now_utc + timedelta(hours=8)
-    today_start_myt = now_myt.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_start_utc = today_start_myt - timedelta(hours=8)
-    today_utc_str = today_start_utc.strftime("%Y-%m-%dT%H:%M:%S")
-
-    if tenant_id:
-        rows = _get_conn().execute(
-            "SELECT * FROM zoom_participants WHERE action_time >= ? AND tenant_id = ? ORDER BY name, action_time",
-            (today_utc_str, tenant_id),
-        ).fetchall()
-    else:
-        rows = _get_conn().execute(
-            "SELECT * FROM zoom_participants WHERE action_time >= ? ORDER BY name, action_time",
-            (today_utc_str,),
-        ).fetchall()
-    raw = [dict(r) for r in rows]
-
-    # ── 按 resolve_display_name 分组 ──
+    def _parse_dt(value):
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    
+    def _overlap_seconds(start_value, end_value) -> int:
+        start_dt = _parse_dt(start_value)
+        end_dt = _parse_dt(end_value)
+        if not start_dt or not end_dt:
+            return 0
+        a = max(start_dt, today_start_utc)
+        b = min(end_dt, today_end_utc)
+        if b <= a:
+            return 0
+        return int((b - a).total_seconds())
+    
+    conn = _get_conn()
     members = OrderedDict()
-    for e in raw:
-        resolved = resolve_display_name(e["name"])
-        display_name = resolved["display_name"]
-
+    
+    # ── Step 1: closed participant_sessions ──
+    session_rows = conn.execute(
+        "SELECT user_key, user_name, join_time_utc, leave_time_utc, duration_seconds "
+        "FROM participant_sessions "
+        "WHERE tenant_id = ? "
+        "AND join_time_utc < ? "
+        "AND COALESCE(leave_time_utc, join_time_utc) >= ? "
+        "AND leave_time_utc IS NOT NULL "
+        "ORDER BY user_key, join_time_utc",
+        (tenant_id, today_end_iso, today_start_iso),
+    ).fetchall()
+    
+    for row in session_rows:
+        user_key = row["user_key"]
+        if not user_key:
+            continue
+        display_name = resolve_display_name(row["user_name"] or user_key)["display_name"]
+        
         if display_name not in members:
             members[display_name] = {
                 "standard_name": display_name,
@@ -536,96 +554,167 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
                 "first_join": None,
                 "today_total_seconds": 0,
                 "today_total_duration": "0m",
-                "join_count": 0,
-                "leave_count": 0,
+                "session_count": 0,
+                "disconnect_count": 0,
                 "last_activity": None,
                 "last_leave_time": None,
-                "last_action": None,
+                "open_session_started_at": None,
+                "last_activity_display": "",
+                "first_join_display": "",
                 "email": "",
-                "raw_events": [],
             }
-
+        
         m = members[display_name]
-        action, at = e["action"], e["action_time"]
-
-        if action in ("enter", "joined"):
-            m["join_count"] += 1
-            if m["first_join"] is None or at < m["first_join"]:
-                m["first_join"] = at
-            m["last_action"] = "enter"
-        elif action in ("leave", "left"):
-            m["leave_count"] += 1
-            m["last_action"] = "leave"
-            m["last_leave_time"] = at
-
-        # ── 更新 email：用今天数据里最新一条（按 action_time） ──
-        m["raw_events"].append({"action": action, "action_time": at, "meeting_id": e["meeting_id"], "email": e.get("email", "")})
-        m["last_activity"] = at
-
-    # ── 计算时长 & 状态 ──
+        overlap = _overlap_seconds(row["join_time_utc"], row["leave_time_utc"])
+        m["today_total_seconds"] += overlap
+        m["session_count"] += 1
+        
+        join_dt = _parse_dt(row["join_time_utc"])
+        leave_dt = _parse_dt(row["leave_time_utc"])
+        
+        if join_dt and (m["first_join"] is None or join_dt < m["first_join"]):
+            m["first_join"] = join_dt
+        if leave_dt and (m["last_activity"] is None or leave_dt > m["last_activity"]):
+            m["last_activity"] = leave_dt
+            m["last_leave_time"] = leave_dt
+    
+    # ── Step 2: current_member_sessions (online) ──
+    cms_rows = conn.execute(
+        "SELECT member_key, display_name, is_online, open_session_started_at, "
+        "first_join_at, last_activity_at, session_count, disconnect_count "
+        "FROM current_member_sessions "
+        "WHERE tenant_id = ? AND is_online = 1 AND open_session_started_at IS NOT NULL "
+        "AND open_session_started_at != ''",
+        (tenant_id,),
+    ).fetchall()
+    
+    for row in cms_rows:
+        user_key = row["member_key"]
+        if not user_key:
+            continue
+        display_name = row["display_name"] or user_key
+        resolved_name = resolve_display_name(display_name)["display_name"]
+        
+        if resolved_name not in members:
+            members[resolved_name] = {
+                "standard_name": resolved_name,
+                "group_name": get_member_group(resolved_name) or "",
+                "status": "online",
+                "first_join": None,
+                "today_total_seconds": 0,
+                "today_total_duration": "0m",
+                "session_count": 0,
+                "disconnect_count": 0,
+                "last_activity": None,
+                "last_leave_time": None,
+                "open_session_started_at": None,
+                "last_activity_display": "",
+                "first_join_display": "",
+                "email": "",
+            }
+        
+        m = members[resolved_name]
+        m["status"] = "online"
+        m["open_session_started_at"] = _parse_dt(row["open_session_started_at"])
+        m["session_count"] += row["session_count"] or 0
+        m["disconnect_count"] += row["disconnect_count"] or 0
+        
+        # Add live duration from current open session
+        live_start = _parse_dt(row["open_session_started_at"])
+        if live_start:
+            a = max(live_start, today_start_utc)
+            b = min(now_utc, today_end_utc)
+            if b > a:
+                m["today_total_seconds"] += int((b - a).total_seconds())
+        
+        # first_join from CMS
+        if row["first_join_at"]:
+            fj = _parse_dt(row["first_join_at"])
+            if fj and (m["first_join"] is None or fj < m["first_join"]):
+                m["first_join"] = fj
+        # last_activity from CMS
+        if row["last_activity_at"]:
+            la = _parse_dt(row["last_activity_at"])
+            if la and (m["last_activity"] is None or la > m["last_activity"]):
+                m["last_activity"] = la
+    
+    # ── Step 3: sharing_live (is_active=1) ──
+    # 补足 sharing_live 当前在线时间（current_member_sessions 可能没包含）
+    active_rows = conn.execute(
+        "SELECT user_name, meeting_id, start_time "
+        "FROM sharing_live "
+        "WHERE tenant_id = ? AND is_active = 1 AND start_time IS NOT NULL",
+        (tenant_id,),
+    ).fetchall()
+    
+    for ar in active_rows:
+        user_name = ar["user_name"] if hasattr(ar, "keys") else ar[0]
+        start_time = ar["start_time"] if hasattr(ar, "keys") else ar[2]
+        
+        display_name = resolve_display_name(user_name)["display_name"]
+        
+        if display_name not in members:
+            members[display_name] = {
+                "standard_name": display_name,
+                "group_name": get_member_group(display_name) or "",
+                "status": "online",
+                "first_join": None,
+                "today_total_seconds": 0,
+                "today_total_duration": "0m",
+                "session_count": 0,
+                "disconnect_count": 0,
+                "last_activity": None,
+                "last_leave_time": None,
+                "open_session_started_at": None,
+                "last_activity_display": "",
+                "first_join_display": "",
+                "email": "",
+            }
+        
+        m = members[display_name]
+        m["status"] = "online"
+        m["open_session_started_at"] = _parse_dt(start_time)
+        
+        st = _parse_dt(start_time)
+        if st:
+            a = max(st, today_start_utc)
+            b = min(now_utc, today_end_utc)
+            if b > a:
+                add_sec = int((b - a).total_seconds())
+                # 累加，不是 max
+                m["today_total_seconds"] = max(m["today_total_seconds"], add_sec)
+        
+        m["last_activity"] = now_utc
+    
+    # ── 最终格式化 ──
     for m in members.values():
-        m["raw_events"].sort(key=lambda x: x["action_time"])
-        deduped = []
-        for ev in m["raw_events"]:
-            if deduped and deduped[-1]["action"] in ("enter", "joined", "leave", "left") \
-               and deduped[-1]["action"] == ev["action"]:
-                continue
-            deduped.append(ev)
-
-        total_seconds = 0
-        i = 0
-        while i < len(deduped):
-            ev = deduped[i]
-            if ev["action"] in ("enter", "joined"):
-                enter_dt = datetime.fromisoformat(ev["action_time"])
-                leave_dt = None
-                for j in range(i + 1, len(deduped)):
-                    if deduped[j]["action"] in ("leave", "left"):
-                        leave_dt = datetime.fromisoformat(deduped[j]["action_time"])
-                        i = j
-                        break
-                end_dt = leave_dt or now_utc
-                dur = (end_dt - enter_dt).total_seconds()
-                if 0 < dur < 86400:
-                    total_seconds += dur
-            i += 1
-
-        m["today_total_seconds"] = int(total_seconds)
-        m["today_total_duration"] = _fmt_dur(int(total_seconds))
-        m["status"] = "online" if m["last_action"] == "enter" else "offline"
-
-        # ── 策略C：从今天 raw_events 取最新一条有 email 的记录 ──
-        for ev in reversed(m["raw_events"]):
-            if ev.get("email"):
-                m["email"] = ev["email"]
-                break
-        # ── 今天没有 email，查全局历史最近 ──
-        if not m["email"]:
-            row = _get_conn().execute(
-                "SELECT email FROM zoom_participants WHERE name = ? AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
-                (m["standard_name"],),
-            ).fetchone()
-            if row:
-                m["email"] = row[0]
-
-    # ── 排序：在线优先 → 时长降序 ──
+        m["today_total_duration"] = _fmt_dur(int(m["today_total_seconds"]))
+        m["first_join_display"] = _myt_short(m["first_join"].isoformat()) if m["first_join"] else ""
+        m["last_activity_display"] = _myt_short(m["last_activity"].isoformat()) if m["last_activity"] else ""
+        
+        # Email: try from participant history
+        if not m.get("email"):
+            try:
+                row = conn.execute(
+                    "SELECT email FROM zoom_participants WHERE name = ? AND email IS NOT NULL AND email != '' ORDER BY action_time DESC LIMIT 1",
+                    (m["standard_name"],),
+                ).fetchone()
+                if row:
+                    m["email"] = row[0]
+            except Exception:
+                pass
+    
+    # ── 排序 ──
     sorted_members = sorted(
         members.values(),
         key=lambda m: (0 if m["status"] == "online" else 1, -(m["today_total_seconds"] or 0)),
     )
-
-    for m in sorted_members:
-        m.pop("last_action", None)
-        for ev in m["raw_events"]:
-            ev["action_time_display"] = _myt_short(ev["action_time"])
-        m["first_join_display"] = _myt_short(m["first_join"])
-        m["last_activity_display"] = _myt_short(m["last_activity"])
-
+    
     total_seconds = sum(m["today_total_seconds"] for m in sorted_members)
     total_members = len(sorted_members)
     online_count = sum(1 for m in sorted_members if m["status"] == "online")
     avg_seconds = total_seconds // total_members if total_members > 0 else 0
-
+    
     return {
         "ok": True,
         "total_members": total_members,
@@ -636,10 +725,6 @@ def get_today_attendance_summary(tenant_id: str = None) -> dict:
         "date": today_start_myt.strftime("%Y-%m-%d"),
         "members": sorted_members,
     }
-
-
-# ── seen_emails ──────────────────────────────────────────────────────────────
-
 def check_new_email(email: str, name: str, now: datetime) -> bool:
     """返回 True 表示新人，False 表示已见过"""
     if not email:
