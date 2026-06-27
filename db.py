@@ -1178,23 +1178,23 @@ def _make_user_key(name: str) -> str:
     return "".join(name.lower().split())
 
 
-ROOM_SWITCH_ACTIONS_SET = frozenset({"enter", "joined", "breakout_enter", "breakout_leave"})
+ROOM_SWITCH_ACTIONS_SET = frozenset({"enter", "joined"})
 SESSION_SKIP_SET = frozenset({"breakout_enter", "breakout_leave", "waiting_room_enter", "admitted", "unknown"})
 
 
 def check_room_switch(
     tenant_id: str, meeting_id: str, name: str, action_time_utc: str, window: int = 5
 ) -> bool:
-    """
-    检查 action_time 前后 window 秒内是否有房间切换事件。
+    """Check if a leave event is actually a room switch (user briefly left and re-entered).
     
-    房间切换 = 用户从主房间短暂离开后迅速回来：
-    - breakout_leave 后紧跟 leave → 这是真正的离开，不是切换
-    - breakout_enter 后紧跟 leave → 这是进入讨论组，不是切换
-    - 只有 enter 后紧跟 leave → 可能是切换（1-2s 重新进入）
+    Room switch detection: if action is leave and there's an enter/joined nearby
+    (within `window` seconds), it's a room switch, not a real departure.
     
-    按 LOWER(REPLACE(name,' ','')) 归一化后匹配，
-    避免 "Winifred" vs "winifred Winifred" 等不同写法导致漏判。
+    breakout_enter/breakout_leave are IGNORED because:
+    - breakout_enter = user went INTO breakout room (not a main-room action)
+    - breakout_leave = user RETURNED from breakout (followed by leave = real departure, not switch)
+    
+    Only plain enter/joined events within the window trigger room-switch detection.
     """
     conn = _get_conn()
     try:
@@ -1206,37 +1206,7 @@ def check_room_switch(
 
     user_key = _make_user_key(name)
     
-    # breakout_leave + leave = real departure, not room switch
-    has_breakout_leave = conn.execute(
-        "SELECT 1 FROM zoom_participants"
-        " WHERE tenant_id = ?"
-        " AND meeting_id = ?"
-        " AND LOWER(REPLACE(name,' ','')) = ?"
-        " AND action = 'breakout_leave'"
-        " AND action_time >= ?"
-        " AND action_time <= ?"
-        " LIMIT 1",
-        (tenant_id, meeting_id, user_key, start, end),
-    ).fetchone()
-    if has_breakout_leave:
-        return False
-    
-    # breakout_enter + leave = user went into breakout and then left = real leave
-    has_breakout_enter = conn.execute(
-        "SELECT 1 FROM zoom_participants"
-        " WHERE tenant_id = ?"
-        " AND meeting_id = ?"
-        " AND LOWER(REPLACE(name,' ','')) = ?"
-        " AND action = 'breakout_enter'"
-        " AND action_time >= ?"
-        " AND action_time <= ?"
-        " LIMIT 1",
-        (tenant_id, meeting_id, user_key, start, end),
-    ).fetchone()
-    if has_breakout_enter:
-        return False
-    
-    # Only plain enter/leave without breakout context is a room switch
+    # Only plain enter/joined (no breakout prefix) indicate room switch
     row = conn.execute(
         "SELECT 1 FROM zoom_participants"
         " WHERE tenant_id = ?"
@@ -1274,14 +1244,34 @@ def save_participant_session(
         return
 
     if action in ("enter", "joined"):
+        # Check if ANY open session exists for this user (same tenant, any meeting)
         existing = conn.execute(
-            """SELECT id FROM participant_sessions
-               WHERE tenant_id = ? AND meeting_id = ? AND user_key = ? AND leave_time_utc IS NULL
-               LIMIT 1""",
-            (tenant_id, meeting_id, user_key),
+            """SELECT id, join_time_utc FROM participant_sessions
+               WHERE tenant_id = ? AND user_key = ? AND leave_time_utc IS NULL
+               ORDER BY join_time_utc DESC LIMIT 1""",
+            (tenant_id, user_key),
         ).fetchone()
         if existing:
-            return
+            # Check if the new enter is close enough to reuse
+            try:
+                existing_dt = datetime.fromisoformat(str(existing["join_time_utc"]).replace("Z", "+00:00"))
+                new_dt = action_time if action_time.tzinfo else action_time.replace(tzinfo=timezone.utc)
+                gap = abs((new_dt - existing_dt).total_seconds())
+            except:
+                gap = 999999
+            
+            if gap < 3600:  # Within 1 hour = same session, reuse
+                return
+            else:
+                # Stale open session - close it before creating new one
+                conn.execute(
+                    """UPDATE participant_sessions
+                       SET leave_time_utc = ?, duration_seconds = ?, updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (action_str, int(gap), existing["id"]),
+                )
+                conn.commit()
+        
         conn.execute(
             """INSERT INTO participant_sessions
                (meeting_id, user_key, user_name, tenant_id, join_time_utc, leave_time_utc, duration_seconds, source, created_at, updated_at)
@@ -1295,11 +1285,14 @@ def save_participant_session(
         if check_room_switch(tenant_id, meeting_id, name, action_str):
             return
 
+        # Close ALL open sessions for this user (same tenant, any meeting)
+        # Pick the one with the closest join_time to this leave
         existing = conn.execute(
             """SELECT id, join_time_utc FROM participant_sessions
                WHERE tenant_id = ? AND user_key = ? AND leave_time_utc IS NULL
-               ORDER BY join_time_utc DESC LIMIT 1""",
-            (tenant_id, user_key),
+               ORDER BY ABS(strftime('%%s', join_time_utc) - strftime('%%s', ?)) ASC
+               LIMIT 1""",
+            (tenant_id, user_key, action_str),
         ).fetchone()
         if not existing:
             return
