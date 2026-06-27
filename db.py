@@ -1199,6 +1199,24 @@ def check_room_switch(
         return False
 
     user_key = _make_user_key(name)
+    # First: if the action is leave/left, and there's a breakout_leave nearby,
+    # don't treat as room switch. breakout_leave + leave = user left the meeting.
+    # ROOM_SWITCH_ACTIONS_SET includes breakout_leave, but if a breakout_leave
+    # is immediately followed by a main leave, it's a real departure.
+    has_breakout_leave = conn.execute(
+        """SELECT 1 FROM zoom_participants
+            WHERE tenant_id = ?
+              AND meeting_id = ?
+              AND LOWER(REPLACE(name,' ','')) = ?
+              AND action = 'breakout_leave'
+              AND action_time >= ?
+              AND action_time <= ?
+            LIMIT 1""",
+        (tenant_id, meeting_id, user_key, start, end),
+    ).fetchone()
+    if has_breakout_leave:
+        return False
+    
     row = conn.execute(
         f"""SELECT 1 FROM zoom_participants
             WHERE tenant_id = ?
@@ -2226,17 +2244,63 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
             if m["last_activity"] is None or leave_dt > m["last_activity"]:
                 m["last_activity"] = leave_dt
         else:
-            # Open session (still ongoing)
-            end_dt = now_utc
-            overlap = _overlap_seconds(join_dt, end_dt)
-            m["today_total_seconds"] += overlap
-            m["session_count"] += 1
-            m["status"] = "online"
-            m["open_session_started_at"] = join_dt
-            m["open_from_ps"] = True
-            m["last_activity"] = now_utc
-            m["last_leave_time"] = None
-            members_with_open_ps.add(display_name)
+            # Open session (still ongoing) — validate it's truly open
+            # Stale detection: check sharing_live active and CMS online
+            has_active_sharing = conn.execute(
+                "SELECT 1 FROM sharing_live WHERE tenant_id=? AND is_active=1 "
+                "AND LOWER(REPLACE(user_name,' ','')) = LOWER(REPLACE(?,' ','')) LIMIT 1",
+                (tenant_id, row["user_name"]),
+            ).fetchone()
+            
+            has_cms_online = conn.execute(
+                "SELECT 1 FROM current_member_sessions WHERE tenant_id=? AND member_key=? "
+                "AND is_online=1 LIMIT 1",
+                (tenant_id, user_key),
+            ).fetchone()
+            
+            if has_active_sharing or has_cms_online:
+                # Backed by sharing_live or CMS — genuinely open
+                end_dt = now_utc
+                overlap = _overlap_seconds(join_dt, end_dt)
+                m["today_total_seconds"] += overlap
+                m["session_count"] += 1
+                m["status"] = "online"
+                m["open_session_started_at"] = join_dt
+                m["open_from_ps"] = True
+                m["last_activity"] = now_utc
+                m["last_leave_time"] = None
+                members_with_open_ps.add(display_name)
+            else:
+                # No backup source — check zoom_participants for a leave after join
+                stale_leave = conn.execute(
+                    "SELECT MIN(action_time) FROM zoom_participants "
+                    "WHERE tenant_id = ? AND meeting_id = ? "
+                    "AND LOWER(REPLACE(name,\' \',\'\')) = LOWER(REPLACE(?,\' \',\'\')) "
+                    "AND action IN ('leave','left') "
+                    "AND action_time > ?",
+                    (tenant_id, row["meeting_id"], row["user_name"], row["join_time_utc"]),
+                ).fetchone()
+                
+                if stale_leave and stale_leave[0]:
+                    stale_end = _parse_dt(stale_leave[0])
+                    end_dt = stale_end or now_utc
+                    overlap = _overlap_seconds(join_dt, end_dt)
+                    m["today_total_seconds"] += overlap
+                    m["session_count"] += 1
+                    m["last_leave_time"] = stale_end
+                    if m["last_activity"] is None or stale_end > m["last_activity"]:
+                        m["last_activity"] = stale_end
+                else:
+                    end_dt = now_utc
+                    overlap = _overlap_seconds(join_dt, end_dt)
+                    m["today_total_seconds"] += overlap
+                    m["session_count"] += 1
+                    m["status"] = "online"
+                    m["open_session_started_at"] = join_dt
+                    m["open_from_ps"] = True
+                    m["last_activity"] = now_utc
+                    m["last_leave_time"] = None
+                    members_with_open_ps.add(display_name)
 
         # first_join: earliest among all sessions
         if join_dt and (m["first_join"] is None or join_dt < m["first_join"]):
