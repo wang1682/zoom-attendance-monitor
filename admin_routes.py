@@ -344,11 +344,37 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     session_start_after = str(row[0])
         except Exception:
             pass
-    # ── 今日参会汇总（纯成员数据，不含班次） ──
-    # 当前会议统计（传 meeting_id + session_start_after 只统计本次 session）
-    summary_current = get_today_attendance_summary(tenant_id=tenant_id, meeting_id=current_meeting_id, session_start_after=session_start_after) if current_meeting_id else None
-    # 全天统计（不传 meeting_id，保留全量）
-    summary = get_today_attendance_summary(tenant_id=tenant_id, meeting_id=current_meeting_id, session_start_after=session_start_after) if current_meeting_id and session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
+    # ── 当前会议统计 ──
+    # 用当前仍然 open 的 participant_sessions 的最早 join_time 作为会议实例开始
+    # 不能按自然日/业务日切割；会议跨天时继续累计
+    summary_current = None
+    _session_start_after = session_start_after
+    if current_meeting_id and not _session_start_after:
+        try:
+            _row = _get_conn().execute(
+                "SELECT MIN(join_time_utc) FROM participant_sessions WHERE meeting_id=? AND tenant_id=? AND leave_time_utc IS NULL",
+                (current_meeting_id, tenant_id),
+            ).fetchone()
+            if _row and _row[0]:
+                _session_start_after = str(_row[0])
+            else:
+                # No open sessions — use today's earliest event
+                from datetime import timedelta as _td4
+                _myt_today = datetime.now(timezone.utc) + _td4(hours=8)
+                _today_start_utc = (_myt_today.replace(hour=0, minute=0, second=0, microsecond=0) - _td4(hours=8)).isoformat()
+                _row = _get_conn().execute(
+                    "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND tenant_id=? AND action IN ('enter','joined','admitted') AND action_time >= ?",
+                    (current_meeting_id, tenant_id, _today_start_utc),
+                ).fetchone()
+                if _row and _row[0]:
+                    _session_start_after = str(_row[0])
+        except Exception:
+            pass
+    summary = get_today_attendance_summary(
+        tenant_id=tenant_id,
+        meeting_id=current_meeting_id,
+        session_start_after=_session_start_after,
+    ) if current_meeting_id and session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
 
     
 
@@ -584,7 +610,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                          source=source,
                          metrics_online=metrics_online,
                          current_meeting_id=current_meeting_id,
-                         session_start_after=session_start_after)
+                         session_start_after=_session_start_after)
 
 
 # ═══════════════════════════════════════════════════════════════
