@@ -360,7 +360,9 @@ window.showTimeline = function(btn) {
     <th>状态</th>
     <th>分组</th>
     <th>会话数 / 断线</th>
-    <th>累计参会时长<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
+    <th>历史累计<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
+    <th>今日累计<br><small style="color:var(--tm);font-weight:400">今日 00:00 至今</small></th>
+    <th>当前连续在线<br><small style="color:var(--tm);font-weight:400">本次连入</small></th>
     <th>首次进入<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
     <th>最近活动<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
     <th>离开时间<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
@@ -411,7 +413,9 @@ window.showTimeline = function(btn) {
       </select>
     </td>
     <td class="td-mono">{{ ses_c }} / {{ dis_c }}</td>
-    <td class="td-mono">{{ dur if dur else '—' }}</td>
+    <td class="td-mono">{{ m.get("history_total_duration", dur) if dur else '—' }}</td>
+    <td class="td-mono">{{ m.get("today_total_duration_today", "0m") }}</td>
+    <td class="td-mono">{{ m.get("current_online_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>

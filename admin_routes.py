@@ -429,6 +429,46 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # Query all meeting_ids merged (PMI instances can differ)
     summary = get_today_attendance_summary(tenant_id=tenant_id)
 
+    # ── 今日累计（MYT 今日 00:00 至今） ──
+    try:
+        from datetime import timedelta as _td6
+        _myt_now6 = datetime.now(timezone.utc) + _td6(hours=8)
+        _today_start6 = (_myt_now6.replace(hour=0, minute=0, second=0, microsecond=0) - _td6(hours=8)).isoformat()
+        _today_summary = get_today_attendance_summary(tenant_id=tenant_id, session_start_after=_today_start6)
+        _today_map = {}
+        for _m in _today_summary.get("members", []):
+            _today_map[_m["standard_name"]] = _m
+    except Exception:
+        _today_map = {}
+
+    # ── 合并今日累计到 members ──
+    for _m in members:
+        _sn = _m.get("standard_name", "")
+        _td = _today_map.get(_sn, {})
+        _m["today_total_duration_today"] = _td.get("today_total_duration", "0m")
+        _m["today_total_seconds_today"] = _td.get("today_total_seconds", 0)
+        # 当前连续在线
+        _osa = _m.get("open_session_started_at")
+        if _osa and _m.get("status") == "online":
+            try:
+                from datetime import datetime as _ddt6, timezone as _dtz6
+                _osa_dt = _ddt6.fromisoformat(str(_osa).replace("Z", "+00:00"))
+                _secs = int((_ddt6.now(_dtz6.utc) - _osa_dt).total_seconds())
+                h, r = divmod(max(0, _secs), 3600)
+                m2, s2 = divmod(r, 60)
+                if h:
+                    _m["current_online_display"] = f"{h}h {m2}m"
+                else:
+                    _m["current_online_display"] = f"{m2}m {s2}s"
+            except:
+                _m["current_online_display"] = "—"
+        else:
+            _m["current_online_display"] = "—"
+
+        # 重命名历史累计字段（保持兼容）
+        _m["history_total_duration"] = _m.get("today_total_duration", "0m")
+        _m["history_total_seconds"] = _m.get("today_total_seconds", 0)
+
     # ── 当前会议上下文 ──
     meeting_context = {
         "current_meeting_id": current_meeting_id or "",
