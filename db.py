@@ -2298,7 +2298,7 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
 
         m = {
             "standard_name": dn,
-            "group_name": get_member_group(dn) or "",
+            "group_name": get_member_group(dn, tenant_id) or "",
             "status": "online" if online else "offline",
             "first_join": rd["first_join"],
             "today_total_seconds": total_sec,
