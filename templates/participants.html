@@ -305,7 +305,7 @@ window.showTimeline = function(btn) {
       overlay.innerHTML =
         '<div class="timeline-card">' +
         '<div class="timeline-head"><h3>📋 ' + window.escHtml(j.display_name || name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div>' +
-        '<div class="timeline-stats"><span>会话: <b>' + (j.session_count || 0) + '</b> 段</span><span>断线: <b>' + (j.disconnect_count || 0) + '</b> 次</span><span>累计: <b>' + window.escHtml(j.total_display || '0m') + '</b></span></div>' +
+        '<div class="timeline-stats"><span>记录段数: <b>' + (j.session_count || 0) + '</b> 段</span><span>离开次数: <b>' + (j.disconnect_count || 0) + '</b> 次</span><span>累计参会时长: <b>' + window.escHtml(j.total_display || '0m') + '</b></span></div>' +
         '<div class="timeline-table-wrap"><table class="timeline-table"><thead><tr><th>#</th><th>进入时间</th><th>离开时间</th><th>时长</th><th>状态</th></tr></thead><tbody>' +
         (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">当前会议无进出记录</td></tr>') +
         '</tbody></table></div></div>';
@@ -322,7 +322,7 @@ window.showTimeline = function(btn) {
 
   {# ── 筛选器 ── #}
   <div class="hint" style="color:var(--tm);font-size:12px;margin:0 0 8px 0">
-    注：当前页面按当前会议实例统计；从会议开始后，成员进入到离开的时间累计，不按自然日或业务日切割。
+    注：累计参会时长：该成员在所有会议中的所有进出记录，按不重叠时段合并后的总时长。
   </div>
   <div class="toolbar">
     <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
@@ -544,13 +544,13 @@ function showTimeline(btn) {
             '<button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button>' +
           '</div>' +
           '<div class="timeline-stats">' +
-            '<span class="timeline-stat">进入: <strong>' + j.join_count + '</strong> 次</span>' +
-            '<span class="timeline-stat">离开: <strong>' + j.leave_count + '</strong> 次</span>' +
-            '<span class="timeline-stat">累计: <strong>' + escHtml(j.total_display) + '</strong></span>' +
+            '<span class="timeline-stat">记录段数: <strong>' + j.join_count + '</strong> 段</span>' +
+            '<span class="timeline-stat">离开次数: <strong>' + j.leave_count + '</strong> 次</span>' +
+            '<span class="timeline-stat">累计参会时长: <strong>' + escHtml(j.total_display) + '</strong></span>' +
           '</div>' +
           '<div class="timeline-table-wrap">' +
             '<table class="timeline-table">' +
-              '<thead><tr><th>#</th><th>进入时间</th><th>离开时间</th><th style="text-align:right">时长</th><th style="text-align:center">状态</th></tr></thead>' +
+              '<thead><tr><th>#</th><th>进入</th><th>离开</th><th style="text-align:right">时长</th><th style="text-align:center">状态</th></tr></thead>' +
               '<tbody>' + segHtml + '</tbody>' +
             '</table>' +
           '</div>' +
