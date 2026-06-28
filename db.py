@@ -500,6 +500,27 @@ def init_db(readonly: bool = False):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_meeting   ON official_attendance_sessions(meeting_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_oas_import    ON official_attendance_sessions(source_file)")
 
+    # official_member_summary
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS official_member_summary ("
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        '  tenant_id TEXT NOT NULL DEFAULT "default",'
+        "  member_name TEXT NOT NULL,"
+        '  attendance_days TEXT DEFAULT "",'
+        '  official_duration TEXT DEFAULT "",'
+        '  daily_average TEXT DEFAULT "",'
+        '  first_attendance TEXT DEFAULT "",'
+        '  last_attendance TEXT DEFAULT "",'
+        '  status TEXT DEFAULT "",'
+        "  sync_date TEXT NOT NULL,"
+        '  raw_json TEXT DEFAULT "",'
+        "  created_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+        "  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,"
+        "  UNIQUE(tenant_id, member_name, sync_date)"
+        ")"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_oms_tenant_sync ON official_member_summary(tenant_id, sync_date)")
+
 
 # ── official_attendance_sessions 导入 & 查询 ──
 # Zoom 官方 Attendance CSV → official_attendance_sessions 表
@@ -5741,6 +5762,26 @@ def get_live_online_standard_names(tenant_id: str) -> set:
 
 
 # ── Stale Session 清理 ────────────────────────────────────────────────────
+
+
+def get_latest_official_summary(tenant_id: str) -> tuple:
+    """get latest synced Zoom official member summary"""
+    conn = _get_conn()
+    sync_dates = conn.execute(
+        "SELECT sync_date FROM official_member_summary WHERE tenant_id=? ORDER BY sync_date DESC LIMIT 1",
+        (tenant_id,)
+    ).fetchone()
+    if not sync_dates:
+        return [], ""
+    sync_date = sync_dates[0]
+    rows = conn.execute(
+        "SELECT member_name, attendance_days, official_duration, daily_average, "
+        "first_attendance, last_attendance, status, sync_date "
+        "FROM official_member_summary WHERE tenant_id=? AND sync_date=? ORDER BY member_name",
+        (tenant_id, sync_date)
+    ).fetchall()
+    return [dict(r) for r in rows], sync_date
+
 
 
 def cleanup_stale_sessions(tenant_id: str | None = None, dry_run: bool = False) -> dict:

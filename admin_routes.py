@@ -771,9 +771,26 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
               "leave=", _m.get("last_leave_time_display"),
               flush=True)
 
+    # official member summary
+    try:
+        _official_list, _official_sync_date = db.get_latest_official_summary(tenant_id)
+        _official_map = {m["member_name"]: m for m in _official_list}
+    except Exception:
+        _official_map = {}
+        _official_sync_date = ""
+    for _m in members:
+        _sn = _m.get("standard_name", "")
+        _off = _official_map.get(_sn, {})
+        _m["official_duration"] = _off.get("official_duration", "")
+        _m["official_attendance_days"] = _off.get("attendance_days", "")
+        _m["official_daily_average"] = _off.get("daily_average", "")
+        _m["official_last_attendance"] = _off.get("last_attendance", "")
+        _m["official_status"] = _off.get("status", "")
+
     return _render_admin(request, "participants", user, "participants.html",
                          title="成员中心",
                          members=members,
+                         official_sync_date=_official_sync_date,
                          online_count=live_online,
                          offline_count=live_offline,
                          groups=all_groups,

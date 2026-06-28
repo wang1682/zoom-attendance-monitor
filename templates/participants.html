@@ -324,6 +324,12 @@ window.showTimeline = function(btn) {
   <div class="hint" style="color:var(--tm);font-size:12px;margin:0 0 8px 0">
     注：累计参会时长：该成员在所有会议中的所有进出记录，按不重叠时段合并后的总时长。
   </div>
+  {% if official_sync_date %}
+  <div style="font-size:11px;color:#64748b;margin-bottom:10px;padding:6px 12px;background:#0f172a;border-radius:6px;border:1px solid #1e293b">
+    <span style="color:#22c55e">&#9679;</span> Zoom 官方数据已同步 &middot; {{ official_sync_date }}
+    <span style="color:#94a3b8;margin-left:10px">出勤天数、官方累计、日均来自 Zoom Report API / CSV</span>
+  </div>
+  {% endif %}
   <div class="toolbar">
     <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
     <select class="toolbar-select" id="groupFilter">
@@ -352,6 +358,10 @@ window.showTimeline = function(btn) {
   {% endif %}
 
   {# ── 表格 ── #}
+  <style>
+  .data-table th{font-size:12px;font-weight:700;color:#e2e8f0;letter-spacing:0.3px}
+  .data-table th small{font-size:10px;font-weight:500;color:#94a3b8}
+  </style>
   <div class="panel" style="padding:0;overflow:visible">
   <table class="data-table">
   <thead>
@@ -366,6 +376,11 @@ window.showTimeline = function(btn) {
     <th>首次进入<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
     <th>最近活动<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
     <th>离开时间<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
+    <th style="width:24px;color:#475569;font-weight:400">│</th>
+    <th>官方累计<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
+    <th>出勤天数<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
+    <th>日均<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
+    <th>最近出勤<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
     <th>邮箱</th>
     <th style="width:60px">操作</th>
   </tr>
@@ -419,6 +434,11 @@ window.showTimeline = function(btn) {
     <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
     <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
+    <td style="width:24px;color:#334155;text-align:center;font-size:11px">│</td>
+    <td class="td-mono">{{ m.get("official_duration", "") or "—" }}</td>
+    <td class="td-mono">{{ m.get("official_attendance_days", "") or "—" }}</td>
+    <td class="td-mono">{{ m.get("official_daily_average", "") or "—" }}</td>
+    <td class="td-mono" style="white-space:nowrap">{{ m.get("official_last_attendance", "") or "—" }}</td>
     <td class="td-mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ m.get("email", "") or "—" }}</td>
     <td><button class="ma-del" onclick="deleteMember(this)" data-name="{{ m.get('standard_name','') }}" style="margin-right:4px">🗑 删除</button><button class="bt bt-s" style="font-size:11px;padding:4px 8px" onclick="showTimeline(this)" data-name="{{ m.get('standard_name','') }}" data-meeting-id="{{ current_meeting_id }}" data-session-start="{{ session_start_after or '' }}" data-tenant="{{ m.get('tenant_id','') }}">📋 详情</button></td>
   </tr>
