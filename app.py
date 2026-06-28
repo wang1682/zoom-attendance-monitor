@@ -1002,12 +1002,9 @@ def build_app() -> "FastAPI":
 
     @app.get("/settings/member-groups", response_class=HTMLResponse)
     async def settings_member_groups_page(request: Request):
-        """成员分组配置页面"""
-        groups = db.get_all_groups()
-        rendered = tmpl.TemplateResponse(request, "settings_member_groups.html", {
-            "brand": BRAND,
-            "groups": groups,
-        })
+        """成员分组配置页面（重定向到 settings/members - 分组管理已合并）"""
+        from starlette.responses import RedirectResponse
+        return RedirectResponse(url="/dashboard/participants")
         rendered.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         return rendered
 
