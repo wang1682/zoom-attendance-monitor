@@ -429,15 +429,51 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # Query all meeting_ids merged (PMI instances can differ)
     summary = get_today_attendance_summary(tenant_id=tenant_id)
 
-    # ── 今日累计（MYT 今日 00:00 至今） ──
+    # ── 今日累计（MYT 今日 00:00 至今 — 手动 overlap 计算） ──
     try:
-        from datetime import timedelta as _td6
-        _myt_now6 = datetime.now(timezone.utc) + _td6(hours=8)
-        _today_start6 = (_myt_now6.replace(hour=0, minute=0, second=0, microsecond=0) - _td6(hours=8)).isoformat()
-        _today_summary = get_today_attendance_summary(tenant_id=tenant_id, session_start_after=_today_start6)
+        from datetime import timedelta as _td6, datetime as _ddt6, timezone as _dtz6
+        _myt_now6 = _ddt6.now(_dtz6.utc) + _td6(hours=8)
+        _today_start6 = (_myt_now6.replace(hour=0, minute=0, second=0, microsecond=0) - _td6(hours=8))
         _today_map = {}
-        for _m in _today_summary.get("members", []):
-            _today_map[_m["standard_name"]] = _m
+        _ps_rows6 = _get_conn().execute(
+            "SELECT ps.user_key, ps.user_name, ps.join_time_utc, ps.leave_time_utc FROM participant_sessions ps WHERE ps.tenant_id=? ORDER BY ps.join_time_utc",
+            (tenant_id,),
+        ).fetchall()
+        # Build user_key -> display_name map
+        _uk_to_dn6 = {}
+        for _r6 in _ps_rows6:
+            _uk6 = _r6["user_key"]
+            _un6 = _r6["user_name"] or _uk6
+            _dn6 = db.resolve_display_name(_un6, tenant_id).get("display_name", _un6)
+            _uk_to_dn6[_uk6] = _dn6
+        # Group by display_name (already merged by user_key in PS)
+        from collections import OrderedDict as _OD6
+        _today_raw6 = _OD6()
+        for _r6 in _ps_rows6:
+            _un6 = _r6["user_name"] or _r6["user_key"]
+            _dn6 = _uk_to_dn6.get(_r6["user_key"], _un6)
+            if _dn6 not in _today_raw6:
+                _today_raw6[_dn6] = []
+            _jt6 = _r6["join_time_utc"]
+            _lt6 = _r6["leave_time_utc"]
+            try:
+                _jd6 = _ddt6.fromisoformat(str(_jt6).replace("Z", "+00:00"))
+                _ld6 = _ddt6.fromisoformat(str(_lt6).replace("Z", "+00:00")) if _lt6 else None
+                _end6 = _ld6 if _ld6 else _ddt6.now(_dtz6.utc)
+                _a6 = max(_jd6, _today_start6)
+                _b6 = min(_end6, _ddt6.now(_dtz6.utc))
+                if _b6 > _a6:
+                    _today_raw6[_dn6].append(int((_b6 - _a6).total_seconds()))
+            except Exception:
+                pass
+        def _fmt_dur6(sec):
+            h, r = divmod(max(0, sec), 3600)
+            m, s = divmod(r, 60)
+            if h: return f"{h}h {m}m"
+            return f"{m}m {s}s"
+        for _dn6, _durs6 in _today_raw6.items():
+            _total6 = sum(_durs6)
+            _today_map[_dn6] = {"today_total_duration": _fmt_dur6(_total6), "today_total_seconds": _total6}
     except Exception:
         _today_map = {}
 
