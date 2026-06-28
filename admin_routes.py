@@ -291,59 +291,87 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
 
     if current_meeting_id:
         try:
-            # A. live meeting start_time（Zoom API）
-            if live_meetings:
+            from datetime import timedelta as _td
+            # 当前会议窗口：最近 27 小时
+            # 不用 MYT 今日 00:00，避免会议跨午夜后把 09:01 真实开始时间切掉
+            _today_start_utc = (datetime.now(timezone.utc) - _td(hours=27)).isoformat()
+
+            # A. 最优先：participant_sessions 中第一段有效会议
+            # 有效会议定义：duration >= 30 分钟，避免提前测试/短暂重连被当成会议开始
+            row = _get_conn().execute(
+                """
+                SELECT join_time_utc
+                FROM participant_sessions
+                WHERE tenant_id=?
+                  AND meeting_id=?
+                  AND join_time_utc >= ?
+                  AND COALESCE(duration_seconds, 0) >= 1800
+                ORDER BY join_time_utc ASC
+                LIMIT 1
+                """,
+                (tenant_id, current_meeting_id, _today_start_utc),
+            ).fetchone()
+            if row and row[0]:
+                session_start_after = str(row[0])
+
+            # A2. 如果没有 30 分钟以上 session，才降级到最早 join
+            if not session_start_after:
+                row = _get_conn().execute(
+                    """
+                    SELECT MIN(join_time_utc)
+                    FROM participant_sessions
+                    WHERE tenant_id=?
+                      AND meeting_id=?
+                      AND join_time_utc >= ?
+                    """,
+                    (tenant_id, current_meeting_id, _today_start_utc),
+                ).fetchone()
+                if row and row[0]:
+                    session_start_after = str(row[0])
+
+            # B. 其次：zoom_participants 当天最早进入类事件
+            if not session_start_after:
+                row = _get_conn().execute(
+                    """
+                    SELECT MIN(action_time)
+                    FROM zoom_participants
+                    WHERE tenant_id=?
+                      AND meeting_id=?
+                      AND action IN ('enter','joined','admitted')
+                      AND action_time >= ?
+                    """,
+                    (tenant_id, current_meeting_id, _today_start_utc),
+                ).fetchone()
+                if row and row[0]:
+                    session_start_after = str(row[0])
+
+            # C. 再其次：sharing_live 当前 active 最早 start_time
+            if not session_start_after:
+                row = _get_conn().execute(
+                    """
+                    SELECT MIN(start_time)
+                    FROM sharing_live
+                    WHERE tenant_id=?
+                      AND meeting_id=?
+                      AND is_active=1
+                      AND start_time IS NOT NULL
+                    """,
+                    (tenant_id, current_meeting_id),
+                ).fetchone()
+                if row and row[0]:
+                    session_start_after = str(row[0])
+
+            # D. 最后兜底：Metrics start_time，不能覆盖 DB 里的更早 session
+            if not session_start_after and live_meetings:
                 for key in ("start_time", "created_time", "meeting_started_at"):
                     val = live_meetings[0].get(key)
                     if val:
                         session_start_after = str(val)
                         break
 
-            # B. 当天该 meeting 最早的 zoom_participants enter/joined/admitted（会议真正开始时间）
-            if not session_start_after:
-                from datetime import timedelta as _td
-                _today_myt = datetime.now(timezone.utc) + _td(hours=8)
-                _today_start_utc = (_today_myt.replace(hour=0, minute=0, second=0, microsecond=0) - _td(hours=8)).isoformat()
-                row = _get_conn().execute(
-                    "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND tenant_id=? AND action IN ('enter','joined','admitted') AND action_time >= ?",
-                    (current_meeting_id, tenant_id, _today_start_utc),
-                ).fetchone()
-                if row and row[0]:
-                    session_start_after = str(row[0])
+        except Exception as e:
+            print("[PARTICIPANTS_SESSION_START_ERROR]", repr(e), flush=True)
 
-            # C. 当天该 meeting 最早 participant_sessions join_time
-            if not session_start_after:
-                from datetime import timedelta as _td2
-                _tm2 = datetime.now(timezone.utc) + _td2(hours=8)
-                _ts2_utc = (_tm2.replace(hour=0, minute=0, second=0, microsecond=0) - _td2(hours=8)).isoformat()
-                row = _get_conn().execute(
-                    "SELECT MIN(join_time_utc) FROM participant_sessions WHERE meeting_id=? AND tenant_id=? AND join_time_utc >= ?",
-                    (current_meeting_id, tenant_id, _ts2_utc),
-                ).fetchone()
-                if row and row[0]:
-                    session_start_after = str(row[0])
-
-            # D. sharing_live 当前 active 的最早 start_time（仅当没有 zoom_participants/PS 数据时）
-            if not session_start_after:
-                row = _get_conn().execute(
-                    "SELECT MIN(start_time) FROM sharing_live WHERE meeting_id=? AND is_active=1 AND tenant_id=? AND start_time IS NOT NULL",
-                    (current_meeting_id, tenant_id),
-                ).fetchone()
-                if row and row[0]:
-                    session_start_after = str(row[0])
-
-            # E. ultima fallback: 最近 7 天最早 enter
-            if not session_start_after:
-                from datetime import timedelta as _td3
-                _cutoff = (datetime.now(timezone.utc) - _td3(days=7)).isoformat()
-                row = _get_conn().execute(
-                    "SELECT MIN(action_time) FROM zoom_participants WHERE meeting_id=? AND action='enter' AND tenant_id=? AND action_time >= ?",
-                    (current_meeting_id, tenant_id, _cutoff),
-                ).fetchone()
-                if row and row[0]:
-                    session_start_after = str(row[0])
-        except Exception:
-            pass
     # ── 当前会议统计 ──
     # 用当前仍然 open 的 participant_sessions 的最早 join_time 作为会议实例开始
     # 不能按自然日/业务日切割；会议跨天时继续累计
@@ -370,11 +398,36 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
                     _session_start_after = str(_row[0])
         except Exception:
             pass
-    summary = get_today_attendance_summary(
-        tenant_id=tenant_id,
-        meeting_id=current_meeting_id,
-        session_start_after=_session_start_after,
-    ) if current_meeting_id and _session_start_after else get_today_attendance_summary(tenant_id=tenant_id)
+    print("[DEBUG_SESSION_START]", {
+        "tenant_id": tenant_id,
+        "current_meeting_id": current_meeting_id,
+        "session_start_after": session_start_after,
+        "_session_start_after": _session_start_after,
+    }, flush=True)
+    print("[DEBUG_SESSION_START]", {
+        "tenant_id": tenant_id,
+        "current_meeting_id": current_meeting_id,
+        "session_start_after": session_start_after,
+        "_session_start_after": _session_start_after,
+    }, flush=True)
+
+    # Detect multiple meeting_ids today (PMI instance switching)
+    try:
+        from datetime import timedelta as _td5
+        _myt_now = datetime.now(timezone.utc) + _td5(hours=8)
+        _today_start_utc2 = (_myt_now.replace(hour=0, minute=0, second=0, microsecond=0) - _td5(hours=8)).isoformat()
+        _all_mids = _get_conn().execute(
+            "SELECT DISTINCT meeting_id FROM participant_sessions WHERE tenant_id=? AND join_time_utc >= ? ORDER BY meeting_id",
+            (tenant_id, _today_start_utc2),
+        ).fetchall()
+        if len(_all_mids) > 1:
+            _mid_list = [r[0] for r in _all_mids]
+            print("[MULTI_MEETING] tenant=%s today=%s meeting_ids=%s" % (tenant_id, _today_start_utc2, _mid_list), flush=True)
+    except Exception:
+        pass
+
+    # Query all meeting_ids merged (PMI instances can differ)
+    summary = get_today_attendance_summary(tenant_id=tenant_id)
 
     # ── 当前会议上下文 ──
     meeting_context = {
@@ -515,7 +568,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     for m in members:
         sn = m.get("standard_name", "")
         lp = live_map.get(sn)
-        if lp:
+        has_osa = bool(m.get("open_session_started_at"))
+
+        # 在线状态 = 有 open session（open_session_started_at 非空）或 Zoom API 实时在线
+        # 不能用 last_leave_time 判断——全部记录口径下所有人都有 last_leave_time
+        if lp or has_osa:
             m["status"] = "online"
         else:
             m["status"] = "offline"
@@ -524,11 +581,11 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     # ── 格式化时间显示（所有成员，不受 summary_current 有无影响） ──
     for m in members:
         m["first_join_display"] = _fmt_myt(m.get("first_join", ""))
-        # 在线成员离开时间显示 —（不管 DB 有没有离开记录）
-        if m.get("status") == "online":
-            m["last_leave_time_display"] = "—"
-        else:
+        # 离开时间只看 last_leave_time，不再根据 status 强行覆盖
+        if m.get("last_leave_time"):
             m["last_leave_time_display"] = _fmt_myt(m.get("last_leave_time", ""))
+        else:
+            m["last_leave_time_display"] = "—"
         m["last_activity_display"] = _fmt_myt(m.get("last_activity", ""))
 
     # ── 排序辅助 ──
@@ -554,9 +611,7 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
     import sys
     _keat = next((m for m in members if m.get("standard_name") == "KEAT" or m.get("display_name") == "KEAT"), None)
     if _keat:
-        sys.stderr.write(f"DASH_DEBUG KEAT dur={_keat.get('today_total_duration','?')} secs={_keat.get('today_total_seconds','?')} first={_keat.get('first_join','?')} last={_keat.get('last_activity','?')}\n")
-    else:
-        sys.stderr.write("DASH_DEBUG KEAT NOT IN MEMBERS\n")
+        print("[DASH_DEBUG]", _keat.get("standard_name", ""), "dur=", _keat.get("today_total_duration", ""))
 
     # ── 搜索 / 筛选 ──
     if search:
@@ -629,6 +684,17 @@ async def dashboard_participants(request: Request, user: dict = Depends(require_
         # 如果 summary 已经填充了 group_id，不覆盖；没有才从 member_displays 取
         if m.get("group_id") is None:
             m["group_id"] = md_entry.get("group_id")
+
+    print("========== MEMBERS BEFORE RENDER ==========", flush=True)
+    for _m in members:
+        print("[MEMBER_RENDER]",
+              repr(_m.get("standard_name")),
+              "status=", _m.get("status"),
+              "duration=", _m.get("today_total_duration"),
+              "first=", _m.get("first_join_display"),
+              "last=", _m.get("last_activity_display"),
+              "leave=", _m.get("last_leave_time_display"),
+              flush=True)
 
     return _render_admin(request, "participants", user, "participants.html",
                          title="成员中心",

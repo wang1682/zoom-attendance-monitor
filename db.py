@@ -2222,12 +2222,13 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
     ).fetchall()
 
     for r in rows:
-        uname = r["user_name"] or r["user_key"]
-        if not uname:
+        uk = r["user_key"]
+        raw_name = r["user_name"] or uk
+        if not uk:
             continue
-        if uname not in raw_data:
-            raw_data[uname] = {
-                "user_name": uname,
+        if uk not in raw_data:
+            raw_data[uk] = {
+                "user_name": raw_name,
                 "intervals": [],
                 "first_join": None,
                 "last_activity": None,
@@ -2235,7 +2236,7 @@ def get_today_attendance_summary(tenant_id: str = None, meeting_id: str = None, 
                 "has_open": False,
                 "session_count": 0,
             }
-        rd = raw_data[uname]
+        rd = raw_data[uk]
         j = _parse(r["join_time_utc"])
         lv = _parse(r["leave_time_utc"])
         end = lv if lv else now_utc
