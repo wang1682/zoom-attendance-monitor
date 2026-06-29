@@ -1,0 +1,170 @@
+{% extends "admin_base.html" %}
+{% block title %}Zoom 健康中心{% endblock %}
+{% block head %}
+<style>
+.hc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; margin-top:20px }
+.hc-card { background:var(--card-bg,#1a2332); border:1px solid var(--border,#2a3a4e); border-radius:12px; padding:18px }
+.hc-card-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px }
+.hc-card-title { font-size:13px; font-weight:600; color:var(--text-muted,#8899aa); text-transform:uppercase; letter-spacing:.05em }
+.hc-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600 }
+.hc-badge.ok { background:rgba(34,197,94,0.15); color:#22c55e }
+.hc-badge.warn { background:rgba(250,204,21,0.15); color:#eab308 }
+.hc-badge.err { background:rgba(239,68,68,0.15); color:#ef4444 }
+.hc-badge.neutral { background:rgba(148,163,184,0.15); color:#94a3b8 }
+.hc-stat { font-size:28px; font-weight:800; color:var(--text,#e2e8f0); letter-spacing:-.02em }
+.hc-stat-label { font-size:12px; color:var(--text-muted,#8899aa); margin-top:2px }
+.hc-score-ring { width:80px; height:80px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:800; margin:0 auto }
+.hc-table { width:100%; border-collapse:collapse; margin-top:8px }
+.hc-table th { text-align:left; font-size:11px; font-weight:600; color:var(--text-muted,#8899aa); padding:6px 8px; border-bottom:1px solid var(--border,#2a3a4e) }
+.hc-table td { font-size:12px; padding:6px 8px; border-bottom:1px solid var(--border,#2a3a4e); color:var(--text,#c8d6e5) }
+.hc-table tr:last-child td { border-bottom:none }
+.hc-event-type { font-family:ui-monospace,monospace; font-size:11px; color:#60a5fa }
+.hc-token-expiring { color:#eab308 }
+.hc-token-ok { color:#22c55e }
+.hc-token-expired { color:#ef4444 }
+.hc-section-title { font-size:15px; font-weight:700; color:var(--text,#e2e8f0); margin:28px 0 4px 0 }
+.hc-section-sub { font-size:12px; color:var(--text-muted,#8899aa); margin-bottom:12px }
+.hc-check-hint { font-size:11px; color:var(--text-muted,#6688aa); margin-top:20px; border-top:1px solid var(--border,#2a3a4e); padding-top:12px }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h2 class="page-title">🩺 Zoom 健康中心</h2>
+  <p class="page-subtitle">系统整体状态 — 集中展示 OAuth、Webhook、Report API、Token</p>
+</div>
+
+<!-- 分数环 -->
+<div style="display:flex;align-items:center;gap:20px;margin-top:16px;margin-bottom:8px">
+  <div>
+    <div class="hc-score-ring" style="border:4px solid {% if status_summary.score >= 80 %}#22c55e{% elif status_summary.score >= 50 %}#eab308{% else %}#ef4444{% endif %};color:{% if status_summary.score >= 80 %}#22c55e{% elif status_summary.score >= 50 %}#eab308{% else %}#ef4444{% endif %}">
+      {{ status_summary.score }}%
+    </div>
+  </div>
+  <div style="flex:1;display:flex;flex-wrap:wrap;gap:6px">
+    {% for name, ok in status_summary.score_items %}
+    <span class="hc-badge {{ 'ok' if ok else 'err' }}">
+      <span>{{ '●' if ok else '○' }}</span>
+      {{ name }}
+    </span>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- 关键指标行 -->
+<div class="hc-grid">
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">Zoom 账号</span>
+      <span class="hc-badge {{ 'ok' if status_summary.accounts_active > 0 else 'err' }}">
+        {{ status_summary.accounts_active }}/{{ status_summary.accounts_total }}
+      </span>
+    </div>
+    <div class="hc-stat">{{ status_summary.accounts_active }}</div>
+    <div class="hc-stat-label">活跃 / 总账号</div>
+  </div>
+
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">OAuth 令牌</span>
+      <span class="hc-badge {{ 'ok' if status_summary.oauth_tokens_count > 0 and status_summary.token_days_left and status_summary.token_days_left > 7 else 'warn' if status_summary.oauth_tokens_count > 0 else 'err' }}">
+        {{ status_summary.oauth_tokens_count }}
+      </span>
+    </div>
+    <div class="hc-stat">{{ status_summary.token_days_left if status_summary.token_days_left is not none else '—' }}</div>
+    <div class="hc-stat-label">最短到期天数</div>
+  </div>
+
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">Webhook</span>
+      <span class="hc-badge {{ 'ok' if status_summary.api_webhook else 'err' }}">{{ '在线' if status_summary.api_webhook else '离线' }}</span>
+    </div>
+    <div class="hc-stat" style="font-size:13px;font-weight:600">{% if status_summary.webhook_last_event != '—' %}{{ status_summary.webhook_last_type }}{% else %}—{% endif %}</div>
+    <div class="hc-stat-label">最近事件：{{ status_summary.webhook_last_event }}</div>
+  </div>
+
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">数据库</span>
+      <span class="hc-badge {{ 'ok' if status_summary.api_db else 'err' }}">{{ '正常' if status_summary.api_db else '异常' }}</span>
+    </div>
+    <div class="hc-stat">{{ status_summary.total_participants_today }}</div>
+    <div class="hc-stat-label">今日 Zoom 参与人数</div>
+  </div>
+
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">官方同步</span>
+      <span class="hc-badge {{ 'ok' if status_summary.last_sync == '有数据' else 'warn' if status_summary.last_sync == '无数据' else 'err' }}">{{ status_summary.last_sync }}</span>
+    </div>
+    <div class="hc-stat" style="font-size:13px;font-weight:600">{{ '💰' if status_summary.last_sync == '有数据' else '⏳' }}</div>
+    <div class="hc-stat-label">与 Zoom 官方同步状态</div>
+  </div>
+
+  <div class="hc-card">
+    <div class="hc-card-header">
+      <span class="hc-card-title">Report 服务</span>
+      <span class="hc-badge {{ 'ok' if status_summary.api_report else 'warn' }}">{{ '可用' if status_summary.api_report else '未启用' }}</span>
+    </div>
+    <div class="hc-stat" style="font-size:13px;font-weight:600">{{ '📊' if status_summary.api_report else '—' }}</div>
+    <div class="hc-stat-label">Report API 报表生成</div>
+  </div>
+</div>
+
+<!-- OAuth Tokens 详情 -->
+<div class="hc-section-title">🔑 OAuth 令牌详情</div>
+<div class="hc-section-sub">Token 到期倒计时、Scope 覆盖范围</div>
+{% if oauth_tokens %}
+<table class="hc-table">
+  <thead><tr><th>账号</th><th>邮箱</th><th>Scope</th><th>到期时间</th><th>状态</th></tr></thead>
+  <tbody>
+  {% for t in oauth_tokens %}
+  <tr>
+    <td style="font-family:ui-monospace,monospace;font-size:11px">{{ t.account_id[:16] }}…</td>
+    <td>{{ t.email }}</td>
+    <td style="font-size:11px;color:var(--text-muted,#8899aa);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.scope }}</td>
+    <td style="font-size:11px">{{ t.expires_at }}</td>
+    <td>
+      {% if t.is_expired %}
+      <span class="hc-badge err">已过期</span>
+      {% elif t.days_left < 7 %}
+      <span class="hc-badge warn">即将到期 {{ t.days_left }}天</span>
+      {% else %}
+      <span class="hc-badge ok">正常 {{ t.days_left }}天</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:var(--text-muted,#8899aa);font-size:13px">暂无 OAuth 令牌记录，请先完成 Zoom 授权。</p>
+{% endif %}
+
+<!-- 最近 Webhook 事件 -->
+<div class="hc-section-title">📡 最近 Webhook 事件</div>
+<div class="hc-section-sub">最新 10 条事件，实时反映 Zoom 活动</div>
+{% if recent_events %}
+<table class="hc-table">
+  <thead><tr><th>时间</th><th>事件类型</th></tr></thead>
+  <tbody>
+  {% for e in recent_events %}
+  <tr>
+    <td style="font-size:11px;color:var(--text-muted,#8899aa)">{{ e.time }}</td>
+    <td><span class="hc-event-type">{{ e.type }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="color:var(--text-muted,#8899aa);font-size:13px">暂无 Webhook 事件记录。</p>
+{% endif %}
+
+<div class="hc-check-hint">
+  ⚡ 本页每打开时从数据库和 Zoom API 实时读取数据，未使用缓存。
+  Token 将在到期前 7 天开始警告。<br>
+  Webhook 事件来自 zoom_events 表，官方同步来自 official_attendance_sessions 表。
+</div>
+
+{% endblock %}

@@ -261,8 +261,12 @@ def build_app() -> "FastAPI":
             "/api/v3/live",
             "/api/v3/telegram-rules/",
             "/api/health-check",
+            "/api/v1/health",
+            "/api/v2/health",
             "/webhook",
             "/dashboard/tenant/webhook/",
+            "/api/v3/dashboard",
+            "/api/v3/dashboard/",
             "/health",
         ]
         if any(path.startswith(pp) for pp in public_paths):
@@ -2723,7 +2727,15 @@ def build_app() -> "FastAPI":
         """共享告警已临时禁用，等待多租户改造完成"""
         return {"ok": False, "message": "sharing alert disabled until tenant-aware implementation"}
     @app.get("/health")
-    async def health():
+    async def health(request: Request):
+        return {
+            "status": "ok",
+            "demo_mode": settings.demo_mode,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.get("/api/v1/health")
+    async def health_v1(request: Request):
         return {
             "status": "ok",
             "demo_mode": settings.demo_mode,
@@ -4059,6 +4071,18 @@ def start_api():
     app = build_app()
     if settings.demo_mode:
         print("[API] DEMO MODE - 无 Zoom/Telegram 凭据要求")
+    import logging
+    # health check 日志过滤器：不记录 /health 和 /api/v1/health 到 access log
+    class HealthFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = getattr(record, "message", "") or ""
+            if "/health" in msg or "/api/v1/health" in msg:
+                return False
+            return True
+    for h in logging.getLogger("uvicorn.access").handlers:
+        h.addFilter(HealthFilter())
+    for h in logging.getLogger("uvicorn.error").handlers:
+        h.addFilter(HealthFilter())
     uvicorn.run(app, host=settings.api_host, port=settings.api_port, log_level="info")
 
 
@@ -4068,10 +4092,20 @@ def start_webhook():
         print("[WEBHOOK] DEMO MODE - Webhook 不处理真实事件，返回 OK")
         settings.validate_required()
         app = build_app()
+        import logging
+        class _HF(logging.Filter):
+            def filter(self, r): return not (getattr(r,"message","") or "").startswith("GET /health")
+        for h in logging.getLogger("uvicorn.access").handlers: h.addFilter(_HF())
+        for h in logging.getLogger("uvicorn.error").handlers: h.addFilter(_HF())
         uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
     else:
         settings.validate_required()
         app = build_app()
+        import logging
+        class _HF(logging.Filter):
+            def filter(self, r): return not (getattr(r,"message","") or "").startswith("GET /health")
+        for h in logging.getLogger("uvicorn.access").handlers: h.addFilter(_HF())
+        for h in logging.getLogger("uvicorn.error").handlers: h.addFilter(_HF())
         uvicorn.run(app, host=settings.webhook_host, port=settings.webhook_port, log_level="info")
 
 

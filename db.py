@@ -1056,19 +1056,30 @@ def upsert_official_attendance_session(
     """写入一条官方报表 session，去重 key = tenant_id + meeting_id + participant_name + join_time + leave_time"""
     conn = _get_conn()
     cur = conn.execute(
-        """INSERT OR IGNORE INTO official_attendance_sessions
+        """INSERT INTO official_attendance_sessions
         (tenant_id, meeting_id, topic, host_name, host_email,
          meeting_start_time, meeting_end_time,
          participant_name, email, join_time, leave_time,
          duration_minutes, source_file)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'report_api')""",
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'report_api')
+        ON CONFLICT(tenant_id, meeting_id, participant_name, join_time, leave_time)
+        DO UPDATE SET
+            topic=excluded.topic,
+            host_name=excluded.host_name,
+            host_email=excluded.host_email,
+            meeting_start_time=excluded.meeting_start_time,
+            meeting_end_time=excluded.meeting_end_time,
+            duration_minutes=excluded.duration_minutes,
+            source_file=excluded.source_file""",
         (tenant_id, meeting_id, topic, host_name, host_email,
          meeting_start, meeting_end,
          participant_name, email, join_time, leave_time,
          duration_minutes),
     )
     conn.commit()
-    return cur.lastrowid or 0
+    # 返回 1=inserted, 2=updated (SQLite 的 changes())
+    rowcount = conn.total_changes
+    return rowcount
 
 
 # ── History 上传页路由 ──

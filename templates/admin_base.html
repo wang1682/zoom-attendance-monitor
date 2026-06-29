@@ -13,6 +13,49 @@
     <link rel="stylesheet" href="/static/css/dashboard-components.css">
     {% block head_extra %}{% endblock %}
     {% block head %}{% endblock %}
+<style>
+#myt-clock {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-width: 120px !important;
+  height: 34px !important;
+  padding: 0 12px !important;
+  border-radius: 10px !important;
+  background: rgba(8, 145, 178, 0.18) !important;
+  border: 1px solid rgba(34, 211, 238, 0.45) !important;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.18) !important;
+}
+#myt-clock .mc-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+#myt-clock .mc-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+  color: #22d3ee !important;
+  letter-spacing: .08em !important;
+  line-height: 1.2 !important;
+}
+#myt-clock .mc-date {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 9px !important;
+  font-weight: 500 !important;
+  color: #5a7a9a !important;
+  letter-spacing: .04em !important;
+  line-height: 1.2 !important;
+}
+#myt-clock::before {
+  content: "LIVE";
+  margin-right: 4px;
+  font-size: 9px;
+  color: #22c55e;
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}</style>
 </head>
 <body style="background:var(--bg);color:var(--text)">
     {% set nav_items = {
@@ -28,6 +71,8 @@
     {% if current_user.role in ('super_admin', 'admin') %}
     {% set _ = nav_items.update({'admin_center': '/dashboard/admin-center'}) %}
     {% set _ = nav_labels.update({'admin_center': '管理中心'}) %}
+    {% set _ = nav_items.update({'health': '/dashboard/health'}) %}
+    {% set _ = nav_labels.update({'health': '健康'}) %}
     {% elif current_user.role in ('tenant_admin',) %}
     {% set _ = nav_items.update({'channels': '/dashboard/tenant/channels'}) %}
     {% set _ = nav_labels.update({'channels': '推送频道'}) %}
@@ -54,10 +99,10 @@
             {% endfor %}
         </div>
         <div class="topbar-right">
-            <span class="text-muted" id="myt-clock" style="font-size:10px;font-family:var(--mono);opacity:0.7">🕒 --:--:--</span>
+            <div id="myt-clock"><span class="mc-time">--:--:--</span><span class="mc-date">----:--:-- --</span></div>
             <span class="text-muted" style="font-size:10px;font-family:var(--mono)">{{ current_user.display_name|default(current_user.username) }}</span>
             {% if current_user.role in ('super_admin', 'admin', 'tenant_admin') %}
-            <span class="tenant-label">当前租户：<span style="color:#ff4d4f;font-size:11px;margin-left:8px">DEBUG-0622-0428</span></span>
+            <!-- tenant label hidden -->
             <div class="tenant-selector">
               <select onchange="switchTenant(this.value)">
                 {% for t in available_tenants %}
@@ -87,12 +132,21 @@
 function updateClock(){
     var now = new Date();
     var t = now.toLocaleTimeString('en-MY',{timeZone:'Asia/Kuala_Lumpur',hour12:false});
+    var d = now.toLocaleDateString('en-CA',{timeZone:'Asia/Kuala_Lumpur'});
     var el = document.getElementById('myt-clock');
-    if (el) el.textContent = '🕒 '+t;
+    if (el) {
+      var timeEl = el.querySelector('.mc-time');
+      var dateEl = el.querySelector('.mc-date');
+      if (timeEl) timeEl.textContent = t;
+      if (dateEl) {
+        var dayNames = ['周日','周一','周二','周三','周四','周五','周六'];
+        var day = dayNames[now.getDay()];
+        dateEl.textContent = d + ' ' + day;
+      }
+    }
 }
 updateClock();
 setInterval(updateClock, 1000);
-
 /* 租户切换 */
 function switchTenant(tenantId) {
     var f = document.createElement('form');
@@ -112,5 +166,6 @@ function switchTenant(tenantId) {
     f.submit();
 }
 </script>
+{% block scripts %}{% endblock %}
 </body>
 </html>

@@ -372,10 +372,21 @@ async def monitor_loop():
                 parts.append(f"新{len(d_strangers)}")
             if d_leaves:
                 parts.append(f"离{len(d_leaves)}")
-            detail = " ".join(parts) if parts else "无新记录"
-            detail += f" {'推送' if push_now else '静默'}"
-            if accounts:
-                detail += f" {len(accounts)+1}账号"
+            # 常规日志：无变化时每小时打一次，有变化每次都打
+            _now_hr = now_utc.hour
+            if not parts:
+                if getattr(_run_official_sync, '_last_noop_hr', -1) != _now_hr:
+                    detail = "无新记录"
+                    _run_official_sync._last_noop_hr = _now_hr
+                else:
+                    detail = None
+            else:
+                detail = " ".join(parts)
+
+            if detail is not None:
+                detail += f" {'推送' if push_now else '静默'}"
+                if accounts:
+                    detail += f" {len(accounts)+1}账号"
 
                         # ── Periodic online report (每 3 小时一次，走 ReportService) ──
             if now_hour not in _report_sent_hours:
@@ -418,8 +429,9 @@ async def monitor_loop():
                     except Exception as _oe:
                         sys.stderr.write(f"[OFFICIAL_SYNC] tenant={_rt}: {_oe}\n")
 
-            sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
-            sys.stdout.flush()
+            if detail:
+                sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
+                sys.stdout.flush()
 
         except Exception as e:
             sys.stdout.write(f"[MONITOR ERROR] {e}\n")

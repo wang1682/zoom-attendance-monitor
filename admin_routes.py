@@ -2016,6 +2016,143 @@ async def dashboard_admin_center(request: Request, user: dict = Depends(require_
     return _render_admin(request, "admin_center", user, "admin_center.html")
 
 
+@router.get("/health", response_class=HTMLResponse)
+async def dashboard_health_center(request: Request, user: dict = Depends(require_user)):
+    """Zoom Health Center — OAuth / Webhook / Token / API 状态集中展示。"""
+    role = user.get("role", "")
+    if role not in ("super_admin", "admin", "tenant_admin"):
+        raise HTTPException(status_code=403, detail="权限不足")
+
+    tenant_id = request.app.state.get_effective_tenant_id(request)
+    now = datetime.now(timezone.utc)
+
+    # ── 1. Zoom Account 基础状态 ──
+    accounts = db.get_zoom_accounts(tenant_id)
+    active_accts = [a for a in accounts if a.get("is_active") and a.get("status") == "active"]
+
+    # ── 2. OAuth Token 状态 ──
+    oauth_tokens = []
+    try:
+        conn = db._get_conn()
+        rows = conn.execute(
+            "SELECT account_id, email, scope, expires_at, created_at FROM zoom_oauth_tokens ORDER BY created_at DESC LIMIT 10"
+        ).fetchall()
+        for row in rows:
+            expires = row[3]
+            is_expired = time.time() > expires if expires else True
+            oauth_tokens.append({
+                "account_id": row[0],
+                "email": row[1],
+                "scope": row[2][:80] if row[2] else "",
+                "expires_at": datetime.fromtimestamp(expires, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if expires else "—",
+                "is_expired": is_expired,
+                "days_left": int((expires - time.time()) / 86400) if expires else 0,
+            })
+    except Exception:
+        oauth_tokens = []
+
+    # ── 3. Webhook 最近事件 ──
+    recent_events = []
+    try:
+        conn = db._get_conn()
+        rows = conn.execute(
+            "SELECT event_type, created_at FROM zoom_events WHERE tenant_id=? ORDER BY id DESC LIMIT 20",
+            (tenant_id,),
+        ).fetchall()
+        recent_events = [{"type": r[0], "time": r[1]} for r in rows]
+    except Exception:
+        pass
+
+    # ── 4. 官方同步状态 ──
+    last_sync = None
+    try:
+        conn = db._get_conn()
+        row = conn.execute(
+            "SELECT tenant_id, meeting_id FROM official_attendance_sessions WHERE tenant_id=? ORDER BY rowid DESC LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        if row:
+            last_sync = "有数据"
+        else:
+            last_sync = "无数据"
+    except Exception:
+        last_sync = "未知"
+
+    # ── 5. Metrics / Report API ──
+    api_checks = {}
+    try:
+        import requests as req
+        # webhook health
+        wh_r = req.get("http://zoom-webhook:9000/health", timeout=5)
+        api_checks["webhook"] = wh_r.status_code == 200
+        # db connectivity
+        conn = db._get_conn()
+        conn.execute("SELECT 1").fetchone()
+        api_checks["database"] = True
+    except Exception:
+        api_checks["webhook"] = False
+        api_checks["database"] = False
+    try:
+        from services.report import ReportService
+        rs = ReportService()
+        api_checks["report_service"] = True
+    except Exception:
+        api_checks["report_service"] = False
+
+    # ── 6. 健康分数 ──
+    score_items = [
+        ("Zoom 账号", len(active_accts) > 0),
+        ("OAuth 令牌", len(oauth_tokens) > 0 and not any(t["is_expired"] for t in oauth_tokens)),
+        ("Webhook 接收", api_checks.get("webhook", False)),
+        ("数据库连接", api_checks.get("database", False)),
+        ("官方同步", last_sync == "有数据"),
+        ("Report 服务", api_checks.get("report_service", False)),
+        ("Zoom 参与人数", False),  # will probe below
+    ]
+
+    # Try probe Zoom API — simple sync check
+    zoom_api_ok = False
+    total_participants_today = "—"
+    try:
+        za = db.get_zoom_account(tenant_id)
+        if za:
+            from zoom_metrics import ZoomMetrics as _ZM
+            zm = _ZM(za)
+            import asyncio
+            meetings = asyncio.run(zm.get_past_meetings(from_days=1, page_size=5))
+            total_participants_today = len(meetings) if meetings else 0
+            zoom_api_ok = True
+    except Exception:
+        pass
+    score_items[6] = ("Zoom API 可达", zoom_api_ok)
+
+    score = sum(1 for _, v in score_items if v)
+    score_pct = int(score / len(score_items) * 100)
+
+    token_days_left = min((t["days_left"] for t in oauth_tokens), default=0) if oauth_tokens else None
+
+    return _render_admin(request, "health", user, "health_center.html",
+        title="Zoom 健康中心",
+        status_summary={
+            "score": score_pct,
+            "score_items": score_items,
+            "accounts_total": len(accounts),
+            "accounts_active": len(active_accts),
+            "oauth_tokens_count": len(oauth_tokens),
+            "token_days_left": token_days_left,
+            "webhook_last_event": recent_events[0]["time"] if recent_events else "—",
+            "webhook_last_type": recent_events[0]["type"] if recent_events else "—",
+            "last_sync": last_sync,
+            "api_webhook": api_checks.get("webhook", False),
+            "api_db": api_checks.get("database", False),
+            "api_report": api_checks.get("report_service", False),
+            "total_participants_today": total_participants_today,
+        },
+        oauth_tokens=oauth_tokens[:5],
+        recent_events=recent_events[:10],
+    )
+
+
 # ── Admin: Tenants ────────────────────────────────────────────────────────────
 
 @router.get("/admin/tenants", response_class=HTMLResponse)
