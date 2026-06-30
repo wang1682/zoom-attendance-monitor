@@ -3752,7 +3752,10 @@ def build_app() -> "FastAPI":
             tenant_id = user_tenants[0]["tenant_id"] if user_tenants else "default"
             bot_cfg = db.get_tenant_bot_config(tenant_id)
             from config import settings as _2fa_settings
-            bot_token = bot_cfg.get("token") or _2fa_settings.telegram_bot_token
+            # 2FA 验证码使用专用 2FA Bot 发送（settings 表 2fa_bot_token）
+            from db import get_setting as _get_2fa_setting
+            _2fa_bot_token = _get_2fa_setting("2fa_bot_token")
+            bot_token = _2fa_bot_token or bot_cfg.get("token") or _2fa_settings.telegram_bot_token
 
             code = telegram_push.send_2fa_code(user["id"], chat_id, bot_token=bot_token)
             if code:
@@ -3769,6 +3772,7 @@ def build_app() -> "FastAPI":
                     "ip": client_ip,
                     "chat_id": (_entry or {}).get("chat_id", ""),
                     "message_id": (_entry or {}).get("message_id"),
+                    "bot_token": bot_token,
                 }
                 return RedirectResponse(url=f"/login/2fa?token={pending_token}", status_code=303)
             else:
@@ -3920,8 +3924,9 @@ def build_app() -> "FastAPI":
             if time.time() - pending["created_at"] > 300:
                 _chat_id = pending.get("chat_id", "")
                 _msg_id = pending.get("message_id")
+                _bot_token = pending.get("bot_token", "")
                 if _chat_id and _msg_id is not None:
-                    telegram_push.delete_message(str(_chat_id), _msg_id)
+                    telegram_push.delete_message(str(_chat_id), _msg_id, _bot_token)
                 app.state._2fa_pending.pop(token, None)
                 return RedirectResponse(url="/login?error=验证码已过期，请重新登录", status_code=303)
 
@@ -3934,8 +3939,9 @@ def build_app() -> "FastAPI":
             # 先删消息(防止 verify_2fa_code pop 后丢失 entry)，再 verify
             _chat_id = pending.get("chat_id", "")
             _msg_id = pending.get("message_id")
+            _bot_token = pending.get("bot_token", "")
             if _chat_id and _msg_id is not None:
-                telegram_push.delete_message(str(_chat_id), _msg_id)
+                telegram_push.delete_message(str(_chat_id), _msg_id, _bot_token)
             app.state._2fa_pending.pop(token, None)
             db.log_security_event("login_success", user_id=pending["user_id"], username=pending["username"],
                                   tenant_id=pending.get("tenant_id", ""), ip=client_ip,

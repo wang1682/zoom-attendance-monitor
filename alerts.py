@@ -18,7 +18,14 @@ class TelegramNotifier:
     """兼容层：内部使用 TelegramService。保持 __init__(token=...) 签名。"""
 
     def __init__(self, token: str = ""):
-        self._tg = TelegramService(token=token or settings.telegram_bot_token)
+        if token:
+            self._tg = TelegramService(token=token)
+        else:
+            # 优先使用 2FA Bot Token（系统提醒统一走 @win6788_bot）
+            import db as _db
+            from config import settings
+            token = _db.get_setting("2fa_bot_token") or settings.telegram_bot_token
+            self._tg = TelegramService(token=token)
 
     def _classify(self, text: str) -> str:
         return self._tg._classify_static(text)

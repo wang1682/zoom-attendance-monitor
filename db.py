@@ -1053,33 +1053,40 @@ def upsert_official_attendance_session(
     leave_time: str,
     duration_minutes: float,
 ) -> int:
-    """写入一条官方报表 session，去重 key = tenant_id + meeting_id + participant_name + join_time + leave_time"""
+    """写入一条官方报表 session，返回 0=已存在(skipped) 1=新插入(inserted) 2=已更新(updated)"""
     conn = _get_conn()
-    cur = conn.execute(
-        """INSERT INTO official_attendance_sessions
-        (tenant_id, meeting_id, topic, host_name, host_email,
-         meeting_start_time, meeting_end_time,
-         participant_name, email, join_time, leave_time,
-         duration_minutes, source_file)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'report_api')
-        ON CONFLICT(tenant_id, meeting_id, participant_name, join_time, leave_time)
-        DO UPDATE SET
-            topic=excluded.topic,
-            host_name=excluded.host_name,
-            host_email=excluded.host_email,
-            meeting_start_time=excluded.meeting_start_time,
-            meeting_end_time=excluded.meeting_end_time,
-            duration_minutes=excluded.duration_minutes,
-            source_file=excluded.source_file""",
-        (tenant_id, meeting_id, topic, host_name, host_email,
-         meeting_start, meeting_end,
-         participant_name, email, join_time, leave_time,
-         duration_minutes),
-    )
-    conn.commit()
-    # 返回 1=inserted, 2=updated (SQLite 的 changes())
-    rowcount = conn.total_changes
-    return rowcount
+    # 先查是否已存在
+    existing = conn.execute(
+        "SELECT 1 FROM official_attendance_sessions "
+        "WHERE tenant_id=? AND meeting_id=? AND participant_name=? AND join_time=? AND leave_time=?",
+        (tenant_id, meeting_id, participant_name, join_time, leave_time)
+    ).fetchone()
+    if existing:
+        conn.execute(
+            "UPDATE official_attendance_sessions SET "
+            "topic=?, host_name=?, host_email=?, meeting_start_time=?, " 
+            "meeting_end_time=?, duration_minutes=?, source_file='report_api' "
+            "WHERE tenant_id=? AND meeting_id=? AND participant_name=? AND join_time=? AND leave_time=?",
+            (topic, host_name, host_email, meeting_start, meeting_end, duration_minutes,
+             tenant_id, meeting_id, participant_name, join_time, leave_time)
+        )
+        conn.commit()
+        return 2  # updated
+    else:
+        conn.execute(
+            "INSERT INTO official_attendance_sessions "
+            "(tenant_id, meeting_id, topic, host_name, host_email, "
+            "meeting_start_time, meeting_end_time, "
+            "participant_name, email, join_time, leave_time, "
+            "duration_minutes, source_file) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'report_api')",
+            (tenant_id, meeting_id, topic, host_name, host_email,
+             meeting_start, meeting_end,
+             participant_name, email, join_time, leave_time,
+             duration_minutes),
+        )
+        conn.commit()
+        return 1  # inserted
 
 
 # ── History 上传页路由 ──
@@ -5750,10 +5757,22 @@ def get_live_online_standard_names(tenant_id: str) -> set:
         return set()
 
     import asyncio
+    import concurrent.futures
 
     zm = ZoomMetrics(active)
     try:
-        live_data = asyncio.run(zm.get_live())
+        # 已有 event loop → 在新线程中创建新 loop 跑协程
+        _loop = asyncio.new_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+            _future = _pool.submit(_loop.run_until_complete, zm.get_live())
+            live_data = _future.result(timeout=30)
+        _loop.close()
+    except RuntimeError:
+        # 没有运行中的 loop
+        try:
+            live_data = asyncio.run(zm.get_live())
+        except Exception:
+            return set()
     except Exception:
         return set()
 
@@ -5769,6 +5788,20 @@ def get_live_online_standard_names(tenant_id: str) -> set:
             resolved = resolve_display_name(name, tenant_id=tenant_id)
             sn = resolved.get("display_name", name)
             online.add(sn)
+
+    # ── 兜底：如果 Metrics API 说没人，查 DB 里是否有未结束的 session ──
+    if not online:
+        conn = _get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT user_name FROM participant_sessions "
+            "WHERE tenant_id=? AND leave_time_utc IS NULL AND join_time_utc >= ?",
+            (tenant_id, (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat()),
+        ).fetchall()
+        for r in rows:
+            nm = (r[0] or "").strip()
+            if nm:
+                online.add(nm)
+
     return online
 
 

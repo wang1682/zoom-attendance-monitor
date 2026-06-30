@@ -20,6 +20,8 @@ import templates as tmpl
 MYT = timezone(timedelta(hours=8))
 _known: set = set()
 _report_sent_hours: set = set()  # 已推送过在线报告的 MYT 小时
+# ── 系统状态提醒去重 ──
+_system_alert_sent: dict[str, str] = {}  # key -> date_str, 避免每天重复推送
 
 
 def in_push_slot(hour: int) -> bool:
@@ -273,7 +275,7 @@ async def _run_official_sync(tenant_id: str, zoom_acct: dict | None = None) -> d
                     leave_time=p.get("leave_time", ""),
                     duration_minutes=float(dur_min),
                 )
-                if rid:
+                if rid == 1:
                     total_i += 1
                 else:
                     total_s += 1
@@ -288,6 +290,131 @@ async def _run_official_sync(tenant_id: str, zoom_acct: dict | None = None) -> d
         "date_str": today_start.strftime("%Y-%m-%d"),
         "meetings": meeting_count,
     }
+
+
+# ═══════════════════════════════════════════════
+# 系统状态提醒（Token 到期 / Official Sync 失败 / Webhook 超时）
+# ═══════════════════════════════════════════════
+
+async def _check_token_expiry(tg: TelegramNotifier):
+    """检查 zoom_oauth_tokens 到期天数，<=7 天时推送提醒（每天一次）"""
+    today = datetime.now(MYT).strftime("%Y-%m-%d")
+    dedup_key = "token_expiry"
+
+    import db as _db
+    conn = _db._get_conn()
+    rows = conn.execute(
+        "SELECT account_id, email, scope, expires_at FROM zoom_oauth_tokens ORDER BY id DESC"
+    ).fetchall()
+    if not rows:
+        if _system_alert_sent.get(dedup_key) != today:
+            await tg.send("🔑 **Token 提醒**\n\n未检测到 OAuth 令牌，请确认 Zoom 授权已完成。")
+            _system_alert_sent[dedup_key] = today
+        return
+
+    min_days = None
+    expiring = []
+    expired = []
+    for r in rows:
+        ea = r["expires_at"]
+        if ea is None:
+            continue
+        try:
+            expires_dt = datetime.fromtimestamp(float(ea))
+            days = (expires_dt - datetime.now()).days
+        except (ValueError, TypeError):
+            continue
+        if min_days is None or days < min_days:
+            min_days = days
+        if 0 <= days <= 7:
+            expiring.append((r.get("email", ""), days))
+        elif days < 0:
+            expired.append((r.get("email", ""), -days))
+
+    if _system_alert_sent.get(dedup_key) == today:
+        return  # 今天已推送过
+
+    if expiring:
+        lines = [f"⚠️ **Token 即将到期** ({len(expiring)} 个)"]
+        for email, days in sorted(expiring, key=lambda x: x[1]):
+            d = f"{days} 天" if days > 0 else "今天到期"
+            lines.append(f"  • {email}: {d}")
+        await tg.send("\n".join(lines))
+        _system_alert_sent[dedup_key] = today
+    elif expired:
+        lines = [f"⚠️ **Token 已过期** ({len(expired)} 个)"]
+        for email, days_since in sorted(expired, key=lambda x: x[1]):
+            lines.append(f"  • {email}: 已过期 {days_since} 天")
+        await tg.send("\n".join(lines))
+        _system_alert_sent[dedup_key] = today
+    elif min_days is not None and 0 <= min_days <= 7:
+        await tg.send(f"🔑 **Token 到期提醒**\n\n所有令牌最短 {min_days} 天后到期。")
+        _system_alert_sent[dedup_key] = today
+
+
+async def _check_webhook_stale(tg: TelegramNotifier):
+    """检查 webhook 最近事件是否超过 10 分钟无更新"""
+    dedup_key = "webhook_stale"
+
+    import db as _db
+    conn = _db._get_conn()
+    row = conn.execute(
+        "SELECT created_at, event_type FROM zoom_events ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return  # 尚无事件，不推送
+
+    created = row["created_at"]
+    try:
+        if isinstance(created, str):
+            event_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        else:
+            event_dt = datetime.fromtimestamp(created, tz=timezone.utc)
+    except Exception:
+        return
+
+    now = datetime.now(timezone.utc)
+    diff_seconds = (now - event_dt).total_seconds()
+    if diff_seconds < 600:
+        # 10 分钟内，清除之前的状态
+        _system_alert_sent.pop(dedup_key, None)
+        return
+
+    # 超过 10 分钟无事件
+    dedup_val = _system_alert_sent.get(dedup_key)
+    if dedup_val is None:
+        # 首次触发，记录当前时间，不推送
+        _system_alert_sent[dedup_key] = now.strftime("%H:%M")
+        return
+
+    # 距首次触发至少又过了 10 分钟才再次推送（避免刷屏）
+    try:
+        last_push = datetime.strptime(dedup_val, "%H:%M").replace(
+            year=now.year, month=now.month, day=now.day, tzinfo=timezone.utc
+        )
+        if (now - last_push).total_seconds() < 600:
+            return
+    except Exception:
+        pass
+
+    minutes = int(diff_seconds // 60)
+    event_type = row["event_type"] or "未知"
+    await tg.send(
+        f"📡 **Webhook 无事件提醒**\n\n"
+        f"距今 {minutes} 分钟无新事件。\n"
+        f"最近事件: {event_type}\n"
+        f"最近时间: {created}"
+    )
+    _system_alert_sent[dedup_key] = now.strftime("%H:%M")
+
+
+async def _alert_sync_failure(tenant: str, error: str, tg: TelegramNotifier):
+    """推送官方同步失败提醒（每次失败都推送，但同一 error 去重）"""
+    dedup_key = f"sync_fail_{tenant}"
+    if _system_alert_sent.get(dedup_key) == error:
+        return  # 同样的错误不重复推
+    await tg.send(f"🔄 **官方同步失败**\n\n租户: `{tenant}`\n错误: {error}")
+    _system_alert_sent[dedup_key] = error
 
 
 async def monitor_loop():
@@ -419,6 +546,7 @@ async def monitor_loop():
                         _result = await _run_official_sync(_rt, _za)
                         if _result.get("error"):
                             sys.stderr.write(f"[OFFICIAL_SYNC] tenant={_rt} error={_result['error']}\n")
+                            await _alert_sync_failure(_rt, _result["error"], tg)
                         else:
                             sys.stdout.write(
                                 f"[OFFICIAL_SYNC] tenant={_rt} date={_result['date_str']} "
@@ -432,6 +560,17 @@ async def monitor_loop():
             if detail:
                 sys.stdout.write(f"[{now_utc.strftime('%H:%M')}] {detail}\n")
                 sys.stdout.flush()
+
+            # ── 系统状态提醒（每 5 个 tick 检查一次 Token 到期 + Webhook 超时）──
+            if cycle_count % 5 == 0:
+                try:
+                    await _check_token_expiry(tg)
+                except Exception as _te:
+                    sys.stderr.write(f"[SYSTEM_ALERT] token check error: {_te}\n")
+                try:
+                    await _check_webhook_stale(tg)
+                except Exception as _we:
+                    sys.stderr.write(f"[SYSTEM_ALERT] webhook check error: {_we}\n")
 
         except Exception as e:
             sys.stdout.write(f"[MONITOR ERROR] {e}\n")

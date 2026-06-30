@@ -71,8 +71,6 @@
     {% if current_user.role in ('super_admin', 'admin') %}
     {% set _ = nav_items.update({'admin_center': '/dashboard/admin-center'}) %}
     {% set _ = nav_labels.update({'admin_center': '管理中心'}) %}
-    {% set _ = nav_items.update({'health': '/dashboard/health'}) %}
-    {% set _ = nav_labels.update({'health': '健康'}) %}
     {% elif current_user.role in ('tenant_admin',) %}
     {% set _ = nav_items.update({'channels': '/dashboard/tenant/channels'}) %}
     {% set _ = nav_labels.update({'channels': '推送频道'}) %}

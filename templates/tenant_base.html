@@ -28,10 +28,10 @@
     {% endfor %}
   </nav>
   <div class="topbar-right">
-    <span class="text-muted" id="myt-clock" style="font-size:10px;font-family:var(--mono);opacity:0.7">🕒 --:--:--</span>
+    <span id="myt-clock"><span class="mc-time">--:--:--</span><span class="mc-date">----:--:-- --</span></span>
     <span class="text-muted" style="font-size:10px;font-family:var(--mono)">{{ current_user.display_name|default(current_user.username) }}</span>
     {% if is_accounts_admin %}
-    <span class="tenant-label">当前租户：</span>
+    <!-- tenant label hidden -->
     <div class="tenant-selector">
       <select onchange="switchTenant(this.value)">
         {% for t in available_tenants %}
@@ -70,7 +70,18 @@ window.fmt_myt = fmtMYT;
 function updateClock(){
     var now = new Date();
     var t = now.toLocaleTimeString('en-MY',{timeZone:'Asia/Kuala_Lumpur',hour12:false});
-    document.getElementById('myt-clock').textContent = '🕒 '+t;
+    var d = now.toLocaleDateString('en-CA',{timeZone:'Asia/Kuala_Lumpur'});
+    var el = document.getElementById('myt-clock');
+    if (el) {
+      var timeEl = el.querySelector('.mc-time');
+      var dateEl = el.querySelector('.mc-date');
+      if (timeEl) timeEl.textContent = t;
+      if (dateEl) {
+        var dayNames = ['周日','周一','周二','周三','周四','周五','周六'];
+        var day = dayNames[now.getDay()];
+        dateEl.textContent = d + ' ' + day;
+      }
+    }
 }
 updateClock();
 setInterval(updateClock, 1000);

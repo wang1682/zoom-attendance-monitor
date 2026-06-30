@@ -213,8 +213,10 @@ async def tenant_setup_redirect():
 @router.get("/security", response_class=HTMLResponse)
 async def tenant_security(request: Request, user: dict = Depends(require_user)):
     """Security center page — Telegram 2FA, backup codes."""
+    bot_username = db.get_setting("2fa_bot_username", "win6788_bot")  # 从系统配置读取验证 Bot，不存在则回退硬编码值
     return _render_tenant(
         request, "security", user, "tenant_security.html",
+        bot_username=bot_username,
     )
 
 
@@ -915,6 +917,9 @@ async def bind_telegram_2fa(request: Request,
     chat_id = chat_id.strip()
     if not chat_id:
         return {"success": False, "error": "Chat ID 不能为空"}
+    # 兼容：用户误填了 Bot Token（格式 digits:xxx），自动截取数字部分
+    if ":" in chat_id:
+        chat_id = chat_id.split(":")[0]
     if not chat_id.lstrip("-").isdigit():
         return {"success": False, "error": "Chat ID 格式错误，请输入纯数字"}
     from config import settings

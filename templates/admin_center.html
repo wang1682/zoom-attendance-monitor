@@ -14,7 +14,18 @@
 <!-- 功能入口卡片 -->
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:20px">
 
-  <!-- ① 用户管理 — super_admin / admin -->
+  <!-- ── ① Zoom 健康中心（置顶）── super_admin / admin / tenant_admin -->
+  {% if is_admin or is_tenant_admin %}
+  <a href="/dashboard/health" class="admin-card" style="border-color:var(--accent);background:linear-gradient(135deg,var(--panel) 0%,rgba(59,130,246,0.04) 100%)">
+    <div class="admin-card-icon">🩺</div>
+    <div class="admin-card-body">
+      <div class="admin-card-title" style="color:var(--accent)">Zoom 健康中心</div>
+      <div class="admin-card-desc">OAuth · Webhook · Token · 官方同步 · 数据库 — 集中状态监控</div>
+    </div>
+  </a>
+  {% endif %}
+
+  <!-- ② 用户管理 — super_admin / admin -->
   {% if is_admin %}
   <a href="/dashboard/users" class="admin-card">
     <div class="admin-card-icon">👥</div>
@@ -98,17 +109,6 @@
     <div class="admin-card-body">
       <div class="admin-card-title">账号管理</div>
       <div class="admin-card-desc">Zoom 账号配置和管理</div>
-    </div>
-  </a>
-  {% endif %}
-
-  <!-- ⑨ Zoom 健康中心 — super_admin / admin / tenant_admin -->
-  {% if is_admin or is_tenant_admin %}
-  <a href="/dashboard/health" class="admin-card">
-    <div class="admin-card-icon">🩺</div>
-    <div class="admin-card-body">
-      <div class="admin-card-title">Zoom 健康中心</div>
-      <div class="admin-card-desc">OAuth、Webhook、Token、API 集中状态监控</div>
     </div>
   </a>
   {% endif %}

@@ -845,3 +845,41 @@ select option { background: var(--bg3); color: var(--text); }
 .detail-row:last-child { border-bottom: none; }
 .detail-label { color: var(--text-muted); }
 .detail-value { color: var(--text); font-family: var(--mono); }
+
+/* ═══ 顶部时钟 MyT Clock ═══ */
+#myt-clock {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-width: 120px !important;
+  height: 38px !important;
+  padding: 0 12px !important;
+  border-radius: 10px !important;
+  background: rgba(8, 145, 178, 0.18) !important;
+  border: 1px solid rgba(34, 211, 238, 0.45) !important;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.18) !important;
+}
+#myt-clock .mc-time {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 15px !important;
+  font-weight: 800 !important;
+  color: #22d3ee !important;
+  letter-spacing: .08em !important;
+  line-height: 1.2 !important;
+}
+#myt-clock .mc-date {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #94a3b8 !important;
+  letter-spacing: .04em !important;
+  line-height: 1.3 !important;
+}
+#myt-clock::before {
+  content: "LIVE";
+  margin-right: 4px;
+  font-size: 9px;
+  color: #22c55e;
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}

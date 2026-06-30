@@ -1,72 +1,457 @@
 {% extends "admin_base.html" %}
 {% block title %}{{ title }}{% endblock %}
-{% block content %}
-
-{# ── 成员中心 纯成员列表 ── #}
-
-<div class="main-container" style="max-width:1400px;margin:0 auto">
-
+{% block head_extra %}
 <style>
-.group-select{font-size:12px;padding:3px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);cursor:pointer;max-width:140px}
-.group-select:focus{outline:none;border-color:var(--pr)}
-/* 删除按钮 — 常驻显示，不需要 hover */
-.ma-del{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:4px 10px;border-radius:6px;cursor:pointer;border:1px solid rgba(239,68,68,.2);background:rgba(239,68,68,.06);color:#f87171;white-space:nowrap;transition:all .15s ease;font-weight:500}
-.ma-del:hover{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.35);color:#ef4444;box-shadow:0 1px 4px rgba(239,68,68,.1)}
-/* Timeline 弹窗 */
-.timeline-overlay{
-  position:fixed;inset:0;z-index:9999;
-  background:rgba(0,0,0,.62);
-  display:flex;align-items:center;justify-content:center;
-  padding:24px;
+/*
+ * 成员中心 v3 — Linear / Vercel / Cloudflare 风格
+ * 高信息密度，低视觉噪音
+ */
+:root {
+  --table-hover: rgba(0, 217, 255, 0.04);
+  --row-alt: rgba(0, 183, 255, 0.02);
+  --sep-line: rgba(0, 183, 255, 0.08);
 }
-.timeline-card{
-  width:min(980px,92vw);
-  max-height:82vh;
-  overflow-y:auto;
-  background:#0f172a;
-  border:1px solid #1e3a5f;
-  border-radius:16px;
-  box-shadow:0 24px 80px rgba(0,0,0,.55);
-  padding:22px;
-  animation:tl-fadein .18s ease;
-}
-@keyframes tl-fadein{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
-.timeline-head{
-  display:flex;justify-content:space-between;align-items:center;
-  margin-bottom:16px;padding-bottom:14px;
-  border-bottom:1px solid #1e293b;
-}
-.timeline-head h3{margin:0;font-size:17px;color:#e2e8f0}
-.timeline-close-btn{
-  background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:8px;
-  width:34px;height:34px;display:flex;align-items:center;justify-content:center;
-  cursor:pointer;font-size:18px;line-height:1;transition:all .12s;
-}
-.timeline-close-btn:hover{background:#334155;color:#f1f5f9}
-.timeline-stats{
-  display:flex;gap:14px;margin-bottom:18px;flex-wrap:wrap;
-}
-.timeline-stat{
-  background:#1e293b;padding:6px 14px;border-radius:8px;font-size:13px;color:#cbd5e1;
-}
-.timeline-stat strong{color:#e2e8f0}
-.timeline-table-wrap{overflow-x:auto;border-radius:8px;border:1px solid #1e293b}
-.timeline-table{
-  width:100%;min-width:760px;border-collapse:collapse;font-size:12px;
-}
-.timeline-table th{
-  padding:10px 12px;text-align:left;font-weight:600;
-  background:#0c1427;color:#93c5fd;border-bottom:1px solid #1e293b;
-  white-space:nowrap;
-}
-.timeline-table td{
-  padding:9px 12px;border-bottom:1px solid #1e293b;
-  white-space:nowrap;
-}
-.timeline-table tr:last-child td{border-bottom:none}
-.timeline-table tr:hover td{background:rgba(30,58,95,.18)}
 
-/* ── Group Manage Modal ── */
+/* ═══ 顶部导航条 ═══ */
+.member-page-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.member-page-top h1 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  letter-spacing: -0.2px;
+}
+.member-page-top h1 span {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-left: 8px;
+}
+.member-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ═══ KPI 行（不再用卡片，用纯文字指标） ═══ */
+.member-metrics {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 20px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--sep-line);
+}
+.member-metric {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.member-metric strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-family: var(--mono);
+}
+.metric-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.metric-dot.green { background: var(--success); box-shadow: 0 0 4px rgba(0,230,118,.5); }
+.metric-dot.gray { background: var(--text-muted); }
+.metric-sep {
+  width: 1px; height: 12px;
+  background: var(--sep-line);
+}
+
+/* ═══ 搜索/筛选栏 ═══ */
+.member-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.member-toolbar .search-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 280px;
+}
+.member-toolbar .search-wrap svg {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.member-toolbar .search-wrap input {
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  font-size: 13px;
+  border: 1px solid var(--sep-line);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text);
+  outline: none;
+  transition: border-color .12s;
+}
+.member-toolbar .search-wrap input::placeholder { color: var(--text-muted); }
+.member-toolbar .search-wrap input:focus { border-color: var(--accent); }
+.member-toolbar .filter-select {
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid var(--sep-line);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text-secondary);
+  cursor: pointer;
+  outline: none;
+  transition: border-color .12s;
+}
+.member-toolbar .filter-select:focus { border-color: var(--accent); }
+
+/* ═══ 表格容器 ═══ */
+.member-table-wrapper {
+  border: 1px solid var(--sep-line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg3);
+}
+
+/* ═══ 表格 ═══ */
+.member-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  table-layout: fixed;
+}
+.member-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.member-table th {
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  text-align: left;
+  background: #0a0f22;
+  border-bottom: 1px solid var(--sep-line);
+  white-space: nowrap;
+  user-select: none;
+}
+.member-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sep-line);
+  color: var(--text);
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.member-table tbody tr:last-child td { border-bottom: none; }
+.member-table tbody tr:hover td { background: var(--table-hover); }
+.member-table tbody tr:nth-child(even) td { background: var(--row-alt); }
+.member-table tbody tr:nth-child(even):hover td { background: var(--table-hover); }
+
+/* ── 列宽 ── */
+.member-table .col-name { width: 200px; min-width: 200px; }
+.member-table .col-sessions { width: 80px; }
+.member-table .col-today { width: 100px; }
+.member-table .col-current { width: 110px; }
+.member-table .col-first { width: 120px; }
+.member-table .col-leave { width: 120px; }
+.member-table .col-official { width: 100px; }
+.member-table .col-email { width: 160px; }
+.member-table .col-actions { width: 72px; }
+
+/* ── 成员单元格：三层布局 ── */
+.member-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.member-av {
+  width: 30px; height: 30px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+  position: relative;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+}
+.member-av-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 2px solid #0f172a;
+  z-index: 2;
+}
+.member-av-dot.online {
+  background: #22c55e;
+  border-color: #0f172a;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.18), 0 0 12px rgba(34,197,94,.75);
+}
+.member-av-dot.offline {
+  width: 8px; height: 8px;
+  background: #64748b;
+  border-color: #0f172a;
+  box-shadow: none;
+}
+.member-av-dot.online:hover {
+  box-shadow: 0 0 0 4px rgba(34,197,94,.25), 0 0 16px rgba(34,197,94,.9);
+}
+
+/* 在线成员整行左边线 */
+.member-row.is-online {
+  box-shadow: inset 3px 0 0 rgba(34,197,94,.65);
+}
+.member-row.is-online:hover {
+  box-shadow: inset 3px 0 0 rgba(34,197,94,.85);
+}
+.member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.member-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.member-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.member-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all .12s;
+  border: 1px solid transparent;
+}
+.member-badge.has-group {
+  background: rgba(0,217,255,0.08);
+  color: var(--accent);
+  border-color: rgba(0,217,255,0.15);
+}
+.member-badge.has-group:hover {
+  background: rgba(0,217,255,0.18);
+  border-color: rgba(0,217,255,0.3);
+}
+.member-badge.no-group {
+  color: var(--text-muted);
+  border-color: transparent;
+}
+.member-badge.no-group:hover {
+  background: rgba(90,122,154,0.08);
+  border-color: rgba(90,122,154,0.2);
+}
+.member-group-select {
+  display: none;
+  font-size: 11px;
+  padding: 2px 6px;
+  border: 1px solid var(--sep-line);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text);
+  cursor: pointer;
+  max-width: 100px;
+}
+.member-group-select:focus { outline: none; border-color: var(--accent); }
+
+/* ── 时间/数据列 ── */
+.td-mono {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.td-mono .label-subtle {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font);
+}
+
+/* ── 邮箱列 ── */
+.email-cell {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* ── 操作按钮 ── */
+.action-btn {
+  width: 28px; height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all .12s;
+}
+.action-btn:hover { color: var(--accent); background: rgba(0,217,255,0.08); }
+.action-btn.danger:hover { color: #ef4444; background: rgba(239,68,68,0.08); }
+
+/* ── 展开行 ── */
+.expand-row td { padding: 0 !important; border-bottom: 1px solid var(--sep-line); }
+.expand-row {
+  display: none;
+}
+.expand-row.expanded {
+  display: table-row !important;
+}
+
+
+.expand-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  width: 100%;
+}
+.expand-detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.expand-detail-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.expand-detail-value {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+/* ── 官方数据微卡片（展开行内） ── */
+.official-mini-card {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  background: rgba(0,183,255,0.03);
+  border: 1px solid var(--sep-line);
+  border-radius: 6px;
+}
+.official-mini-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.official-mini-item .lbl {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.official-mini-item .val {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+}
+
+/* ── 展开/收缩按钮 ── */
+.expand-trigger {
+  width: 24px; height: 24px; font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--sep-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  transition: all .12s;
+  flex-shrink: 0;
+}
+.expand-trigger:hover { color: var(--accent); border-color: var(--accent); }
+.expand-trigger.expanded { transform: rotate(90deg); }
+
+/* ── 空状态 ── */
+.member-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ── 图标按钮（分组管理） ── */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--sep-line);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all .12s;
+}
+.icon-btn:hover { color: var(--text); border-color: var(--border); background: rgba(0,217,255,0.04); }
+
+/* ── Drawer / 弹窗保持不变 ── */
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:none;align-items:flex-start;justify-content:flex-end}
+.drawer-overlay.active{display:flex}
+.drawer-panel{width:480px;max-width:92vw;height:100%;overflow-y:auto;background:var(--bg3);border-left:1px solid var(--sep-line);animation:drw-in .2s ease}
+@keyframes drw-in{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid var(--sep-line)}
+.drawer-head h3{margin:0;font-size:15px;font-weight:600;color:var(--text)}
+.drawer-close{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:6px;border:none;background:transparent;color:var(--text-muted);cursor:pointer;font-size:16px}
+.drawer-close:hover{color:var(--text);background:var(--table-hover)}
+.drawer-body{padding:24px}
+.drawer-section{margin-bottom:24px}
+.drawer-section-title{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px}
+.drawer-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--sep-line)}
+.drawer-row:last-child{border:none}
+.drawer-label{font-size:12px;color:var(--text-muted)}
+.drawer-value{font-size:12px;color:var(--text);font-family:var(--mono)}
+
+/* ═══ 分组管理弹窗（保留原有） ═══ */
 .gm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;display:none;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
 .gm-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:20px;width:620px;max-width:92vw;max-height:82vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.3)}
 .gm-card h3{font-size:16px;font-weight:600;margin:0 0 12px;color:var(--text);padding-bottom:10px;border-bottom:1px solid var(--cb)}
@@ -83,8 +468,6 @@
 .gm-item .gm-actions button{font-size:10px;padding:3px 8px;border-radius:5px;border:1px solid var(--cb);background:var(--bg);color:var(--ts);cursor:pointer}
 .gm-item .gm-actions button:hover{background:var(--rh);color:var(--text)}
 .gm-item .gm-actions .gm-del:hover{color:#ef4444;border-color:rgba(239,68,68,.3);background:rgba(239,68,68,.08)}
-
-/* ── Group Member Sub-modal ── */
 .gmm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10001;display:none;align-items:center;justify-content:center}
 .gmm-card{background:var(--card);border:1px solid var(--cb);border-radius:12px;padding:18px;width:460px;max-width:88vw;max-height:75vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.3)}
 .gmm-card h4{font-size:15px;font-weight:600;margin:0 0 10px;color:var(--text)}
@@ -94,8 +477,400 @@
 .gmm-close{font-size:11px;padding:5px 14px;border-radius:6px;border:1px solid var(--cb);background:var(--bg);color:var(--ts);cursor:pointer;margin-top:10px}
 .gmm-close:hover{background:var(--rh)}
 </style>
+{% endblock %}
 
+{% block content %}
+<div class="main-container" style="max-width:1400px;margin:0 auto">
+
+{# ── 顶部标题栏 ── #}
+<div class="member-page-top">
+  <h1>成员中心 <span>所有成员 · 参会统计</span></h1>
+  <div class="member-top-actions">
+    <button class="icon-btn" onclick="openGroupManage()">
+      <span>🏷️</span> 分组管理
+    </button>
+    {% if official_sync_date %}
+    <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted)">
+      <span style="width:5px;height:5px;border-radius:50%;background:var(--success);display:inline-block"></span>
+      已同步 {{ official_sync_date }}
+    </span>
+    {% endif %}
+  </div>
+</div>
+
+{# ── KPI 指标行（极简文字指标） ── #}
+<div class="member-metrics">
+  <div class="member-metric">
+    <span class="metric-dot green"></span>
+    <strong>{{ online_count }}</strong> 在线
+  </div>
+  <div class="metric-sep"></div>
+  <div class="member-metric">
+    <span class="metric-dot gray"></span>
+    <strong>{{ offline_count }}</strong> 离线
+  </div>
+  <div class="metric-sep"></div>
+  <div class="member-metric">
+    <strong>{{ members|length }}</strong> 总计
+  </div>
+  {% if is_realtime %}
+  <div class="metric-sep"></div>
+  <div class="member-metric" style="color:var(--accent)">
+    <span style="width:5px;height:5px;border-radius:50%;background:var(--accent);display:inline-block;animation:pulse 1.5s infinite"></span>
+    <style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* ═══ 展开详情面板 ═══ */
+.member-detail-panel {
+  padding: 14px 14px 14px 18px;
+}
+.member-detail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.detail-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.detail-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ds-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ds-value {
+  font-size: 13px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 500;
+}
+.tl-section-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sep-line);
+}
+.timeline-stats-compact {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.timeline-stats-compact strong {
+  color: var(--text);
+  font-family: var(--mono);
+}
+.tl-sep {
+  color: var(--sep-line);
+}
+.tl-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--sep-line);
+}
+.tl-table tbody tr:nth-child(even) td {
+  background: rgba(0,183,255,0.02);
+}
+.tl-table tbody tr:hover td {
+  background: rgba(0,217,255,0.04);
+}
+</style>
+    实时
+  </div>
+  {% endif %}
+</div>
+
+{# ── 搜索/筛选栏 ── #}
+<div class="member-toolbar">
+  <div class="search-wrap">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input type="text" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
+  </div>
+  <select class="filter-select" id="groupFilter">
+    <option value="">所有分组</option>
+    {% for g in groups %}
+    <option value="{{ g.name }}" {{ 'selected' if group_filter == g.name }}>{{ g.name }}</option>
+    {% endfor %}
+  </select>
+  <select class="filter-select" id="statusFilter">
+    <option value="">所有状态</option>
+    <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
+    <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
+  </select>
+  {% if current_user.role in ('super_admin','admin') %}
+  <label style="display:flex;align-items:center;gap:4px;margin-left:auto;font-size:11px;color:var(--text-muted);cursor:pointer">
+    <input type="checkbox" id="syncAllTenantsCb" style="margin:0"> 同步全租户
+  </label>
+  {% endif %}
+</div>
+
+{# ── 表格 ── #}
+<div class="member-table-wrapper">
+<table class="member-table">
+<thead>
+<tr>
+  <th style="width:100%;white-space:nowrap;display:flex;align-items:center;gap:4px">成员</th>
+  <th class="col-sessions">会话</th>
+  <th class="col-today">今日</th>
+  <th class="col-current">在线时长</th>
+  <th class="col-first">首次进入</th>
+  <th class="col-leave">最后离开</th>
+  <th class="col-official">官方</th>
+  <th class="col-email">邮箱</th>
+  <th class="col-actions"></th>
+</tr>
+</thead>
+<tbody id="memberTable">
+{% for m in members %}
+{% set st = m.get('status','offline') %}
+{% set gid = m.get('group_id') %}
+<tr class="member-row {{ 'is-online' if st == 'online' else '' }}" data-name="{{ m.get('standard_name','')|lower }}" data-group="{{ m.get('group_name','') }}" data-status="{{ st }}">
+  {# ── 成员：头像 + 名称 + badge ── #}
+  <td style="width:100%;padding:10px 12px">
+    <div class="member-cell">
+      <div class="member-av">
+        {{ m.get('standard_name','?')[:2]|upper }}
+        <span class="member-av-dot {{ st }}"></span>
+      </div>
+      <div class="member-info">
+        <div class="member-name-row">
+          <span class="member-name">{{ m.get('standard_name','') }}</span>
+          <span class="member-badge {{ 'has-group' if gid else 'no-group' }}"
+                onclick="toggleGroupSelect(this)"
+                title="点击修改分组">
+            {{ m.get('group_name','无分组')[:10] }}
+          </span>
+          <select class="member-group-select" data-display="{{ m.get('standard_name','') }}"
+                  data-tenant="{{ m.get('tenant_id','') }}"
+                  onchange="changeMemberGroup(this); showGroupBadge(this)"
+                  onblur="showGroupBadge(this)">
+            <option value="">无分组</option>
+            {% for g in groups %}
+            <option value="{{ g.id }}" {{ 'selected' if gid == g.id }}>{{ g.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+  </td>
+  {# ── 会话数 ── #}
+  <td class="td-mono">{{ m.get('session_count',0) }}/{{ m.get('disconnect_count',0) }}</td>
+  {# ── 今日累计 ── #}
+  <td class="td-mono" style="font-weight:500;color:var(--text)">{{ m.get('today_total_duration_today','0m') }}</td>
+  {# ── 当前连续在线 ── #}
+  <td class="td-mono">{{ m.get('current_online_display','—') }}</td>
+  {# ── 首次进入 ── #}
+  <td class="td-mono" style="font-size:10px">{{ m.get('first_join_display','—') }}</td>
+  {# ── 最后离开 ── #}
+  <td class="td-mono" style="font-size:10px">{{ m.get('last_leave_time_display','—') }}</td>
+  {# ── 官方简略 ── #}
+  <td class="td-mono">{% set od = m.get('official_duration','') %}{{ od or '—' }}</td>
+  {# ── 邮箱 ── #}
+  <td class="col-email"><span class="email-cell" title="{{ m.get('email','') }}">{{ m.get('email','') or '—' }}</span></td>
+  {# ── 操作 ── #}
+  <td class="col-actions" style="text-align:right">
+        <button class="action-btn expand-trigger" onclick="toggleExpand(this)"
+            data-name="{{ m.get('standard_name','') }}"
+            data-meeting-id="{{ current_meeting_id }}"
+            data-session-start="{{ session_start_after or '' }}"
+            data-tenant="{{ m.get('tenant_id','') }}"
+            title="展开详情">▶</button>
+    <button class="action-btn danger" onclick="deleteMember(this)"
+            data-name="{{ m.get('standard_name','') }}" title="删除">✕</button>
+  </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+{% if members|length == 0 %}
+<div class="member-empty">暂无成员数据</div>
+{% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
 <script>
+// ── 工具函数 ──
+window.escHtml = function(s) {
+  return String(s||'').replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+};
+
+// ── 搜索/筛选过滤 ──
+(function() {
+  var si = document.getElementById('searchInput');
+  var gf = document.getElementById('groupFilter');
+  var sf = document.getElementById('statusFilter');
+  function filter() {
+    var q = (si.value||'').toLowerCase().trim();
+    var g = gf ? gf.value : '';
+    var s = sf ? sf.value : '';
+    document.querySelectorAll('#memberTable .member-row').forEach(function(row) {
+      var n = (row.getAttribute('data-name')||'').toLowerCase();
+      var gr = row.getAttribute('data-group')||'';
+      var st = row.getAttribute('data-status')||'offline';
+      var match = true;
+      if (q && n.indexOf(q)===-1) match = false;
+      if (g && gr!==g) match = false;
+      if (s && st!==s) match = false;
+      row.style.display = match ? '' : 'none';
+      // Hide expand row for hidden rows
+      var er = row.nextElementSibling;
+      if (er && er.classList.contains('expand-row') && !match) er.style.display = 'none';
+    });
+  }
+  if (si) si.addEventListener('input', filter);
+  if (gf) gf.addEventListener('change', filter);
+  if (sf) sf.addEventListener('change', filter);
+})();
+
+// ── 展开/收缩详情行 ──
+function toggleExpand(btn) {
+  var row = btn.closest('tr');
+  var expandRow = row.nextElementSibling;
+  
+  if (expandRow && expandRow.classList.contains('expand-row')) {
+    // Already exists — toggle visibility
+    if (expandRow.style.display === 'table-row') {
+      expandRow.style.display = 'none';
+      btn.classList.remove('expanded');
+    } else {
+      expandRow.style.display = 'table-row';
+      btn.classList.add('expanded');
+      // Load timeline if not loaded yet
+      var tlContent = expandRow.querySelector('.timeline-content');
+      if (tlContent && !tlContent.getAttribute('data-loaded')) {
+        tlContent.setAttribute('data-loaded', 'true');
+        showTimeline(btn);
+      }
+    }
+    // This ensures we stop anyone else from also showing a floating modal
+    return;
+  }
+  
+  // Create expand row
+  var thead = document.querySelector('.member-table thead tr');
+  var colspan = thead ? thead.querySelectorAll('th').length : 9;
+  
+  // Get member data from this row
+  var name = btn.getAttribute('data-name') || '';
+  var m = {};
+  // We need to pass the Jinja template variables via data attributes
+  // These are set on the member-row already
+  
+  expandRow = document.createElement('tr');
+  expandRow.className = 'expand-row';
+  expandRow.style.display = 'table-row';
+  expandRow.innerHTML = '<td colspan="' + colspan + '"><div class="member-detail-panel">' +
+    '<div class="detail-summary-grid" id="detailSummary_' + window.escHtml(name).replace(/\s/g,'_') + '">' +
+    '<div class="detail-summary-item"><span class="ds-label">历史累计</span><span class="ds-value" data-field="history">—</span></div>' +
+    '<div class="detail-summary-item"><span class="ds-label">今日累计</span><span class="ds-value" data-field="today">—</span></div>' +
+    '<div class="detail-summary-item"><span class="ds-label">最近活动</span><span class="ds-value" data-field="last_activity">—</span></div>' +
+    '<div class="detail-summary-item"><span class="ds-label">会话/断线</span><span class="ds-value" data-field="sessions">—</span></div>' +
+    '<div class="detail-summary-item" style="grid-column:1/-1"><div class="official-mini-card">' +
+    '<div class="official-mini-item"><span class="lbl">官方累计</span><span class="val" data-field="official_dur">—</span></div>' +
+    '<div class="official-mini-item"><span class="lbl">出勤天数</span><span class="val" data-field="official_days">—</span></div>' +
+    '<div class="official-mini-item"><span class="lbl">日均</span><span class="val" data-field="official_avg">—</span></div>' +
+    '<div class="official-mini-item"><span class="lbl">最近出勤</span><span class="val" data-field="official_last">—</span></div>' +
+    '</div></div>' +
+    '</div>' +
+    '<div class="tl-section-header">📋 参会明细 Timeline</div>' +
+    '<div class="timeline-content"></div>' +
+    '</div></td>';
+  
+  row.parentNode.insertBefore(expandRow, row.nextSibling);
+  btn.classList.add('expanded');
+  
+  // Fill summary data from the row's Jinja-rendered content
+  // We grab the visible data from the row's cells
+  var cells = row.querySelectorAll('td');
+  var summaryMap = {};
+  // session count / disconnect: cells[1]
+  if (cells[1]) summaryMap.sessions = cells[1].textContent.trim();
+  // today: cells[2]
+  if (cells[2]) summaryMap.today = cells[2].textContent.trim();
+  // first join: cells[4]
+  if (cells[4]) summaryMap.last_activity = cells[4].textContent.trim();
+  // history: not directly in visible cells in v3, use data
+  summaryMap.history = ''; // fallback for what's not in visible table
+  
+  var summaryGrid = expandRow.querySelector('.detail-summary-grid');
+  if (summaryGrid) {
+    // Fill from the adjacent cells
+    var rowCells = row.querySelectorAll('td');
+    // Cells order: 0=name, 1=sessions, 2=today, 3=current, 4=first_join, 5=leave, 6=official, 7=email, 8=actions
+    var values = {
+      'history': rowCells[0] && rowCells[0].querySelector('.member-name') ? rowCells[0].querySelector('.member-name').textContent.trim() : '',
+      'today': rowCells[2] ? rowCells[2].textContent.trim() : '',
+      'last_activity': rowCells[4] ? rowCells[4].textContent.trim() : '',
+      'sessions': rowCells[1] ? rowCells[1].textContent.trim() : '',
+      'official_dur': rowCells[6] ? rowCells[6].textContent.trim() : '',
+      'official_days': '',
+      'official_avg': '',
+      'official_last': '',
+    };
+    summaryGrid.querySelectorAll('[data-field]').forEach(function(el) {
+      var field = el.getAttribute('data-field');
+      if (values[field]) el.textContent = values[field];
+    });
+    // Set name/title
+    var titleEl = summaryGrid.parentElement.querySelector('.member-detail-title');
+    if (!titleEl && name) {
+      var hdr = document.createElement('div');
+      hdr.className = 'member-detail-title';
+      hdr.innerHTML = '<strong>' + window.escHtml(name) + '</strong> 详细信息';
+      summaryGrid.parentElement.insertBefore(hdr, summaryGrid);
+    }
+  }
+  
+  // Fetch timeline data
+  showTimeline(btn);
+}
+window.toggleExpand = toggleExpand;;
+
+// ── 分组 batch show/hide ──
+function toggleGroupSelect(badgeEl) {
+  var info = badgeEl.closest('.member-info');
+  var select = info.querySelector('.member-group-select');
+  if (!select) return;
+  badgeEl.style.display = 'none';
+  select.style.display = 'inline-block';
+  select.focus();
+}
+
+function showGroupBadge(selectEl) {
+  var info = selectEl.closest('.member-info');
+  var badge = info.querySelector('.member-badge');
+  if (!badge) return;
+  selectEl.style.display = 'none';
+  var txt = selectEl.options[selectEl.selectedIndex].text || '无分组';
+  badge.textContent = txt.substring(0,10);
+  if (selectEl.value) {
+    badge.className = 'member-badge has-group';
+  } else {
+    badge.className = 'member-badge no-group';
+  }
+  badge.style.display = 'inline-flex';
+}
+window.toggleGroupSelect = toggleGroupSelect;
+window.showGroupBadge = showGroupBadge;
+
 // ── 分组管理弹窗 ──
 window.openGroupManage = function() {
   var overlay = document.getElementById('gmOverlay');
@@ -105,14 +880,14 @@ window.openGroupManage = function() {
     overlay.className = 'gm-overlay';
     overlay.innerHTML =
       '<div class="gm-card">' +
-      '<h3>📂 分组管理</h3>' +
+      '<h3>🏷️ 分组管理</h3>' +
       '<div class="gm-form">' +
       '<input id="gmNewName" class="gm-input" placeholder="分组名称">' +
       '<input id="gmNewDesc" class="gm-input" placeholder="描述（可选）" style="flex:0.8">' +
-      '<button class="bt bt-p" onclick="gmCreate()" style="font-size:11px;padding:5px 12px">创建</button>' +
+      '<button class="icon-btn" onclick="gmCreate()" style="font-size:11px;padding:5px 12px">创建</button>' +
       '</div>' +
       '<div id="gmListWrap"><div class="gm-empty">加载中...</div></div>' +
-      '<div style="text-align:right;margin-top:10px"><button class="bt bt-s" onclick="gmClose()" style="font-size:11px;padding:4px 14px">关闭</button></div>' +
+      '<div style="text-align:right;margin-top:10px"><button class="icon-btn" onclick="gmClose()">关闭</button></div>' +
       '</div>';
     overlay.addEventListener('click', function(e){ if(e.target===overlay) gmClose(); });
     document.body.appendChild(overlay);
@@ -134,70 +909,57 @@ function gmLoad() {
     if (!j.ok) { wrap.innerHTML = '<div class="gm-error" style="display:block">加载失败</div>'; return; }
     var gs = j.groups || [];
     if (!gs.length) { wrap.innerHTML = '<div class="gm-empty">暂无分组，在上方创建</div>'; return; }
-    var html = '';
+    var h = '';
     gs.forEach(function(g){
-      html += '<div class="gm-item">' +
-        '<span class="gm-name">' + gmEsc(g.name) + '</span>' +
-        (g.description ? '<span class="gm-desc">' + gmEsc(g.description) + '</span>' : '') +
-        '<span class="gm-count">' + (g.member_count || 0) + '</span>' +
+      h += '<div class="gm-item"><span class="gm-name">' + window.escHtml(g.name) + '</span>' +
+        (g.description ? '<span class="gm-desc">' + window.escHtml(g.description) + '</span>' : '') +
+        '<span class="gm-count">' + (g.member_count||0) + '</span>' +
         '<div class="gm-actions">' +
-        '<button onclick="gmViewMembers(' + g.id + ',\'' + gmEsc(g.name) + '\')">成员</button>' +
-        '<button onclick="gmEdit(' + g.id + ',\'' + gmEsc(g.name) + '\',\'' + gmEsc(g.description||'') + '\')">编辑</button>' +
-        '<button class="gm-del" onclick="gmDelete(' + g.id + ',\'' + gmEsc(g.name) + '\')">删除</button>' +
+        '<button onclick="gmViewMembers('+g.id+',\''+window.escHtml(g.name)+'\')">成员</button>' +
+        '<button onclick="gmEdit('+g.id+',\''+window.escHtml(g.name)+'\',\''+window.escHtml(g.description||'')+'\')">编辑</button>' +
+        '<button class="gm-del" onclick="gmDelete('+g.id+',\''+window.escHtml(g.name)+'\')">删除</button>' +
         '</div></div>';
     });
-    wrap.innerHTML = html;
+    wrap.innerHTML = h;
   }).catch(function(){
     wrap.innerHTML = '<div class="gm-error" style="display:block">请求失败</div>';
   });
 }
 
-function gmEsc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
 function gmCreate() {
   var name = document.getElementById('gmNewName');
   var desc = document.getElementById('gmNewDesc');
-  if (!name.value.trim()) { showToast('❌ 请输入分组名称'); return; }
+  if (!name.value.trim()) { showToast('请输入分组名称'); return; }
   fetch('/api/v3/member-groups', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name: name.value.trim(), description: desc.value.trim()})
   }).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) {
-      showToast('✅ 已创建');
-      name.value = ''; desc.value = '';
-      gmLoad();
-    } else {
-      showToast('❌ ' + (j.error || '创建失败'));
-    }
-  }).catch(function(){ showToast('❌ 网络错误'); });
+    if (j.ok) { showToast('已创建'); name.value=''; desc.value=''; gmLoad(); }
+    else { showToast(j.error||'创建失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
 function gmEdit(gid, name, desc) {
-  var newName = prompt('分组名称:', name);
-  if (!newName || !newName.trim()) return;
-  var newDesc = prompt('描述:', desc || '');
-  fetch('/api/v3/member-groups/' + gid, {
+  var n = prompt('分组名称:', name);
+  if (!n||!n.trim()) return;
+  var d = prompt('描述:', desc||'');
+  fetch('/api/v3/member-groups/'+gid, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: newName.trim(), description: (newDesc||'').trim()})
+    body: JSON.stringify({name: n.trim(), description: (d||'').trim()})
   }).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) { showToast('✅ 已更新'); gmLoad();
-      // Also refresh group filter dropdown on main page if it exists
-      var sel = document.getElementById('groupFilter');
-      if (sel) window.location.reload();
-    } else { showToast('❌ ' + (j.error || '更新失败')); }
-  }).catch(function(){ showToast('❌ 网络错误'); });
+    if (j.ok) { showToast('已更新'); gmLoad(); var sel=document.getElementById('groupFilter'); if(sel) window.location.reload(); }
+    else { showToast(j.error||'更新失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
 function gmDelete(gid, name) {
-  if (!confirm('确定删除分组 "' + name + '" 吗？')) return;
-  fetch('/api/v3/member-groups/' + gid, {method: 'DELETE'})
+  if (!confirm('确定删除分组 "'+name+'" 吗？')) return;
+  fetch('/api/v3/member-groups/'+gid, {method:'DELETE'})
   .then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) { showToast('✅ 已删除'); gmLoad(); } else { showToast('❌ ' + (j.error || '删除失败')); }
-  }).catch(function(){ showToast('❌ 网络错误'); });
+    if (j.ok) { showToast('已删除'); gmLoad(); } else { showToast(j.error||'删除失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
 function gmViewMembers(gid, gname) {
@@ -210,39 +972,30 @@ function gmViewMembers(gid, gname) {
     document.body.appendChild(sub);
   }
   sub.innerHTML =
-    '<div class="gmm-card">' +
-    '<h4>👥 ' + gmEsc(gname) + ' — 成员</h4>' +
-    '<div class="gmm-add-row" style="display:flex;gap:6px;margin-bottom:10px">' +
+    '<div class="gmm-card"><h4>👥 '+window.escHtml(gname)+' — 成员</h4>' +
+    '<div style="display:flex;gap:6px;margin-bottom:10px">' +
     '<select id="gmmMemberSelect" style="flex:1;padding:5px 8px;border:1px solid var(--cb);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px"><option value="">— 选择成员 —</option></select>' +
-    '<button class="bt bt-p" onclick="gmmAdd(' + gid + ')" style="font-size:10px;padding:4px 10px">添加</button>' +
-    '</div>' +
+    '<button class="icon-btn" onclick="gmmAdd('+gid+')" style="font-size:10px">添加</button></div>' +
     '<div id="gmmList" style="max-height:300px;overflow-y:auto;border:1px solid var(--cb);border-radius:8px"><div class="gm-empty">加载中...</div></div>' +
-    '<div style="text-align:right;margin-top:8px"><button class="gmm-close" onclick="document.getElementById(\'gmmOverlay\').style.display=\'none\'">关闭</button></div>' +
-    '</div>';
+    '<div style="text-align:right;margin-top:8px"><button class="icon-btn" onclick="document.getElementById(\'gmmOverlay\').style.display=\'none\'">关闭</button></div></div>';
   sub.style.display = 'flex';
 
-  // Load current members and all available members
   fetch('/api/v3/member-groups').then(function(r){ return r.json(); }).then(function(j){
     if (!j.ok) return;
-    var groups = j.groups || [];
-    var cur = null;
-    groups.forEach(function(g){ if (g.id === gid) cur = g; });
+    var groups = j.groups||[], cur=null;
+    groups.forEach(function(g){ if(g.id===gid) cur=g; });
     if (!cur) return;
-    var members = cur.members || [];
+    var members = cur.members||[];
     var listEl = document.getElementById('gmmList');
-    if (!members.length) {
-      listEl.innerHTML = '<div class="gm-empty">暂无成员</div>';
-    } else {
-      var h = '';
-      members.forEach(function(m){
-        var n = m.display_name || m.name || m.raw_name || '';
-        h += '<div class="gmm-member"><span class="gmm-name">' + gmEsc(n) + '</span><button class="bt bt-s" style="font-size:9px;padding:2px 7px" onclick="gmmRemove(' + gid + ',\'' + gmEsc(n) + '\')">移除</button></div>';
-      });
-      listEl.innerHTML = h;
-    }
+    if (!members.length) { listEl.innerHTML='<div class=\"gm-empty\">暂无成员</div>'; return; }
+    var h = '';
+    members.forEach(function(m){
+      var n = m.display_name||m.name||m.raw_name||'';
+      h += '<div class="gmm-member"><span class="gmm-name">'+window.escHtml(n)+'</span><button class="icon-btn" style="font-size:9px;padding:2px 7px" onclick="gmmRemove('+gid+',\''+window.escHtml(n)+'\')">移除</button></div>';
+    });
+    listEl.innerHTML = h;
   });
 
-  // Populate member select from main member list via the table rows
   var sel = document.getElementById('gmmMemberSelect');
   if (sel) {
     var names = new Set();
@@ -251,218 +1004,33 @@ function gmViewMembers(gid, gname) {
       if (n) names.add(n);
     });
     var opts = '<option value="">— 选择成员 —</option>';
-    names.forEach(function(n){ opts += '<option value="' + gmEsc(n) + '">' + gmEsc(n) + '</option>'; });
+    names.forEach(function(n){ opts+='<option value="'+window.escHtml(n)+'">'+window.escHtml(n)+'</option>'; });
     sel.innerHTML = opts;
   }
 }
 
 function gmmAdd(gid) {
   var sel = document.getElementById('gmmMemberSelect');
-  if (!sel || !sel.value) { showToast('❌ 请选择成员'); return; }
-  fetch('/api/v3/member-groups/' + gid + '/members', {
+  if (!sel||!sel.value) { showToast('请选择成员'); return; }
+  fetch('/api/v3/member-groups/'+gid+'/members', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({member_name: sel.value})
   }).then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok || j.id) { showToast('✅ 已添加'); gmViewMembers(gid, ''); } else { showToast('❌ ' + (j.error || '添加失败')); }
-  }).catch(function(){ showToast('❌ 网络错误'); });
+    if (j.ok||j.id) { showToast('已添加'); gmViewMembers(gid,''); }
+    else { showToast(j.error||'添加失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
 function gmmRemove(gid, name) {
-  if (!confirm('移除 "' + name + '" ？')) return;
-  fetch('/api/v3/member-groups/' + gid + '/members/' + encodeURIComponent(name), {method: 'DELETE'})
+  if (!confirm('移除 "'+name+'" ？')) return;
+  fetch('/api/v3/member-groups/'+gid+'/members/'+encodeURIComponent(name), {method:'DELETE'})
   .then(function(r){ return r.json(); }).then(function(j){
-    if (j.ok) { showToast('✅ 已移除'); gmViewMembers(gid, ''); } else { showToast('❌ ' + (j.error || '移除失败')); }
-  }).catch(function(){ showToast('❌ 网络错误'); });
+    if (j.ok) { showToast('已移除'); gmViewMembers(gid,''); } else { showToast(j.error||'移除失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
-window.escHtml = function(s) {
-  return String(s || '').replace(/[&<>"']/g, function(c) {
-    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-  });
-};
-
-window.showTimeline = function(btn) {
-  const name = btn.dataset.name || '';
-  const meetingId = btn.dataset.meetingId || '';
-  const sessionStart = btn.dataset.sessionStart || '';
-  let url = '/api/v3/members/' + encodeURIComponent(name) + '/timeline?meeting_id=' + encodeURIComponent(meetingId);
-  if (sessionStart) url += '&session_start_after=' + encodeURIComponent(sessionStart);
-
-  const overlay = document.createElement('div');
-  overlay.className = 'timeline-overlay';
-  overlay.innerHTML = '<div class="timeline-card"><div class="timeline-head"><h3>📋 ' + window.escHtml(name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div><div style="text-align:center;color:#94a3b8;padding:40px 0">⏳ 加载中...</div></div>';
-  document.body.appendChild(overlay);
-
-  fetch(url)
-    .then(r => r.json())
-    .then(j => {
-      if (!j.ok) throw new Error(j.error || '请求失败');
-      const rows = (j.segments || []).map(s =>
-        '<tr><td>' + s.seq + '</td><td>' + window.escHtml(s.enter_time_display) + '</td><td>' + window.escHtml(s.leave_time_display) + '</td><td>' + window.escHtml(s.duration_display) + '</td><td>' + window.escHtml(s.status) + '</td></tr>'
-      ).join('');
-
-      overlay.innerHTML =
-        '<div class="timeline-card">' +
-        '<div class="timeline-head"><h3>📋 ' + window.escHtml(j.display_name || name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div>' +
-        '<div class="timeline-stats"><span>记录段数: <b>' + (j.session_count || 0) + '</b> 段</span><span>离开次数: <b>' + (j.disconnect_count || 0) + '</b> 次</span><span>累计参会时长: <b>' + window.escHtml(j.total_display || '0m') + '</b></span></div>' +
-        '<div class="timeline-table-wrap"><table class="timeline-table"><thead><tr><th>#</th><th>进入时间</th><th>离开时间</th><th>时长</th><th>状态</th></tr></thead><tbody>' +
-        (rows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:24px">当前会议无进出记录</td></tr>') +
-        '</tbody></table></div></div>';
-    })
-    .catch(err => {
-      overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;margin-bottom:14px">❌ ' + window.escHtml(err.message || '请求失败') + '</div><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
-    });
-};
-</script>
-
-
-  {# ── 标题 ── #}
-  <h2 style="font-size:20px;font-weight:600;color:var(--text);margin:0 0 16px 0">成员中心</h2>
-
-  {# ── 筛选器 ── #}
-  <div class="hint" style="color:var(--tm);font-size:12px;margin:0 0 8px 0">
-    注：累计参会时长：该成员在所有会议中的所有进出记录，按不重叠时段合并后的总时长。
-  </div>
-  {% if official_sync_date %}
-  <div style="font-size:11px;color:#64748b;margin-bottom:10px;padding:6px 12px;background:#0f172a;border-radius:6px;border:1px solid #1e293b">
-    <span style="color:#22c55e">&#9679;</span> Zoom 官方数据已同步 &middot; {{ official_sync_date }}
-    <span style="color:#94a3b8;margin-left:10px">出勤天数、官方累计、日均来自 Zoom Report API / CSV</span>
-  </div>
-  {% endif %}
-  <div class="toolbar">
-    <input type="text" class="toolbar-search" id="searchInput" placeholder="搜索成员..." value="{{ search }}">
-    <select class="toolbar-select" id="groupFilter">
-      <option value="">所有分组</option>
-      {% for g in groups %}
-      <option value="{{ g.name }}" {{ 'selected' if group_filter == g.name }}>{{ g.name }}</option>
-      {% endfor %}
-    </select>
-    <select class="toolbar-select" id="statusFilter">
-      <option value="">所有状态</option>
-      <option value="online" {{ 'selected' if status_filter == 'online' }}>在线</option>
-      <option value="offline" {{ 'selected' if status_filter == 'offline' }}>离线</option>
-    </select>
-    <button class="bt bt-s" onclick="openGroupManage()" style="font-size:12px;padding:5px 10px;margin-left:8px">📂 分组管理</button>
-    <span style="margin-left:auto;color:var(--text-muted);font-size:12px">
-      <strong style="color:var(--text)">{{ online_count }}</strong> 在线 ·
-      <strong style="color:var(--text)">{{ offline_count }}</strong> 离线 ·
-      <strong style="color:var(--text)">{{ members|length }}</strong> 总计
-    </span>
-  </div>
-  {% if current_user.role in ('super_admin','admin') %}
-  <div style="display:flex;align-items:center;gap:8px;margin:8px 0 12px 0;padding:6px 10px;background:var(--cb);border-radius:8px;font-size:13px">
-    <input type="checkbox" id="syncAllTenantsCb" style="margin:0">
-    <label for="syncAllTenantsCb" style="color:var(--text);cursor:pointer;user-select:none">同步同名成员到所有租户</label>
-  </div>
-  {% endif %}
-
-  {# ── 表格 ── #}
-  <style>
-  .data-table th{font-size:12px;font-weight:700;color:#e2e8f0;letter-spacing:0.3px}
-  .data-table th small{font-size:10px;font-weight:500;color:#94a3b8}
-  </style>
-  <div class="panel" style="padding:0;overflow:visible">
-  <table class="data-table">
-  <thead>
-  <tr>
-    <th>成员</th>
-    <th>状态</th>
-    <th>分组</th>
-    <th>会话数 / 断线</th>
-    <th>历史累计<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
-    <th>今日累计<br><small style="color:var(--tm);font-weight:400">今日 00:00 至今</small></th>
-    <th>当前连续在线<br><small style="color:var(--tm);font-weight:400">本次连入</small></th>
-    <th>首次进入<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
-    <th>最近活动<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
-    <th>离开时间<br><small style="color:var(--tm);font-weight:400">全部记录</small></th>
-    <th style="width:24px;color:#475569;font-weight:400">│</th>
-    <th>官方累计<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
-    <th>出勤天数<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
-    <th>日均<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
-    <th>最近出勤<br><small style="color:var(--tm);font-weight:400">Zoom Report</small></th>
-    <th>邮箱</th>
-    <th style="width:60px">操作</th>
-  </tr>
-  </thead>
-  <tbody id="memberTable">
-  {% for m in members %}
-  {% set grp = m.get("group_name", "") %}
-  {% set dur = m.get("today_total_duration", "") %}
-  {% set join_c = m.get("join_count", 0) %}
-  {% set leave_c = m.get("leave_count", 0) %}
-  {% set ses_c = m.get("session_count", 0) %}
-  {% set dis_c = m.get("disconnect_count", 0) %}
-  {% set first_j = m.get("first_join", "") %}
-  {% set last_a = m.get("last_activity", "") %}
-  <tr class="member-row"
-      data-name="{{ m.get("standard_name","")|lower }}"
-      data-group="{{ grp }}"
-      data-status="{{ m.get("status","offline") }}">
-    <td>
-      <div class="user-cell-name">
-        <div class="avatar" style="background:linear-gradient(135deg,#3b82f6,#6366f1);border-radius:50%">
-          {{ m.get("standard_name","?")[:2]|upper }}
-        </div>
-        <div class="name-text">
-          <span class="primary">{{ m.get("standard_name","") }}</span>
-        </div>
-      </div>
-    </td>
-    <td>
-      {% set st = m.get('status','offline') %}
-      {% if st == 'online' %}
-      <span class="status-dot online" title="在线"></span>
-      {% else %}
-      <span class="status-dot offline" title="离线"></span>
-      {% endif %}
-    </td>
-    <td class="td-group">
-      <select class="group-select" data-display="{{ m.get('standard_name','') }}"
-              data-tenant="{{ m.get('tenant_id','') }}"
-              onchange="changeMemberGroup(this)">
-        <option value="">无分组</option>
-        {% for g in groups %}
-        <option value="{{ g.id }}" {{ 'selected' if m.get('group_id') == g.id }}>{{ g.name }}</option>
-        {% endfor %}
-      </select>
-    </td>
-    <td class="td-mono">{{ ses_c }} / {{ dis_c }}</td>
-    <td class="td-mono">{{ m.get("history_total_duration", dur) if dur else '—' }}</td>
-    <td class="td-mono">{{ m.get("today_total_duration_today", "0m") }}</td>
-    <td class="td-mono">{{ m.get("current_online_display", "—") }}</td>
-    <td class="td-mono" style="white-space:nowrap">{{ m.get("first_join_display", "—") }}</td>
-    <td class="td-mono" style="white-space:nowrap">{{ m.get("last_activity_display", "—") }}</td>
-    <td class="td-mono" style="white-space:nowrap">{{ m.get("last_leave_time_display", "—") }}</td>
-    <td style="width:24px;color:#334155;text-align:center;font-size:11px">│</td>
-    <td class="td-mono">{{ m.get("official_duration", "") or "—" }}</td>
-    <td class="td-mono">{{ m.get("official_attendance_days", "") or "—" }}</td>
-    <td class="td-mono">{{ m.get("official_daily_average", "") or "—" }}</td>
-    <td class="td-mono" style="white-space:nowrap">{{ m.get("official_last_attendance", "") or "—" }}</td>
-    <td class="td-mono" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ m.get("email", "") or "—" }}</td>
-    <td><button class="ma-del" onclick="deleteMember(this)" data-name="{{ m.get('standard_name','') }}" style="margin-right:4px">🗑 删除</button><button class="bt bt-s" style="font-size:11px;padding:4px 8px" onclick="showTimeline(this)" data-name="{{ m.get('standard_name','') }}" data-meeting-id="{{ current_meeting_id }}" data-session-start="{{ session_start_after or '' }}" data-tenant="{{ m.get('tenant_id','') }}">📋 详情</button></td>
-  </tr>
-  {% endfor %}
-  </tbody>
-  </table>
-  </div>
-
-{% set error = '' %}
-{% if members|length == 0 %}
-<div class="empty-state" style="text-align:center;padding:40px 0;color:var(--tm)">
-  {% if error %}<p style="color:#f87171">{{ error }}</p>{% endif %}
-  <p>暂无成员数据</p>
-</div>
-{% endif %}
-
-</div>
-
-{% endblock %}
-
-{% block scripts %}
-{{ super() }}
-<script>
-
+// ── 分组成绩保存 ──
 function changeMemberGroup(sel) {
   var displayName = sel.getAttribute('data-display');
   var tenantId = sel.getAttribute('data-tenant');
@@ -470,125 +1038,122 @@ function changeMemberGroup(sel) {
   if (!groupId) return;
   var syncCb = document.getElementById('syncAllTenantsCb');
   var syncAll = syncCb ? syncCb.checked : false;
-  fetch('/api/v3/members/' + encodeURIComponent(displayName) + '/group', {
+  fetch('/api/v3/members/'+encodeURIComponent(displayName)+'/group', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({group_id: parseInt(groupId), tenant_id: tenantId, sync_same_name_all_tenants: syncAll})
-  })
-  .then(function(r){ return r.json(); })
-  .then(function(j){
-    if (j.ok) {
-      showToast('✅ 已保存');
-      sel.title = sel.options[sel.selectedIndex].text;
-    } else {
-      showToast('❌ ' + (j.error || '保存失败'));
-    }
-  })
-  .catch(function(){ showToast('❌ 网络错误'); });
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j.ok) { showToast('已保存'); } else { showToast(j.error||'保存失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
+// ── 删除成员 ──
 function deleteMember(btn) {
-  // re-read from button
   var name = btn.getAttribute('data-name');
-  if (!confirm('确定要删除成员 "' + name + '" 吗？')) return;
-  var tenantId = btn.closest('tr').querySelector('.group-select').getAttribute('data-tenant');
-  fetch('/api/v3/members/' + encodeURIComponent(name), {
+  if (!confirm('确定要删除成员 "'+name+'" 吗？')) return;
+  var row = btn.closest('tr');
+  var tenantId = row ? row.querySelector('.member-group-select').getAttribute('data-tenant') : '';
+  fetch('/api/v3/members/'+encodeURIComponent(name), {
     method: 'DELETE',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({tenant_id: tenantId})
-  })
-  .then(function(r){ if (!r.ok) throw new Error(); return r.json(); })
-  .then(function(j){
+  }).then(function(r){ if(!r.ok) throw new Error(); return r.json(); }).then(function(j){
     if (j.ok) {
-      showToast('✅ 已删除');
-      btn.closest('tr').remove();
-    } else {
-      showToast('❌ ' + (j.error || '删除失败'));
-    }
-  })
-  .catch(function(){ showToast('❌ 网络错误'); });
+      showToast('已删除');
+      if (row) { row.remove(); var er=row.nextElementSibling; if(er&&er.classList.contains('expand-row')) er.remove(); }
+    } else { showToast(j.error||'删除失败'); }
+  }).catch(function(){ showToast('网络错误'); });
 }
 
-function escHtml(s) {
-  if (!s) return '';
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
+// ── Timeline 弹窗 ──
 function showTimeline(btn) {
+  // This is now a helper called by toggleExpand
+  // It fetches timeline data and fills the expand-row
+  var row = btn.closest('tr');
+  var expandRow = row.nextElementSibling;
+  if (!expandRow || !expandRow.classList.contains('expand-row')) return;
+  var panel = expandRow.querySelector('.timeline-content');
+  if (!panel) return;
+  
   var name = btn.getAttribute('data-name');
   var meetingId = btn.getAttribute('data-meeting-id');
   var sessionStart = btn.getAttribute('data-session-start');
   var tenantId = btn.getAttribute('data-tenant');
-
-  if (!meetingId) { showToast('❌ 当前无会议数据'); return; }
-
-  var overlay = document.createElement('div');
-  overlay.className = 'timeline-overlay';
-  overlay.innerHTML = '<div class="timeline-card"><div class="timeline-head"><h3>📋 ' + escHtml(name) + ' 参会明细</h3><button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button></div><div style="text-align:center;color:#94a3b8;padding:40px 0">⏳ 加载中...</div></div>';
-  overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
-  document.body.appendChild(overlay);
-
-  // 获取当前数据源
-  var source = 'live';
-  var activeTab = document.querySelector('.tab-item.active');
-
-  var url = '/api/v3/members/' + encodeURIComponent(name) + '/timeline?source=' + source;
+  
+  if (!name) return;
+  
+  panel.innerHTML = '<div style="text-align:center;color:#64748b;padding:20px">⏳ 加载中...</div>';
+  
+  var url = '/api/v3/members/' + encodeURIComponent(name) + '/timeline?source=live';
   if (meetingId) url += '&meeting_id=' + encodeURIComponent(meetingId);
   if (sessionStart) url += '&session_start_after=' + encodeURIComponent(sessionStart);
   if (tenantId) url += '&tenant_id=' + encodeURIComponent(tenantId);
-
-  fetch(url)
-    .then(function(r){ return r.json(); })
-    .then(function(j){
+  
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', url, true);
+  xhr.onload = function() {
+    try {
+      var j = JSON.parse(xhr.responseText);
       if (!j.ok) {
-        overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;font-size:15px;margin-bottom:14px">❌ ' + escHtml(j.error || '请求失败') + '</div><button class="bt bt-s" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
+        panel.innerHTML = '<div style="color:#f87171;padding:16px;text-align:center">请求失败: ' + window.escHtml(j.error || 'unknown') + '</div>';
         return;
       }
-
-      var segs = j.segments || [];
       var segHtml = '';
-      if (segs.length) {
-        segs.forEach(function(s){
-          segHtml += '<tr>' +
-            '<td>' + s.seq + '</td>' +
-            '<td>' + escHtml(s.enter_time_display) + '</td>' +
-            '<td>' + escHtml(s.leave_time_display) + '</td>' +
-            '<td style="text-align:right">' + escHtml(s.duration_display) + '</td>' +
-            '<td style="text-align:center">' + (s.status || s.status_display || '—') + '</td>' +
-            '</tr>';
-        });
+      if (j.segments && j.segments.length) {
+        for (var i = 0; i < j.segments.length; i++) {
+          var s = j.segments[i];
+          segHtml += '<tr><td>' + (i + 1) + '</td><td class="td-mono" style="font-size:10px">' + window.escHtml(s.enter_time_display || '') + '</td><td class="td-mono" style="font-size:10px">' + window.escHtml(s.leave_time_display || '') + '</td><td class="td-mono" style="font-size:10px;text-align:right">' + window.escHtml(s.duration_display || '') + '</td><td style="text-align:center;font-size:11px">' + window.escHtml(s.status || '') + '</td></tr>';
+        }
       } else {
-        segHtml = '<tr><td colspan="5" style="text-align:center;padding:24px;color:#64748b">当前会议无进出记录</td></tr>';
+        segHtml = '<tr><td colspan="5" style="text-align:center;padding:20px;color:#64748b;font-size:12px">无进出记录</td></tr>';
       }
-
-      overlay.innerHTML = '' +
-        '<div class="timeline-card">' +
-          '<div class="timeline-head">' +
-            '<h3>📋 ' + escHtml(j.display_name) + ' 参会明细</h3>' +
-            '<button class="timeline-close-btn" onclick="this.closest(\'.timeline-overlay\').remove()">✕</button>' +
-          '</div>' +
-          '<div class="timeline-stats">' +
-            '<span class="timeline-stat">记录段数: <strong>' + j.join_count + '</strong> 段</span>' +
-            '<span class="timeline-stat">离开次数: <strong>' + j.leave_count + '</strong> 次</span>' +
-            '<span class="timeline-stat">累计参会时长: <strong>' + escHtml(j.total_display) + '</strong></span>' +
-          '</div>' +
-          '<div class="timeline-table-wrap">' +
-            '<table class="timeline-table">' +
-              '<thead><tr><th>#</th><th>进入</th><th>离开</th><th style="text-align:right">时长</th><th style="text-align:center">状态</th></tr></thead>' +
-              '<tbody>' + segHtml + '</tbody>' +
-            '</table>' +
-          '</div>' +
+      
+      var statsHtml = '<div class="timeline-stats-compact">' +
+        '<span>记录段数: <strong>' + (j.session_count || 0) + '</strong></span>' +
+        '<span class="tl-sep">|</span>' +
+        '<span>离开次数: <strong>' + (j.disconnect_count || 0) + '</strong></span>' +
+        '<span class="tl-sep">|</span>' +
+        '<span>累计时长: <strong>' + window.escHtml(j.total_display || '0m') + '</strong></span>' +
         '</div>';
-    })
-    .catch(function(){
-      overlay.innerHTML = '<div class="timeline-card" style="text-align:center;padding:30px"><div style="color:#f87171;font-size:15px;margin-bottom:14px">❌ 请求失败</div><button class="bt bt-s" onclick="this.closest(\'.timeline-overlay\').remove()">关闭</button></div>';
-    });
+      
+      panel.innerHTML = statsHtml +
+        '<div style="overflow-x:auto;border:1px solid var(--sep-line);border-radius:6px;margin-top:8px">' +
+        '<table class="tl-table" style="width:100%;border-collapse:collapse;font-size:12px">' +
+        '<thead><tr style="background:#0a0f22">' +
+        '<th style="padding:6px 10px;text-align:left;font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--sep-line);width:30px">#</th>' +
+        '<th style="padding:6px 10px;text-align:left;font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--sep-line)">进入</th>' +
+        '<th style="padding:6px 10px;text-align:left;font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--sep-line)">离开</th>' +
+        '<th style="padding:6px 10px;text-align:right;font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--sep-line)">时长</th>' +
+        '<th style="padding:6px 10px;text-align:center;font-size:10px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--sep-line)">状态</th>' +
+        '</tr></thead><tbody>' + segHtml + '</tbody></table></div>';
+    } catch(e) {
+      panel.innerHTML = '<div style="color:#f87171;padding:16px;text-align:center">数据解析失败</div>';
+    }
+  };
+  xhr.onerror = function() { panel.innerHTML = '<div style="color:#f87171;padding:16px;text-align:center">网络请求失败</div>'; };
+  xhr.send();
 }
-
-
+function showToast(msg) {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#e2e8f0;padding:8px 16px;border-radius:8px;font-size:13px;z-index:99999;border:1px solid #334155;box-shadow:0 4px 16px rgba(0,0,0,.3);opacity:1;transition:opacity .3s';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(function(){ el.style.opacity='0'; setTimeout(function(){ el.remove(); }, 300); }, 2000);
+}
+window.showToast = showToast;
 window.showTimeline = showTimeline;
-window.escHtml = escHtml;
-if (typeof deleteMember === 'function') window.deleteMember = deleteMember;
+window.deleteMember = deleteMember;
+window.changeMemberGroup = changeMemberGroup;
 
+// ── 自动计算 colspan ──
+document.addEventListener('DOMContentLoaded', function() {
+  var thead = document.querySelector('.member-table thead tr');
+  if (thead) {
+    var cols = thead.querySelectorAll('th').length;
+    document.querySelectorAll('.expand-row td').forEach(function(td) {
+      td.setAttribute('colspan', cols);
+    });
+  }
+});
 </script>
 {% endblock %}
